@@ -13,7 +13,7 @@ export function LoginPage() {
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     console.log('Login payload:', { email, password, keepLoggedIn })
-    navigate('/')
+    navigate('/landing')
   }
 
   return (
