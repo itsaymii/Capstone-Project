@@ -1,3 +1,27 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+	body {
+		font-family: 'Inter', sans-serif;
+	}
+}
+
+@keyframes live-alert-scroll {
+	0% {
+		transform: translateX(0);
+	}
+	100% {
+		transform: translateX(-50%);
+	}
+}
+
+@layer utilities {
+	.live-alert-track {
+		animation: live-alert-scroll 28s linear infinite;
+		will-change: transform;
+	}
+}
