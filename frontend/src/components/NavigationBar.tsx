@@ -119,7 +119,7 @@ export function NavigationBar({ variant = 'default', onSignInClick, onSignUpClic
   return (
     <nav className={`${navClasses} relative`}>
       <div className="flex items-center justify-between gap-4">
-        <Link className="inline-flex items-center" to="/landing">
+        <Link className="ml-6 inline-flex items-center sm:ml-20 md:ml-32 xl:ml-56" to="/landing">
           <img
             alt="DRMS Logo"
             className="h-14 w-auto pl-2 sm:pl-4 md:pl-5"
@@ -137,12 +137,12 @@ export function NavigationBar({ variant = 'default', onSignInClick, onSignUpClic
           ☰
         </button>
 
-        <ul className="hidden items-center gap-2 sm:gap-3 xl:flex">
+        <ul className="hidden items-center gap-2 sm:gap-3 xl:-ml-[18.5rem] xl:flex">
           {mainLinks.map((link) => (
             <li key={link.to}>
               <NavLink
                 className={({ isActive }) =>
-                  `inline-flex rounded-lg px-3 py-2 text-sm font-semibold transition ${
+                  `inline-flex rounded-lg px-3 py-2 text-[15px] font-semibold transition ${
                     isActive ? activeLinkClasses : inactiveLinkClasses
                   }`
                 }
@@ -197,7 +197,7 @@ export function NavigationBar({ variant = 'default', onSignInClick, onSignUpClic
               <li key={link.to}>
                 {link.label === 'Sign in' && onSignInClick ? (
                   <button
-                    className={`inline-flex rounded-lg px-3 py-2 text-sm font-semibold transition ${inactiveLinkClasses}`}
+                    className={`inline-flex rounded-lg px-3 py-2 text-[15px] font-semibold transition ${inactiveLinkClasses}`}
                     onClick={() => {
                       onSignInClick()
                       setIsMenuOpen(false)
@@ -208,7 +208,7 @@ export function NavigationBar({ variant = 'default', onSignInClick, onSignUpClic
                   </button>
                 ) : link.label === 'Sign up' && onSignUpClick ? (
                   <button
-                    className={`inline-flex text-sm font-semibold transition ${
+                    className={`inline-flex text-[15px] font-semibold transition ${
                       registerLinkClasses || `rounded-lg px-3 py-2 ${inactiveLinkClasses}`
                     }`}
                     onClick={() => {
@@ -222,7 +222,7 @@ export function NavigationBar({ variant = 'default', onSignInClick, onSignUpClic
                 ) : (
                   <NavLink
                     className={({ isActive }) =>
-                      `inline-flex text-sm font-semibold transition ${
+                      `inline-flex text-[15px] font-semibold transition ${
                         link.label === 'Sign up'
                           ? registerLinkClasses
                           : `rounded-lg px-3 py-2 ${isActive ? activeLinkClasses : inactiveLinkClasses}`
@@ -247,7 +247,7 @@ export function NavigationBar({ variant = 'default', onSignInClick, onSignUpClic
               <li key={link.to}>
                 <NavLink
                   className={({ isActive }) =>
-                    `inline-flex w-full rounded-lg px-3 py-2 text-sm font-semibold transition ${
+                    `inline-flex w-full rounded-lg px-3 py-2 text-[15px] font-semibold transition ${
                       isActive ? activeLinkClasses : inactiveLinkClasses
                     }`
                   }

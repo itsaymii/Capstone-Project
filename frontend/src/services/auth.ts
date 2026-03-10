@@ -29,6 +29,11 @@ const AUTH_KEY = 'drms-auth'
 const SESSION_USER_KEY = 'drms-session-user'
 export const AUTH_CHANGED_EVENT = 'drms-auth-changed'
 
+const DEV_AUTH_BYPASS_ENABLED = import.meta.env.DEV && import.meta.env.VITE_DEV_AUTH_BYPASS === 'true'
+const DEV_AUTH_BYPASS_NAME = import.meta.env.VITE_DEV_AUTH_BYPASS_NAME?.trim() || 'Developer Mode User'
+const DEV_AUTH_BYPASS_EMAIL =
+  import.meta.env.VITE_DEV_AUTH_BYPASS_EMAIL?.trim().toLowerCase() || 'developer@local.test'
+
 function emitAuthChanged(): void {
   window.dispatchEvent(new Event(AUTH_CHANGED_EVENT))
 }
@@ -221,6 +226,10 @@ export async function verifyLoginOtpCode(payload: {
 }
 
 export function isAuthenticated(): boolean {
+  if (DEV_AUTH_BYPASS_ENABLED) {
+    return true
+  }
+
   return localStorage.getItem(AUTH_KEY) === 'true' || sessionStorage.getItem(AUTH_KEY) === 'true'
 }
 
@@ -242,6 +251,13 @@ export function getCurrentUserProfile(): SessionUser | null {
   try {
     const activeStore = getActiveAuthStore()
     if (!activeStore) {
+      if (DEV_AUTH_BYPASS_ENABLED) {
+        return {
+          fullName: DEV_AUTH_BYPASS_NAME,
+          email: DEV_AUTH_BYPASS_EMAIL,
+        }
+      }
+
       return null
     }
 
@@ -264,6 +280,15 @@ export function updateCurrentUserProfile(fullName: string): boolean {
 
   const activeStore = getActiveAuthStore()
   if (!activeStore) {
+    if (DEV_AUTH_BYPASS_ENABLED) {
+      writeSessionUser(sessionStorage, {
+        fullName: normalizedName,
+        email: DEV_AUTH_BYPASS_EMAIL,
+      })
+      emitAuthChanged()
+      return true
+    }
+
     return false
   }
 
