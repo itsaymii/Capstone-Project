@@ -18,6 +18,18 @@ type LoginPayload = {
 type SessionUser = {
   fullName: string
   email: string
+  photoUrl?: string
+  phoneNumber?: string
+  birthDate?: string
+  gender?: string
+  address?: string
+  addressLine1?: string
+  barangay?: string
+  city?: string
+  province?: string
+  postalCode?: string
+  emergencyContactName?: string
+  emergencyContactNumber?: string
 }
 
 type AuthResult = {
@@ -336,6 +348,78 @@ export function updateCurrentUserProfile(fullName: string): boolean {
   })
 
   addNotification('Profile name updated successfully.')
+  emitAuthChanged()
+  return true
+}
+
+export function updateCurrentUserAvatar(photoUrl: string | null): boolean {
+  const activeStore = getActiveAuthStore()
+  if (!activeStore) {
+    return false
+  }
+
+  const existingProfile = getCurrentUserProfile()
+  if (!existingProfile) {
+    return false
+  }
+
+  writeSessionUser(activeStore, {
+    ...existingProfile,
+    photoUrl: photoUrl || undefined,
+  })
+
+  addNotification(photoUrl ? 'Profile picture updated successfully.' : 'Profile picture removed successfully.')
+  emitAuthChanged()
+  return true
+}
+
+export function updateCurrentUserPersonalInfo(payload: {
+  phoneNumber: string
+  birthDate: string
+  gender: string
+  addressLine1: string
+  barangay: string
+  city: string
+  province: string
+  postalCode: string
+  emergencyContactName: string
+  emergencyContactNumber: string
+}): boolean {
+  const activeStore = getActiveAuthStore()
+  if (!activeStore) {
+    return false
+  }
+
+  const existingProfile = getCurrentUserProfile()
+  if (!existingProfile) {
+    return false
+  }
+
+  writeSessionUser(activeStore, {
+    ...existingProfile,
+    phoneNumber: payload.phoneNumber.trim() || undefined,
+    birthDate: payload.birthDate.trim() || undefined,
+    gender: payload.gender.trim() || undefined,
+    addressLine1: payload.addressLine1.trim() || undefined,
+    barangay: payload.barangay.trim() || undefined,
+    city: payload.city.trim() || undefined,
+    province: payload.province.trim() || undefined,
+    postalCode: payload.postalCode.trim() || undefined,
+    // Backward-compatible combined field for older UI readers.
+    address: [
+      payload.addressLine1.trim(),
+      payload.barangay.trim(),
+      payload.city.trim(),
+      payload.province.trim(),
+      payload.postalCode.trim(),
+    ]
+      .filter(Boolean)
+      .join(', ') || undefined,
+    emergencyContactName: payload.emergencyContactName.trim() || undefined,
+    emergencyContactNumber: payload.emergencyContactNumber.trim() || undefined,
+  })
+
+  addNotification('Personal information updated successfully.')
   emitAuthChanged()
   return true
 }

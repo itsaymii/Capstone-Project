@@ -1,9 +1,9 @@
 # 📡 API Documentation
 
-## GET /api/test
+## GET /accounts/test
 Returns system status.
 
-## POST /api/incidents
+## POST /accounts/incidents
 Create new incident report.
 
 ### Request Body

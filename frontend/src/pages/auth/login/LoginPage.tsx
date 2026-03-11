@@ -36,6 +36,7 @@ export function LoginPage({ onRequestRegister, onRequestAdminLogin: _onRequestAd
   const [showForgotPasswordModal, setShowForgotPasswordModal] = useState(false)
   const [forgotPasswordEmail, setForgotPasswordEmail] = useState('')
   const [forgotPasswordMessage, setForgotPasswordMessage] = useState('')
+  const [otpShakeActive, setOtpShakeActive] = useState(false)
 
   useEffect(() => {
     const navState = location.state as { registrationSuccessMessage?: string } | null
@@ -78,6 +79,10 @@ export function LoginPage({ onRequestRegister, onRequestAdminLogin: _onRequestAd
   }
 
   function handleOtpDigitChange(index: number, rawValue: string): void {
+    if (otpShakeActive) {
+      setOtpShakeActive(false)
+    }
+
     const onlyDigit = rawValue.replace(/\D/g, '').slice(-1)
     setOtpAtIndex(index, onlyDigit)
 
@@ -232,6 +237,8 @@ export function LoginPage({ onRequestRegister, onRequestAdminLogin: _onRequestAd
 
     if (!result.success) {
       setErrorMessage(result.error ?? 'Unable to verify OTP right now.')
+      setOtpShakeActive(true)
+      window.setTimeout(() => setOtpShakeActive(false), 380)
       setSkipOtpNotice('')
       return
     }
@@ -308,11 +315,11 @@ export function LoginPage({ onRequestRegister, onRequestAdminLogin: _onRequestAd
   return (
     <main
       className={`flex min-h-screen items-center justify-center p-4 text-slate-800 sm:p-8 ${
-        modalMode ? 'bg-transparent' : 'bg-slate-100'
+        modalMode ? 'bg-transparent' : 'bg-[radial-gradient(circle_at_top,#e7efff_0%,#f8fbff_42%,#eef3f9_100%)]'
       }`}
     >
       <div
-        className="mx-auto w-full max-w-5xl overflow-hidden rounded-2xl border border-slate-200 bg-slate-50 shadow-xl"
+        className="mx-auto w-full max-w-5xl overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-[0_24px_60px_rgba(15,23,42,0.14)]"
         onClick={(event) => {
           if (modalMode) {
             event.stopPropagation()
@@ -322,39 +329,31 @@ export function LoginPage({ onRequestRegister, onRequestAdminLogin: _onRequestAd
         <div className="grid min-h-[640px] md:grid-cols-2">
           <motion.section
             animate={{ opacity: 1, x: 0 }}
-            className="relative flex flex-col justify-between bg-slate-100 p-10"
+            className="relative flex flex-col justify-between overflow-hidden bg-[linear-gradient(140deg,#0d2f60_0%,#174b8f_55%,#2563b0_100%)] p-10"
             initial={{ opacity: 0, x: -70 }}
             transition={{ duration: 0.35, ease: 'easeOut' }}
           >
+            <div className="pointer-events-none absolute -right-20 -top-20 h-56 w-56 rounded-full bg-white/10 blur-2xl" />
+            <div className="pointer-events-none absolute -bottom-24 -left-16 h-64 w-64 rounded-full bg-cyan-200/20 blur-2xl" />
+
             <div>
-              <p className="text-3xl font-medium text-slate-800">Citizen Access</p>
-              <p className="mt-2 text-sm text-slate-600">For citizens using the response portal</p>
+              <p className="text-3xl font-semibold text-white">Citizen Access</p>
+              <p className="mt-2 text-sm text-blue-100">Secure entry for citizens using the response portal</p>
             </div>
-            <div className="py-6 text-sm text-slate-600">
-              <p>Citizen Access</p>
-              <p>Community Reports</p>
+            <div className="space-y-2 py-6 text-sm text-blue-100">
+              <p className="inline-flex rounded-full border border-white/30 bg-white/10 px-3 py-1">Citizen Access</p>
+              <p className="inline-flex rounded-full border border-white/30 bg-white/10 px-3 py-1">Community Reports</p>
             </div>
-            <p className="text-sm text-slate-600">
-              Don't have an account?{' '}
-              {onRequestRegister ? (
-                <button className="font-semibold text-slate-800 underline" onClick={onRequestRegister} type="button">
-                  Create an account
-                </button>
-              ) : (
-                <Link className="font-semibold text-slate-800 underline" to="/register">
-                  Create an account
-                </Link>
-              )}
-            </p>
+            <p className="text-sm text-blue-100">Secure and monitored access for citizen responders.</p>
           </motion.section>
 
           <motion.section
             animate={{ opacity: 1, x: 0 }}
-            className="p-10"
+            className="bg-white p-10 pt-14"
             initial={{ opacity: 0, x: 70 }}
             transition={{ duration: 0.35, ease: 'easeOut' }}
           >
-            <h1 className="text-4xl font-semibold text-slate-900">Log in</h1>
+            <h1 className="text-4xl font-bold tracking-tight text-slate-900">Welcome Back</h1>
             <p className="mt-2 text-sm text-slate-500">
               {otpStep ? 'Enter the OTP sent to your email' : 'Citizen portal access'}
             </p>
@@ -387,7 +386,7 @@ export function LoginPage({ onRequestRegister, onRequestAdminLogin: _onRequestAd
                       Email or Username
                     </span>
                     <input
-                      className="w-full border-0 border-b border-slate-300 bg-transparent px-0 py-2 text-base outline-none placeholder:text-slate-400 focus:border-slate-700"
+                      className="w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-base outline-none placeholder:text-slate-400 transition focus:border-[#0b2a57] focus:ring-2 focus:ring-[#0b2a57]/10"
                       type="text"
                       value={email}
                       onChange={(event) => setEmail(event.target.value)}
@@ -399,50 +398,58 @@ export function LoginPage({ onRequestRegister, onRequestAdminLogin: _onRequestAd
                     <span className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">
                       Password
                     </span>
-                    <div className="flex items-center gap-2 border-b border-slate-300">
+                    <div className="flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3">
                       <input
-                        className="w-full border-0 bg-transparent px-0 py-2 text-base outline-none placeholder:text-slate-400"
+                        className="w-full border-0 bg-transparent px-0 py-3 text-base outline-none placeholder:text-slate-400"
                         type={showPassword ? 'text' : 'password'}
                         value={password}
                         onChange={(event) => setPassword(event.target.value)}
                         placeholder="Password"
                       />
                       <button
-                        className="text-xs font-semibold uppercase tracking-wide text-slate-600"
+                        className="text-xs font-semibold uppercase tracking-wide text-slate-600 hover:text-slate-800"
                         onClick={() => setShowPassword((previous) => !previous)}
                         type="button"
                       >
                         {showPassword ? 'Hide' : 'Show'}
                       </button>
                     </div>
-                    <div className="mt-2 flex justify-end">
-                      <button className="text-xs font-semibold text-[#0b2a57] underline" onClick={openForgotPasswordModal} type="button">
-                        Forgot password?
-                      </button>
-                    </div>
                   </label>
 
-                  <label className="flex items-center gap-2 text-sm text-slate-600">
-                    <input
-                      checked={keepLoggedIn}
-                      className="h-4 w-4"
-                      onChange={(event) => setKeepLoggedIn(event.target.checked)}
-                      type="checkbox"
-                    />
-                    Keep me logged in
-                  </label>
+                  <div className="mt-3 flex items-center justify-between gap-4">
+                    <label className="inline-flex items-center gap-2 text-sm text-slate-600">
+                      <input
+                        checked={keepLoggedIn}
+                        className="h-4 w-4"
+                        onChange={(event) => setKeepLoggedIn(event.target.checked)}
+                        type="checkbox"
+                      />
+                      Keep me logged in
+                    </label>
+
+                    <button className="text-xs font-semibold text-[#0b2a57] underline" onClick={openForgotPasswordModal} type="button">
+                      Forgot password?
+                    </button>
+                  </div>
                 </>
               ) : (
-                <label className="block">
-                  <span className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">One-Time Password</span>
-                  <div className="flex items-center gap-2">
+                <section className={`rounded-2xl border border-slate-200 bg-slate-50/80 px-4 py-4 ${otpShakeActive ? 'otp-shake' : ''}`}>
+                  <div className="mb-3 flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">One-Time Password</p>
+                      <p className="mt-1 text-sm text-slate-600">Enter the 6-digit code sent to your email.</p>
+                    </div>
+                    {otpEmail ? <p className="text-[11px] font-medium text-slate-500">{otpEmail}</p> : null}
+                  </div>
+
+                  <div className="flex items-center gap-2 sm:gap-2.5">
                     {Array.from({ length: OTP_LENGTH }).map((_, index) => (
                       <input
                         key={`login-otp-${index}`}
                         ref={(element) => {
                           otpInputRefs.current[index] = element
                         }}
-                        className="h-12 w-11 rounded-lg border border-slate-300 bg-white text-center text-lg font-semibold text-slate-800 outline-none focus:border-[#0b2a57]"
+                        className="h-12 w-10 rounded-xl border border-slate-300 bg-white text-center text-lg font-bold text-slate-800 shadow-[inset_0_1px_2px_rgba(15,23,42,0.06)] outline-none transition focus:border-[#0b2a57] focus:ring-2 focus:ring-[#0b2a57]/15 sm:h-14 sm:w-12"
                         type="text"
                         inputMode="numeric"
                         autoComplete="one-time-code"
@@ -454,23 +461,36 @@ export function LoginPage({ onRequestRegister, onRequestAdminLogin: _onRequestAd
                       />
                     ))}
                   </div>
-                </label>
+                </section>
               )}
 
               <button
-                className="w-full rounded-lg bg-[#0b2a57] px-4 py-3 text-lg font-medium text-white transition hover:bg-[#123a73] disabled:cursor-not-allowed disabled:bg-[#7f93b2]"
+                className="w-full rounded-xl bg-gradient-to-r from-[#0b2a57] to-[#1d4f93] px-4 py-3 text-lg font-semibold text-white shadow-[0_12px_22px_rgba(11,42,87,0.25)] transition hover:from-[#123a73] hover:to-[#2563b0] disabled:cursor-not-allowed disabled:from-[#7f93b2] disabled:to-[#7f93b2]"
                 type="submit"
                 disabled={isSubmitting || isRedirectingAfterLogin}
               >
                 {otpStep ? (isRedirectingAfterLogin ? 'Login successful. Redirecting...' : 'Verify Code and Log In') : 'Send Verification Code'}
               </button>
 
-              {otpStep && otpEmail ? <p className="text-xs text-slate-500">Verification code sent to: {otpEmail}</p> : null}
+              {!otpStep ? (
+                <p className="text-center text-sm text-slate-600">
+                  Don't have an account?{' '}
+                  {onRequestRegister ? (
+                    <button className="font-semibold text-[#0b2a57] underline" onClick={onRequestRegister} type="button">
+                      Create an account
+                    </button>
+                  ) : (
+                    <Link className="font-semibold text-[#0b2a57] underline" to="/register">
+                      Create an account
+                    </Link>
+                  )}
+                </p>
+              ) : null}
 
               {otpStep ? (
                 <div className="flex items-center justify-between gap-4 text-sm">
                   <button
-                    className="font-semibold text-slate-700 underline disabled:cursor-not-allowed disabled:text-slate-400"
+                    className="inline-flex items-center rounded-full border border-slate-300 bg-white px-3 py-1.5 font-semibold text-slate-700 transition hover:border-slate-400 hover:bg-slate-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-400"
                     onClick={handleResendOtp}
                     type="button"
                     disabled={cooldownRemaining > 0 || isSubmitting}
@@ -479,7 +499,7 @@ export function LoginPage({ onRequestRegister, onRequestAdminLogin: _onRequestAd
                   </button>
 
                   <button
-                    className="font-semibold text-slate-700 underline"
+                    className="inline-flex items-center rounded-full border border-slate-300 bg-white px-3 py-1.5 font-semibold text-slate-700 transition hover:border-slate-400 hover:bg-slate-100"
                     onClick={() => {
                       setOtpStep(false)
                       setOtp('')

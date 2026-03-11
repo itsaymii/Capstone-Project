@@ -19,9 +19,54 @@
 	}
 }
 
+@keyframes hazard-pulse {
+	0% {
+		stroke-opacity: 0.8;
+		fill-opacity: 0.26;
+		stroke-width: 2;
+	}
+	50% {
+		stroke-opacity: 0.2;
+		fill-opacity: 0.04;
+		stroke-width: 7;
+	}
+	100% {
+		stroke-opacity: 0.8;
+		fill-opacity: 0.26;
+		stroke-width: 2;
+	}
+}
+
+@keyframes otp-shake {
+	0%,
+	100% {
+		transform: translateX(0);
+	}
+	20% {
+		transform: translateX(-5px);
+	}
+	40% {
+		transform: translateX(4px);
+	}
+	60% {
+		transform: translateX(-3px);
+	}
+	80% {
+		transform: translateX(2px);
+	}
+}
+
 @layer utilities {
 	.live-alert-track {
 		animation: live-alert-scroll 28s linear infinite;
 		will-change: transform;
+	}
+
+	.hazard-marker-pulse {
+		animation: hazard-pulse 1.6s ease-in-out infinite;
+	}
+
+	.otp-shake {
+		animation: otp-shake 0.38s ease-in-out;
 	}
 }

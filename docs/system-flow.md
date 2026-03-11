@@ -9,7 +9,7 @@ participant Database
 
 User->>Frontend: Fill Incident Form
 Frontend->>Frontend: Capture GPS Location
-Frontend->>Backend: POST /api/incidents
+Frontend->>Backend: POST /accounts/incidents
 Backend->>Database: Save Data
 Database-->>Backend: Success
 Backend-->>Frontend: Return JSON
