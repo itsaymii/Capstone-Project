@@ -9,18 +9,22 @@ export interface AuthUser {
 
 export interface AuthApiResponse {
   message: string
-  user: AuthUser
+  user?: AuthUser
+  otpEmail?: string
+  skipOtp?: boolean
 }
 
 export interface RegisterApiPayload {
   fullName: string
   email: string
   password: string
+  username?: string
 }
 
 export interface LoginApiPayload {
   email: string
   password: string
+  forceOtp?: boolean
 }
 
 export interface VerifyOtpPayload {

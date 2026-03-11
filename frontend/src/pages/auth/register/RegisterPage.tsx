@@ -13,12 +13,18 @@ interface RegisterPageProps {
 
 const OTP_LENGTH = 6
 const REGISTER_COOLDOWN_KEY_PREFIX = 'drms-register-otp-cooldown-until'
+const OTP_COOLDOWN_SECONDS = 180
 
 export function RegisterPage({ onRequestLogin, onRegistered, modalMode = false }: RegisterPageProps) {
   const navigate = useNavigate()
-  const [fullName, setFullName] = useState('')
+  const [firstName, setFirstName] = useState('')
+  const [lastName, setLastName] = useState('')
   const [email, setEmail] = useState('')
+  const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const [otp, setOtp] = useState('')
   const [otpStep, setOtpStep] = useState(false)
   const [cooldownRemaining, setCooldownRemaining] = useState(0)
@@ -151,10 +157,47 @@ export function RegisterPage({ onRequestLogin, onRegistered, modalMode = false }
     }
   }, [cooldownRemaining])
 
+  function buildFullName(): string {
+    return `${firstName.trim()} ${lastName.trim()}`.trim()
+  }
+
   async function handleCredentialSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+
+    const fullName = buildFullName()
+    if (!fullName) {
+      setErrorMessage('Please provide your first name and last name.')
+      return
+    }
+
+    if (!email.trim()) {
+      setErrorMessage('Email address is required.')
+      return
+    }
+
+    if (!password) {
+      setErrorMessage('Password is required.')
+      return
+    }
+
+    if (password.length < 6) {
+      setErrorMessage('Password must be at least 6 characters.')
+      return
+    }
+
+    if (password !== confirmPassword) {
+      setErrorMessage('Password and confirm password do not match.')
+      return
+    }
+
+    setErrorMessage('')
     setIsSubmitting(true)
-    const result = await requestRegisterOtp({ fullName, email, password })
+    const result = await requestRegisterOtp({
+      fullName,
+      email,
+      username,
+      password,
+    })
     setIsSubmitting(false)
 
     if (!result.success) {
@@ -169,7 +212,7 @@ export function RegisterPage({ onRequestLogin, onRegistered, modalMode = false }
     setErrorMessage('')
     setSuccessMessage(result.message ?? 'OTP sent to your email.')
     setOtpStep(true)
-    applyCooldown(60)
+    applyCooldown(OTP_COOLDOWN_SECONDS)
   }
 
   async function handleOtpSubmit(event: FormEvent<HTMLFormElement>) {
@@ -204,7 +247,12 @@ export function RegisterPage({ onRequestLogin, onRegistered, modalMode = false }
     }
 
     setIsSubmitting(true)
-    const result = await requestRegisterOtp({ fullName, email, password })
+    const result = await requestRegisterOtp({
+      fullName: buildFullName(),
+      email,
+      username,
+      password,
+    })
     setIsSubmitting(false)
 
     if (!result.success) {
@@ -217,7 +265,7 @@ export function RegisterPage({ onRequestLogin, onRegistered, modalMode = false }
 
     setErrorMessage('')
     setSuccessMessage(result.message ?? 'A new OTP was sent to your email.')
-    applyCooldown(60)
+    applyCooldown(OTP_COOLDOWN_SECONDS)
   }
 
   return (
@@ -241,15 +289,15 @@ export function RegisterPage({ onRequestLogin, onRegistered, modalMode = false }
             initial={{ opacity: 0, x: -70 }}
             transition={{ duration: 0.35, ease: 'easeOut' }}
           >
-            <h1 className="text-4xl font-semibold text-slate-900">Register</h1>
+            <h1 className="text-4xl font-semibold text-slate-900">Create an Account</h1>
             <p className="mt-2 text-sm text-slate-500">
-              {otpStep ? 'Enter the OTP sent to your email' : 'Create an account as Citizen or Admin'}
+              {otpStep ? 'Enter the OTP sent to your email' : 'Create an account'}
             </p>
 
             <div className="mt-6 flex items-center gap-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
               <span
                 className={`inline-flex h-7 w-7 items-center justify-center rounded-full border ${
-                  !otpStep ? 'border-blue-600 bg-blue-600 text-white' : 'border-emerald-600 bg-emerald-600 text-white'
+                  !otpStep ? 'border-[#0b2a57] bg-[#0b2a57] text-white' : 'border-emerald-600 bg-emerald-600 text-white'
                 }`}
               >
                 1
@@ -258,7 +306,7 @@ export function RegisterPage({ onRequestLogin, onRegistered, modalMode = false }
               <span className="h-px w-8 bg-slate-300" />
               <span
                 className={`inline-flex h-7 w-7 items-center justify-center rounded-full border ${
-                  otpStep ? 'border-blue-600 bg-blue-600 text-white' : 'border-slate-300 bg-white text-slate-500'
+                  otpStep ? 'border-[#0b2a57] bg-[#0b2a57] text-white' : 'border-slate-300 bg-white text-slate-500'
                 }`}
               >
                 2
@@ -269,44 +317,97 @@ export function RegisterPage({ onRequestLogin, onRegistered, modalMode = false }
             <form className="mt-10 space-y-7" onSubmit={otpStep ? handleOtpSubmit : handleCredentialSubmit}>
               {!otpStep ? (
                 <>
-                  <label className="block">
-                    <span className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">
-                      Full Name
-                    </span>
-                    <input
-                      className="w-full border-0 border-b border-slate-300 bg-transparent px-0 py-2 text-base outline-none placeholder:text-slate-400 focus:border-slate-700"
-                      type="text"
-                      value={fullName}
-                      onChange={(event) => setFullName(event.target.value)}
-                      placeholder="Full Name"
-                    />
-                  </label>
+                  <div className="grid gap-5 sm:grid-cols-2">
+                    <label className="block">
+                      <span className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">First Name</span>
+                      <input
+                        className="w-full border-0 border-b border-slate-300 bg-transparent px-0 py-2 text-base outline-none placeholder:text-slate-400 focus:border-slate-700"
+                        type="text"
+                        value={firstName}
+                        onChange={(event) => setFirstName(event.target.value)}
+                        placeholder="First Name"
+                        required
+                      />
+                    </label>
+
+                    <label className="block">
+                      <span className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">Last Name</span>
+                      <input
+                        className="w-full border-0 border-b border-slate-300 bg-transparent px-0 py-2 text-base outline-none placeholder:text-slate-400 focus:border-slate-700"
+                        type="text"
+                        value={lastName}
+                        onChange={(event) => setLastName(event.target.value)}
+                        placeholder="Last Name"
+                        required
+                      />
+                    </label>
+                  </div>
 
                   <label className="block">
-                    <span className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">
-                      Email or Username
-                    </span>
+                    <span className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">Email Address</span>
                     <input
                       className="w-full border-0 border-b border-slate-300 bg-transparent px-0 py-2 text-base outline-none placeholder:text-slate-400 focus:border-slate-700"
-                      type="text"
+                      type="email"
                       value={email}
                       onChange={(event) => setEmail(event.target.value)}
-                      placeholder="Email or Username"
+                      placeholder="name@example.com"
+                      required
                     />
                   </label>
 
                   <label className="block">
-                    <span className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">
-                      Password
-                    </span>
+                    <span className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">Username (Optional)</span>
                     <input
                       className="w-full border-0 border-b border-slate-300 bg-transparent px-0 py-2 text-base outline-none placeholder:text-slate-400 focus:border-slate-700"
-                      type="password"
-                      value={password}
-                      onChange={(event) => setPassword(event.target.value)}
-                      placeholder="Password"
+                      type="text"
+                      value={username}
+                      onChange={(event) => setUsername(event.target.value)}
+                      placeholder="Username"
                     />
                   </label>
+
+                  <label className="block">
+                    <span className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">Password</span>
+                    <div className="flex items-center gap-2 border-b border-slate-300">
+                      <input
+                        className="w-full border-0 bg-transparent px-0 py-2 text-base outline-none placeholder:text-slate-400"
+                        type={showPassword ? 'text' : 'password'}
+                        value={password}
+                        onChange={(event) => setPassword(event.target.value)}
+                        placeholder="Password"
+                        required
+                      />
+                      <button
+                        className="text-xs font-semibold uppercase tracking-wide text-slate-600"
+                        onClick={() => setShowPassword((previous) => !previous)}
+                        type="button"
+                      >
+                        {showPassword ? 'Hide' : 'Show'}
+                      </button>
+                    </div>
+                  </label>
+
+                  <label className="block">
+                    <span className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">Confirm Password</span>
+                    <div className="flex items-center gap-2 border-b border-slate-300">
+                      <input
+                        className="w-full border-0 bg-transparent px-0 py-2 text-base outline-none placeholder:text-slate-400"
+                        type={showConfirmPassword ? 'text' : 'password'}
+                        value={confirmPassword}
+                        onChange={(event) => setConfirmPassword(event.target.value)}
+                        placeholder="Confirm Password"
+                        required
+                      />
+                      <button
+                        className="text-xs font-semibold uppercase tracking-wide text-slate-600"
+                        onClick={() => setShowConfirmPassword((previous) => !previous)}
+                        type="button"
+                      >
+                        {showConfirmPassword ? 'Hide' : 'Show'}
+                      </button>
+                    </div>
+                  </label>
+
                 </>
               ) : (
                 <label className="block">
@@ -318,7 +419,7 @@ export function RegisterPage({ onRequestLogin, onRegistered, modalMode = false }
                         ref={(element) => {
                           otpInputRefs.current[index] = element
                         }}
-                        className="h-12 w-11 rounded-lg border border-slate-300 bg-white text-center text-lg font-semibold text-slate-800 outline-none focus:border-blue-600"
+                        className="h-12 w-11 rounded-lg border border-slate-300 bg-white text-center text-lg font-semibold text-slate-800 outline-none focus:border-[#0b2a57]"
                         type="text"
                         inputMode="numeric"
                         autoComplete="one-time-code"
@@ -334,11 +435,11 @@ export function RegisterPage({ onRequestLogin, onRegistered, modalMode = false }
               )}
 
               <button
-                className="w-full rounded-lg bg-blue-700 px-4 py-3 text-lg font-medium text-white transition hover:bg-blue-600 disabled:cursor-not-allowed disabled:bg-blue-400"
+                className="w-full rounded-lg bg-[#0b2a57] px-4 py-3 text-lg font-medium text-white transition hover:bg-[#123a73] disabled:cursor-not-allowed disabled:bg-[#7f93b2]"
                 type="submit"
                 disabled={isSubmitting}
               >
-                {otpStep ? 'Verify OTP and Complete Registration' : 'Send OTP'}
+                {otpStep ? 'Verify Code and Create Account' : 'Send Verification Code'}
               </button>
 
               {otpStep ? (
@@ -378,17 +479,6 @@ export function RegisterPage({ onRequestLogin, onRegistered, modalMode = false }
                 <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{errorMessage}</p>
               ) : null}
 
-              <div className="flex items-center justify-between">
-                {onRequestLogin ? (
-                  <button className="text-sm font-semibold text-slate-700 underline" onClick={onRequestLogin} type="button">
-                    Log in now
-                  </button>
-                ) : (
-                  <Link className="text-sm font-semibold text-slate-700 underline" to="/login">
-                    Log in now
-                  </Link>
-                )}
-              </div>
             </form>
           </motion.section>
 
@@ -409,14 +499,14 @@ export function RegisterPage({ onRequestLogin, onRegistered, modalMode = false }
               <p>Admin Access</p>
             </div>
             <p className="text-sm text-slate-600">
-              Already registered in the response portal?{' '}
+              Already have an account?{' '}
               {onRequestLogin ? (
                 <button className="font-semibold text-slate-800 underline" onClick={onRequestLogin} type="button">
-                  Log in now
+                  Sign in
                 </button>
               ) : (
                 <Link className="font-semibold text-slate-800 underline" to="/login">
-                  Log in now
+                  Sign in
                 </Link>
               )}
             </p>

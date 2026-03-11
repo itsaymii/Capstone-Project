@@ -15,7 +15,7 @@ const incidents = [
     title: 'Minor Earthquake - East Zone',
     time: '10:00 PM',
     status: 'resolved',
-    color: '#22c55e',
+    color: '#2f855a',
     code: 'EQ',
     location: 'East Zone, Lucena City',
     severity: 'Low',
@@ -27,7 +27,7 @@ const incidents = [
     title: 'Building Fire - Commercial District',
     time: '7:15 AM',
     status: 'active',
-    color: '#ef4444',
+    color: '#c2410c',
     code: 'FR',
     location: 'Commercial District, Lucena City',
     severity: 'High',
@@ -39,7 +39,7 @@ const incidents = [
     title: 'Multi-vehicle Accident - Highway',
     time: '9:00 AM',
     status: 'pending',
-    color: '#f59e0b',
+    color: '#b7791f',
     code: 'AC',
     location: 'Pan-Philippine Highway, Lucena City',
     severity: 'Moderate',
@@ -51,7 +51,7 @@ const incidents = [
     title: 'Aftershock - East Zone',
     time: '1:00 AM',
     status: 'resolved',
-    color: '#22c55e',
+    color: '#2f855a',
     code: 'EQ',
     location: 'East Zone, Lucena City',
     severity: 'Low',
@@ -63,7 +63,7 @@ const incidents = [
     title: 'Structural Fire - Barangay 10',
     time: '5:30 AM',
     status: 'active',
-    color: '#ef4444',
+    color: '#c2410c',
     code: 'FR',
     location: 'Barangay 10, Lucena City',
     severity: 'High',
@@ -75,7 +75,7 @@ const incidents = [
     title: 'Road Collision - Diversion Road',
     time: '8:40 AM',
     status: 'pending',
-    color: '#f59e0b',
+    color: '#b7791f',
     code: 'AC',
     location: 'Diversion Road, Lucena City',
     severity: 'Moderate',
@@ -87,7 +87,7 @@ const incidents = [
     title: 'Seismic Tremor - North Sector',
     time: '11:45 PM',
     status: 'resolved',
-    color: '#22c55e',
+    color: '#2f855a',
     code: 'EQ',
     location: 'North Sector, Lucena City',
     severity: 'Low',
@@ -99,7 +99,7 @@ const incidents = [
     title: 'Warehouse Fire - Industrial Zone',
     time: '2:20 AM',
     status: 'active',
-    color: '#ef4444',
+    color: '#c2410c',
     code: 'FR',
     location: 'Industrial Zone, Lucena City',
     severity: 'Critical',
@@ -110,11 +110,18 @@ const incidents = [
 ]
 
 type IncidentItem = (typeof incidents)[number]
+type IncidentTypeFilter = 'all' | 'EQ' | 'FR' | 'AC'
+
+const incidentTypeMeta: Record<Exclude<IncidentTypeFilter, 'all'>, { label: string; color: string }> = {
+  EQ: { label: 'Earthquake', color: '#2f855a' },
+  FR: { label: 'Fire', color: '#c2410c' },
+  AC: { label: 'Accident', color: '#b7791f' },
+}
 
 const statusClassByType: Record<string, string> = {
-  active: 'bg-red-100 text-red-700',
-  resolved: 'bg-emerald-100 text-emerald-700',
-  pending: 'bg-amber-100 text-amber-700',
+  active: 'border border-red-200 bg-red-50 text-red-800',
+  resolved: 'border border-emerald-200 bg-emerald-50 text-emerald-800',
+  pending: 'border border-amber-200 bg-amber-50 text-amber-800',
 }
 
 export function DisasterMapPage() {
@@ -122,6 +129,11 @@ export function DisasterMapPage() {
   const mapContainerRef = useRef<HTMLDivElement | null>(null)
   const mapInstanceRef = useRef<L.Map | null>(null)
   const [selectedIncident, setSelectedIncident] = useState<IncidentItem | null>(null)
+  const [selectedType, setSelectedType] = useState<IncidentTypeFilter>('all')
+  const activeCount = incidents.filter((incident) => incident.status === 'active').length
+  const pendingCount = incidents.filter((incident) => incident.status === 'pending').length
+  const resolvedCount = incidents.filter((incident) => incident.status === 'resolved').length
+  const filteredIncidents = selectedType === 'all' ? incidents : incidents.filter((incident) => incident.code === selectedType)
 
   function handleIncidentClick(incident: IncidentItem) {
     if (!isAuthenticated()) {
@@ -157,19 +169,19 @@ export function DisasterMapPage() {
 
     map.fitBounds(lucenaBounds)
 
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
       attribution: '&copy; OpenStreetMap &copy; CARTO',
     }).addTo(map)
 
     L.rectangle(lucenaBounds, {
-      color: '#60a5fa',
+      color: '#4f81bd',
       weight: 2,
-      fillColor: '#1d4ed8',
+      fillColor: '#2f5f93',
       fillOpacity: 0.06,
       dashArray: '6 5',
     }).addTo(map)
 
-    incidents.forEach((incident) => {
+    filteredIncidents.forEach((incident) => {
       L.circleMarker(incident.coordinates, {
         radius: 7,
         color: '#ffffff',
@@ -191,66 +203,121 @@ export function DisasterMapPage() {
       map.remove()
       mapInstanceRef.current = null
     }
-  }, [])
+  }, [filteredIncidents])
 
   return (
-    <main className="min-h-screen bg-[#f7f9fc] text-slate-800">
+    <main className="min-h-screen bg-[#f1f5f9] text-slate-800">
       <NavigationBar variant="hero" />
 
       <div className="w-full px-0 py-0">
-        <section className="border-b border-slate-200 bg-[radial-gradient(circle_at_top,#ffffff_0%,#f4f8ff_56%,#e9f1fb_100%)] px-6 py-12 sm:px-10 sm:py-14">
+        <section className="border-b border-slate-300 bg-[#f7fafd] px-6 py-10 sm:px-10 sm:py-12">
           <div className="mx-auto w-full max-w-7xl">
-            <p className="inline-flex rounded-full border border-sky-200 bg-sky-50 px-4 py-1 text-xs font-bold uppercase tracking-[0.2em] text-sky-700">
-              Live Monitoring
+            <p className="inline-flex rounded-md border border-[#234d77]/25 bg-[#234d77]/10 px-3 py-1 text-xs font-bold uppercase tracking-[0.15em] text-[#234d77]">
+              Lucena City DRRMO Monitoring Desk
             </p>
-            <h1 className="mt-4 text-4xl font-black tracking-tight text-slate-900 sm:text-5xl">Disaster Map Command View</h1>
-            <p className="mt-3 max-w-3xl text-sm leading-relaxed text-slate-600 sm:text-lg">
-              Real-time incident mapping for Lucena with consolidated status updates and rapid-response visibility.
+            <h1 className="mt-3 text-3xl font-black tracking-tight text-slate-900 sm:text-4xl">Disaster Incident Map</h1>
+            <p className="mt-2 max-w-3xl text-sm leading-relaxed text-slate-600 sm:text-base">
+              Official incident mapping interface for situational awareness, response tracking, and incident verification within Lucena City.
             </p>
 
-            <div className="mt-6 flex flex-wrap items-center gap-2.5 text-sm">
-              <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-700">
-                Active Feed
-              </span>
-              <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-700">
-                Lucena Bounds Locked
-              </span>
-              <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-700">
-                {incidents.length} Reported Incidents
-              </span>
+            <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="rounded-lg border border-slate-300 bg-white px-4 py-3">
+                <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">Total Reports</p>
+                <p className="mt-1 text-2xl font-black text-slate-900">{incidents.length}</p>
+              </div>
+              <div className="rounded-lg border border-[#f3c7c7] bg-[#fff5f5] px-4 py-3">
+                <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#9f2f2f]">Active</p>
+                <p className="mt-1 text-2xl font-black text-[#8f2424]">{activeCount}</p>
+              </div>
+              <div className="rounded-lg border border-[#efd8b0] bg-[#fff8ed] px-4 py-3">
+                <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#946121]">Pending</p>
+                <p className="mt-1 text-2xl font-black text-[#7f5015]">{pendingCount}</p>
+              </div>
+              <div className="rounded-lg border border-[#bfe3ca] bg-[#effaf3] px-4 py-3">
+                <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#2b6a47]">Resolved</p>
+                <p className="mt-1 text-2xl font-black text-[#245a3b]">{resolvedCount}</p>
+              </div>
+            </div>
+
+            <div className="mt-5 rounded-lg border border-slate-300 bg-white px-4 py-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="mr-2 text-xs font-bold uppercase tracking-[0.14em] text-slate-500">Incident Type Mapping</p>
+                <button
+                  className={`rounded-md border px-3 py-1.5 text-xs font-semibold transition ${
+                    selectedType === 'all'
+                      ? 'border-[#234d77] bg-[#234d77] text-white'
+                      : 'border-slate-300 bg-white text-slate-700 hover:border-slate-400'
+                  }`}
+                  onClick={() => setSelectedType('all')}
+                  type="button"
+                >
+                  All
+                </button>
+
+                {(Object.keys(incidentTypeMeta) as Array<Exclude<IncidentTypeFilter, 'all'>>).map((typeCode) => (
+                  <button
+                    className={`rounded-md border px-3 py-1.5 text-xs font-semibold transition ${
+                      selectedType === typeCode
+                        ? 'border-slate-800 text-white'
+                        : 'text-slate-700 hover:border-slate-400'
+                    }`}
+                    key={typeCode}
+                    onClick={() => setSelectedType(typeCode)}
+                    style={{
+                      backgroundColor: selectedType === typeCode ? incidentTypeMeta[typeCode].color : '#ffffff',
+                      borderColor: selectedType === typeCode ? incidentTypeMeta[typeCode].color : '#cbd5e1',
+                    }}
+                    type="button"
+                  >
+                    {incidentTypeMeta[typeCode].label}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
         </section>
 
-        <section className="w-full border-y border-slate-200 bg-[#f7f9fc] p-4 sm:p-5">
+        <section className="w-full border-y border-slate-300 bg-[#f1f5f9] p-4 sm:p-5">
           <div className="grid w-full gap-4 xl:grid-cols-[minmax(0,2.3fr)_minmax(380px,1fr)]">
-            <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-[0_18px_40px_rgba(15,23,42,0.1)]">
+            <div className="overflow-hidden rounded-2xl border border-slate-300 bg-white shadow-[0_12px_28px_rgba(15,23,42,0.08)]">
+              <div className="flex items-center justify-between border-b border-slate-200 bg-[#f3f7fc] px-4 py-3">
+                <p className="text-xs font-bold uppercase tracking-[0.14em] text-[#234d77]">Operational Map View</p>
+                <p className="text-xs font-semibold text-slate-600">Lucena City Boundary</p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-4 border-b border-slate-200 px-4 py-2 text-xs text-slate-600">
+                {(Object.keys(incidentTypeMeta) as Array<Exclude<IncidentTypeFilter, 'all'>>).map((typeCode) => (
+                  <div className="flex items-center gap-1.5" key={typeCode}>
+                    <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: incidentTypeMeta[typeCode].color }} />
+                    <span className="font-semibold text-slate-700">{incidentTypeMeta[typeCode].label}</span>
+                  </div>
+                ))}
+              </div>
+
               <div className="h-[520px] w-full sm:h-[640px]" ref={mapContainerRef} />
             </div>
 
-            <aside className="h-full rounded-3xl border border-slate-200 bg-white p-4 shadow-[0_18px_40px_rgba(15,23,42,0.1)] sm:p-5">
+            <aside className="h-full max-h-[688px] rounded-2xl border border-slate-300 bg-white p-4 shadow-[0_12px_28px_rgba(15,23,42,0.08)] sm:p-5">
               <div className="border-b border-slate-200 pb-3">
                 <div className="flex items-center justify-between">
-                  <h2 className="text-xl font-bold text-slate-900">Incidents</h2>
-                  <span className="rounded-full bg-slate-900 px-2.5 py-1 text-xs font-semibold text-white">{incidents.length}</span>
+                  <h2 className="text-xl font-bold text-slate-900">Incident Log</h2>
+                  <span className="rounded-md bg-[#234d77] px-2.5 py-1 text-xs font-semibold text-white">{filteredIncidents.length}</span>
                 </div>
-                <p className="mt-1 text-xs text-slate-500">Live updates from mapped response zones</p>
+                <p className="mt-1 text-xs text-slate-500">Validated updates from mapped response zones</p>
               </div>
 
-              <div className="mt-4 space-y-3">
-                {incidents.map((incident) => (
-                  <button
-                    className="group w-full rounded-2xl border border-slate-200 bg-gradient-to-b from-white to-slate-50/80 p-3 text-left transition duration-200 hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_10px_18px_rgba(15,23,42,0.09)]"
+              <div className="mt-4 max-h-[500px] space-y-3 overflow-y-auto pr-1">
+                {filteredIncidents.map((incident) => (
+                  <article
+                    className="group w-full rounded-xl border border-slate-200 bg-[#fbfdff] p-3 transition duration-150 hover:border-slate-300 hover:bg-white"
                     key={incident.title}
-                    onClick={() => handleIncidentClick(incident)}
-                    type="button"
                   >
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
                           <span
-                            className="inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-black text-white"
-                            style={{ backgroundColor: incident.color }}
+                            className="inline-flex rounded-md px-1.5 py-0.5 text-[10px] font-black text-white"
+                            style={{ backgroundColor: incident.color, minWidth: '24px' }}
                           >
                             {incident.code}
                           </span>
@@ -265,11 +332,21 @@ export function DisasterMapPage() {
                         {incident.status}
                       </span>
                     </div>
-                  </button>
+
+                    <div className="mt-3 pl-7">
+                      <button
+                        className="rounded-md border border-[#234d77]/30 bg-white px-2.5 py-1.5 text-xs font-semibold text-[#234d77] transition hover:border-[#234d77]/50 hover:bg-[#edf3fa]"
+                        onClick={() => handleIncidentClick(incident)}
+                        type="button"
+                      >
+                        View Info
+                      </button>
+                    </div>
+                  </article>
                 ))}
               </div>
               <p className="mt-4 text-xs text-slate-500">
-                Click an incident to view full details. Login is required before details are shown.
+                Public incident summaries are visible. Login is required to open full incident information.
               </p>
             </aside>
           </div>
