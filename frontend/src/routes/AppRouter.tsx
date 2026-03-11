@@ -1,5 +1,4 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
-
 import { AdminLoginPage } from '../pages/auth/admin/AdminLoginPage'
 import { LoginPage } from '../pages/auth/login/LoginPage'
 import { RegisterPage } from '../pages/auth/register/RegisterPage'
