@@ -1,13 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, NavLink, useNavigate } from 'react-router-dom'
 import logoImage from '../images/Logo.png'
+import notificationIcon from '../images/notification.png'
 import { AUTH_CHANGED_EVENT, getCurrentUserDisplayName, isAuthenticated, logoutUser } from '../services/auth'
+import {
+  getNotifications,
+  markAllNotificationsRead,
+  NOTIFICATIONS_CHANGED_EVENT,
+  type NotificationItem,
+} from '../services/notifications'
 
 const mainLinks = [
   { to: '/landing', label: 'Home' },
   { to: '/disaster-map', label: 'Disaster Map' },
   { to: '/simulation', label: 'Simulation' },
-  { to: '/report-incident', label: 'Report Incident' },
 ]
 
 const authLinks = [
@@ -25,12 +31,16 @@ export function NavigationBar({ variant = 'default', onSignInClick, onSignUpClic
   const navigate = useNavigate()
   const [isMenuOpen, setIsMenuOpen] = useState(false)
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false)
+  const [isNotificationMenuOpen, setIsNotificationMenuOpen] = useState(false)
+  const [notifications, setNotifications] = useState<NotificationItem[]>(() => getNotifications())
   const [authSnapshot, setAuthSnapshot] = useState(() => ({
     authenticated: isAuthenticated(),
     displayName: getCurrentUserDisplayName(),
   }))
   const profileMenuRef = useRef<HTMLDivElement | null>(null)
+  const notificationMenuRef = useRef<HTMLDivElement | null>(null)
   const isHero = variant === 'hero'
+  const unreadCount = useMemo(() => notifications.filter((item) => !item.read).length, [notifications])
 
   const userInitials = useMemo(() => {
     const name = authSnapshot.displayName?.trim()
@@ -58,24 +68,36 @@ export function NavigationBar({ variant = 'default', onSignInClick, onSignUpClic
       })
     }
 
+    function syncNotifications() {
+      setNotifications(getNotifications())
+    }
+
     window.addEventListener('storage', syncAuthSnapshot)
     window.addEventListener(AUTH_CHANGED_EVENT, syncAuthSnapshot)
+    window.addEventListener('storage', syncNotifications)
+    window.addEventListener(NOTIFICATIONS_CHANGED_EVENT, syncNotifications)
 
     return () => {
       window.removeEventListener('storage', syncAuthSnapshot)
       window.removeEventListener(AUTH_CHANGED_EVENT, syncAuthSnapshot)
+      window.removeEventListener('storage', syncNotifications)
+      window.removeEventListener(NOTIFICATIONS_CHANGED_EVENT, syncNotifications)
     }
   }, [])
 
   useEffect(() => {
     function handleDocumentClick(event: MouseEvent) {
       if (!profileMenuRef.current) {
-        return
+        setIsProfileMenuOpen(false)
       }
 
       const target = event.target as Node
-      if (!profileMenuRef.current.contains(target)) {
+      if (profileMenuRef.current && !profileMenuRef.current.contains(target)) {
         setIsProfileMenuOpen(false)
+      }
+
+      if (notificationMenuRef.current && !notificationMenuRef.current.contains(target)) {
+        setIsNotificationMenuOpen(false)
       }
     }
 
@@ -89,24 +111,70 @@ export function NavigationBar({ variant = 'default', onSignInClick, onSignUpClic
     logoutUser()
     setIsMenuOpen(false)
     setIsProfileMenuOpen(false)
-    navigate('/landing')
+    setIsNotificationMenuOpen(false)
+    navigate('/landing', {
+      state: {
+        logoutSuccessMessage: 'You have been logged out successfully.',
+      },
+    })
   }
 
   function handleOpenProfileSettings() {
     setIsProfileMenuOpen(false)
+    setIsNotificationMenuOpen(false)
     setIsMenuOpen(false)
     navigate('/profile-settings')
+  }
+
+  function handleToggleNotifications() {
+    setIsNotificationMenuOpen((current) => {
+      const nextOpen = !current
+      if (nextOpen) {
+        markAllNotificationsRead()
+      }
+      return nextOpen
+    })
+  }
+
+  function formatNotificationTime(timestamp: string): string {
+    const parsed = Date.parse(timestamp)
+    if (Number.isNaN(parsed)) {
+      return 'Now'
+    }
+
+    const diffInSeconds = Math.max(0, Math.floor((Date.now() - parsed) / 1000))
+    if (diffInSeconds < 60) {
+      return 'Just now'
+    }
+    if (diffInSeconds < 3600) {
+      return `${Math.floor(diffInSeconds / 60)}m ago`
+    }
+    if (diffInSeconds < 86400) {
+      return `${Math.floor(diffInSeconds / 3600)}h ago`
+    }
+    return `${Math.floor(diffInSeconds / 86400)}d ago`
   }
 
   const navClasses = isHero
     ? 'sticky top-0 z-[1200] w-full border-b border-slate-200/90 bg-white/95 px-4 py-4 backdrop-blur-md sm:px-6'
     : 'sticky top-0 z-[1200] w-full border-b border-slate-200/80 bg-slate-100/85 px-4 py-4 backdrop-blur-xl sm:px-6'
 
-  const inactiveLinkClasses = isHero ? 'text-slate-600 hover:text-blue-700' : 'text-slate-600 hover:text-blue-700'
-  const activeLinkClasses = isHero ? 'text-blue-700' : 'text-blue-700'
-  const registerLinkClasses = isHero
-    ? 'rounded-lg bg-blue-600 px-4 py-2 text-white hover:bg-blue-500'
-    : ''
+  const inactiveLinkClasses = isHero
+    ? 'text-slate-600 hover:text-[#0b2a57] hover:[text-shadow:0_0_10px_rgba(11,42,87,0.35)]'
+    : 'text-slate-600 hover:text-[#0b2a57] hover:[text-shadow:0_0_10px_rgba(11,42,87,0.35)]'
+  const activeLinkClasses = isHero
+    ? 'text-[#0b2a57] [text-shadow:0_0_8px_rgba(11,42,87,0.2)]'
+    : 'text-[#0b2a57] [text-shadow:0_0_8px_rgba(11,42,87,0.2)]'
+  const signInButtonClasses = isHero
+    ? 'inline-flex items-center rounded-full border border-slate-300 bg-white px-4 py-2 text-[15px] font-semibold text-slate-700 shadow-sm transition hover:border-[#0b2a57]/40 hover:bg-[#0b2a57]/5 hover:text-[#0b2a57]'
+    : 'inline-flex items-center rounded-full border border-slate-300 bg-white px-4 py-2 text-[15px] font-semibold text-slate-700 shadow-sm transition hover:border-[#0b2a57]/40 hover:bg-[#0b2a57]/5 hover:text-[#0b2a57]'
+  const signUpButtonClasses = isHero
+    ? 'inline-flex items-center rounded-full bg-gradient-to-r from-[#0b2a57] to-[#1d4f93] px-4 py-2 text-[15px] font-semibold text-white shadow-[0_8px_20px_rgba(11,42,87,0.35)] transition hover:from-[#12366f] hover:to-[#2563b0]'
+    : 'inline-flex items-center rounded-full bg-gradient-to-r from-[#0b2a57] to-[#1d4f93] px-4 py-2 text-[15px] font-semibold text-white shadow-[0_8px_20px_rgba(11,42,87,0.35)] transition hover:from-[#12366f] hover:to-[#2563b0]'
+  const mobileSignInButtonClasses =
+    'inline-flex w-full items-center justify-center rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-[#0b2a57]/40 hover:bg-[#0b2a57]/5 hover:text-[#0b2a57]'
+  const mobileSignUpButtonClasses =
+    'inline-flex w-full items-center justify-center rounded-xl bg-gradient-to-r from-[#0b2a57] to-[#1d4f93] px-3 py-2.5 text-sm font-semibold text-white transition hover:from-[#12366f] hover:to-[#2563b0]'
 
   const mobilePanelClasses = isHero
     ? 'border-t border-slate-200 bg-white/95'
@@ -156,19 +224,54 @@ export function NavigationBar({ variant = 'default', onSignInClick, onSignUpClic
         </ul>
 
         {authSnapshot.authenticated ? (
-          <div className="relative hidden xl:block" ref={profileMenuRef}>
-            <button
-              aria-expanded={isProfileMenuOpen}
-              aria-label="Open profile menu"
-              className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-slate-300 bg-white text-sm font-bold text-[#0b2a57] shadow-sm transition hover:border-blue-500 hover:text-blue-700"
-              onClick={() => setIsProfileMenuOpen((current) => !current)}
-              type="button"
-            >
-              {userInitials}
-            </button>
+          <div className="hidden items-center gap-2 xl:flex">
+            <div className="relative" ref={notificationMenuRef}>
+              <button
+                aria-expanded={isNotificationMenuOpen}
+                aria-label="Notifications"
+                className="inline-flex items-center justify-center rounded-full p-1 transition hover:bg-slate-100"
+                onClick={handleToggleNotifications}
+                type="button"
+              >
+                <img alt="Notifications" className="h-6 w-6 object-contain" src={notificationIcon} />
+              </button>
 
-            {isProfileMenuOpen ? (
-              <div className="absolute right-0 top-12 z-50 w-56 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl">
+              {isNotificationMenuOpen ? (
+                <div className="absolute right-0 top-11 z-50 w-80 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl">
+                  <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+                    <p className="text-sm font-semibold text-slate-800">Notifications</p>
+                    <p className="text-xs font-medium text-slate-500">{unreadCount} unread</p>
+                  </div>
+
+                  {notifications.length === 0 ? (
+                    <p className="px-4 py-6 text-sm text-slate-500">No notifications yet.</p>
+                  ) : (
+                    <ul className="max-h-80 overflow-y-auto">
+                      {notifications.map((item) => (
+                        <li className="border-b border-slate-100 px-4 py-3 last:border-b-0" key={item.id}>
+                          <p className="text-sm font-medium text-slate-700">{item.message}</p>
+                          <p className="mt-1 text-xs text-slate-500">{formatNotificationTime(item.createdAt)}</p>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              ) : null}
+            </div>
+
+            <div className="relative" ref={profileMenuRef}>
+              <button
+                aria-expanded={isProfileMenuOpen}
+                aria-label="Open profile menu"
+                className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-slate-300 bg-white text-sm font-bold text-[#0b2a57] shadow-sm transition hover:border-blue-500 hover:text-blue-700"
+                onClick={() => setIsProfileMenuOpen((current) => !current)}
+                type="button"
+              >
+                {userInitials}
+              </button>
+
+              {isProfileMenuOpen ? (
+                <div className="absolute right-0 top-12 z-50 w-56 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl">
                 <div className="border-b border-slate-100 px-4 py-3">
                   <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Signed in as</p>
                   <p className="mt-1 text-sm font-semibold text-slate-800">{authSnapshot.displayName ?? 'User'}</p>
@@ -188,8 +291,9 @@ export function NavigationBar({ variant = 'default', onSignInClick, onSignUpClic
                 >
                   Logout
                 </button>
-              </div>
-            ) : null}
+                </div>
+              ) : null}
+            </div>
           </div>
         ) : (
           <ul className="hidden items-center gap-2 xl:flex">
@@ -197,7 +301,7 @@ export function NavigationBar({ variant = 'default', onSignInClick, onSignUpClic
               <li key={link.to}>
                 {link.label === 'Sign in' && onSignInClick ? (
                   <button
-                    className={`inline-flex rounded-lg px-3 py-2 text-[15px] font-semibold transition ${inactiveLinkClasses}`}
+                    className={signInButtonClasses}
                     onClick={() => {
                       onSignInClick()
                       setIsMenuOpen(false)
@@ -208,9 +312,7 @@ export function NavigationBar({ variant = 'default', onSignInClick, onSignUpClic
                   </button>
                 ) : link.label === 'Sign up' && onSignUpClick ? (
                   <button
-                    className={`inline-flex text-[15px] font-semibold transition ${
-                      registerLinkClasses || `rounded-lg px-3 py-2 ${inactiveLinkClasses}`
-                    }`}
+                    className={signUpButtonClasses}
                     onClick={() => {
                       onSignUpClick()
                       setIsMenuOpen(false)
@@ -221,13 +323,7 @@ export function NavigationBar({ variant = 'default', onSignInClick, onSignUpClic
                   </button>
                 ) : (
                   <NavLink
-                    className={({ isActive }) =>
-                      `inline-flex text-[15px] font-semibold transition ${
-                        link.label === 'Sign up'
-                          ? registerLinkClasses
-                          : `rounded-lg px-3 py-2 ${isActive ? activeLinkClasses : inactiveLinkClasses}`
-                      }`
-                    }
+                    className={() => (link.label === 'Sign up' ? signUpButtonClasses : signInButtonClasses)}
                     onClick={() => setIsMenuOpen(false)}
                     to={link.to}
                   >
@@ -290,7 +386,7 @@ export function NavigationBar({ variant = 'default', onSignInClick, onSignUpClic
                 <li key={link.to}>
                   {link.label === 'Sign in' && onSignInClick ? (
                     <button
-                      className={`inline-flex w-full rounded-lg px-3 py-2 text-left text-sm font-semibold transition ${inactiveLinkClasses}`}
+                      className={mobileSignInButtonClasses}
                       onClick={() => {
                         onSignInClick()
                         setIsMenuOpen(false)
@@ -301,9 +397,7 @@ export function NavigationBar({ variant = 'default', onSignInClick, onSignUpClic
                     </button>
                   ) : link.label === 'Sign up' && onSignUpClick ? (
                     <button
-                      className={`inline-flex w-full text-sm font-semibold transition ${
-                        registerLinkClasses || `rounded-lg px-3 py-2 ${inactiveLinkClasses}`
-                      }`}
+                      className={mobileSignUpButtonClasses}
                       onClick={() => {
                         onSignUpClick()
                         setIsMenuOpen(false)
@@ -314,13 +408,7 @@ export function NavigationBar({ variant = 'default', onSignInClick, onSignUpClic
                     </button>
                   ) : (
                     <NavLink
-                      className={({ isActive }) =>
-                        `inline-flex w-full text-sm font-semibold transition ${
-                          link.label === 'Sign up'
-                            ? registerLinkClasses
-                            : `rounded-lg px-3 py-2 ${isActive ? activeLinkClasses : inactiveLinkClasses}`
-                        }`
-                      }
+                      className={() => (link.label === 'Sign up' ? mobileSignUpButtonClasses : mobileSignInButtonClasses)}
                       onClick={() => setIsMenuOpen(false)}
                       to={link.to}
                     >

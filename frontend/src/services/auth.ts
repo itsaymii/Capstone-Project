@@ -1,9 +1,11 @@
 import axios from 'axios'
 import { loginAccount, registerAccount, verifyLoginOtp, verifyRegisterOtp } from './api'
+import { addNotification } from './notifications'
 
 type RegisterPayload = {
   fullName: string
   email: string
+  username?: string
   password: string
 }
 
@@ -23,16 +25,13 @@ type AuthResult = {
   error?: string
   message?: string
   retryAfterSeconds?: number
+  otpEmail?: string
+  skipOtp?: boolean
 }
 
 const AUTH_KEY = 'drms-auth'
 const SESSION_USER_KEY = 'drms-session-user'
 export const AUTH_CHANGED_EVENT = 'drms-auth-changed'
-
-const DEV_AUTH_BYPASS_ENABLED = import.meta.env.DEV && import.meta.env.VITE_DEV_AUTH_BYPASS === 'true'
-const DEV_AUTH_BYPASS_NAME = import.meta.env.VITE_DEV_AUTH_BYPASS_NAME?.trim() || 'Developer Mode User'
-const DEV_AUTH_BYPASS_EMAIL =
-  import.meta.env.VITE_DEV_AUTH_BYPASS_EMAIL?.trim().toLowerCase() || 'developer@local.test'
 
 function emitAuthChanged(): void {
   window.dispatchEvent(new Event(AUTH_CHANGED_EVENT))
@@ -71,6 +70,22 @@ function clearSessionUser(targetStore: Storage): void {
   targetStore.removeItem(SESSION_USER_KEY)
 }
 
+function persistAuthenticatedSession(user: SessionUser, keepLoggedIn: boolean): void {
+  const sessionStore = keepLoggedIn ? localStorage : sessionStorage
+  const oppositeStore = keepLoggedIn ? sessionStorage : localStorage
+
+  sessionStore.setItem(AUTH_KEY, 'true')
+  writeSessionUser(sessionStore, {
+    fullName: user.fullName,
+    email: user.email,
+  })
+
+  oppositeStore.removeItem(AUTH_KEY)
+  clearSessionUser(oppositeStore)
+
+  emitAuthChanged()
+}
+
 function getActiveAuthStore(): Storage | null {
   if (sessionStorage.getItem(AUTH_KEY) === 'true') {
     return sessionStorage
@@ -106,6 +121,7 @@ export async function registerUser(payload: RegisterPayload): Promise<AuthResult
 export async function requestRegisterOtp(payload: RegisterPayload): Promise<AuthResult> {
   const fullName = payload.fullName.trim()
   const email = normalizeEmail(payload.email)
+  const username = payload.username?.trim() || ''
   const password = payload.password
 
   if (!fullName || !email || !password) {
@@ -113,7 +129,13 @@ export async function requestRegisterOtp(payload: RegisterPayload): Promise<Auth
   }
 
   try {
-    const response = await registerAccount({ fullName, email, password })
+    const response = await registerAccount({
+      fullName,
+      email,
+      password,
+      username,
+    })
+    addNotification('Registration OTP sent successfully.')
     return {
       success: true,
       message: response.message,
@@ -138,6 +160,7 @@ export async function verifyRegisterOtpCode(email: string, otp: string): Promise
 
   try {
     const response = await verifyRegisterOtp({ email: normalizedEmail, otp: trimmedOtp })
+    addNotification('Registration completed successfully.')
     return {
       success: true,
       message: response.message,
@@ -163,21 +186,49 @@ export async function loginUser(payload: LoginPayload): Promise<AuthResult> {
   }
 }
 
-export async function requestLoginOtp(email: string, password: string): Promise<AuthResult> {
+export async function requestLoginOtp(
+  email: string,
+  password: string,
+  keepLoggedIn = false,
+  forceOtp = true,
+): Promise<AuthResult> {
   const normalizedEmail = normalizeEmail(email)
 
   if (!normalizedEmail || !password) {
-    return { success: false, error: 'Please enter your email and password.' }
+    return { success: false, error: 'Please enter your email/username and password.' }
   }
 
   try {
-    const response = await loginAccount({ email: normalizedEmail, password })
+    const response = await loginAccount({ email: normalizedEmail, password, forceOtp })
+
+    if (response.skipOtp && response.user) {
+      persistAuthenticatedSession(
+        {
+          fullName: response.user.fullName,
+          email: response.user.email,
+        },
+        keepLoggedIn,
+      )
+      addNotification(`Welcome back, ${response.user.fullName}. Trusted login was used.`)
+
+      return {
+        success: true,
+        message: response.message ?? 'Login successful.',
+        otpEmail: response.user.email,
+        skipOtp: true,
+      }
+    }
+
+    addNotification('Login OTP sent successfully.')
+
     return {
       success: true,
       message: response.message,
+      otpEmail: response.otpEmail,
+      skipOtp: false,
     }
   } catch (error) {
-    const parsedError = parseApiError(error, 'Invalid email or password.')
+    const parsedError = parseApiError(error, 'Invalid email/username or password.')
     return {
       success: false,
       error: parsedError.message,
@@ -201,21 +252,23 @@ export async function verifyLoginOtpCode(payload: {
   try {
     const response = await verifyLoginOtp({ email: normalizedEmail, otp: trimmedOtp })
 
-    const sessionStore = payload.keepLoggedIn ? localStorage : sessionStorage
-    const oppositeStore = payload.keepLoggedIn ? sessionStorage : localStorage
+    if (!response.user) {
+      return { success: false, error: 'Unable to complete login right now.' }
+    }
 
-    sessionStore.setItem(AUTH_KEY, 'true')
-    writeSessionUser(sessionStore, {
-      fullName: response.user.fullName,
-      email: response.user.email,
-    })
+    persistAuthenticatedSession(
+      {
+        fullName: response.user.fullName,
+        email: response.user.email,
+      },
+      payload.keepLoggedIn,
+    )
+    addNotification(`Login successful. Welcome, ${response.user.fullName}.`)
 
-    oppositeStore.removeItem(AUTH_KEY)
-    clearSessionUser(oppositeStore)
-
-    emitAuthChanged()
-
-    return { success: true }
+    return {
+      success: true,
+      message: response.message ?? 'Login successful.',
+    }
   } catch (error) {
     const parsedError = parseApiError(error, 'Unable to verify OTP.')
     return {
@@ -226,10 +279,6 @@ export async function verifyLoginOtpCode(payload: {
 }
 
 export function isAuthenticated(): boolean {
-  if (DEV_AUTH_BYPASS_ENABLED) {
-    return true
-  }
-
   return localStorage.getItem(AUTH_KEY) === 'true' || sessionStorage.getItem(AUTH_KEY) === 'true'
 }
 
@@ -251,13 +300,6 @@ export function getCurrentUserProfile(): SessionUser | null {
   try {
     const activeStore = getActiveAuthStore()
     if (!activeStore) {
-      if (DEV_AUTH_BYPASS_ENABLED) {
-        return {
-          fullName: DEV_AUTH_BYPASS_NAME,
-          email: DEV_AUTH_BYPASS_EMAIL,
-        }
-      }
-
       return null
     }
 
@@ -280,15 +322,6 @@ export function updateCurrentUserProfile(fullName: string): boolean {
 
   const activeStore = getActiveAuthStore()
   if (!activeStore) {
-    if (DEV_AUTH_BYPASS_ENABLED) {
-      writeSessionUser(sessionStorage, {
-        fullName: normalizedName,
-        email: DEV_AUTH_BYPASS_EMAIL,
-      })
-      emitAuthChanged()
-      return true
-    }
-
     return false
   }
 
@@ -302,14 +335,21 @@ export function updateCurrentUserProfile(fullName: string): boolean {
     fullName: normalizedName,
   })
 
+  addNotification('Profile name updated successfully.')
   emitAuthChanged()
   return true
 }
 
 export function logoutUser(): void {
+  const currentUser = getCurrentUserProfile()
   localStorage.removeItem(AUTH_KEY)
   clearSessionUser(localStorage)
   sessionStorage.removeItem(AUTH_KEY)
   clearSessionUser(sessionStorage)
+  addNotification(
+    currentUser
+      ? `You have logged out successfully, ${currentUser.fullName}.`
+      : 'You have logged out successfully.',
+  )
   emitAuthChanged()
 }
