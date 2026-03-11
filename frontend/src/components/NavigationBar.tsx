@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, NavLink, useNavigate } from 'react-router-dom'
 import logoImage from '../images/Logo.png'
 import notificationIcon from '../images/notification.png'
-import { AUTH_CHANGED_EVENT, getCurrentUserDisplayName, isAuthenticated, logoutUser } from '../services/auth'
+import { AUTH_CHANGED_EVENT, getCurrentUserDisplayName, getCurrentUserProfile, isAuthenticated, logoutUser } from '../services/auth'
 import {
   getNotifications,
   markAllNotificationsRead,
@@ -36,11 +36,17 @@ export function NavigationBar({ variant = 'default', onSignInClick, onSignUpClic
   const [authSnapshot, setAuthSnapshot] = useState(() => ({
     authenticated: isAuthenticated(),
     displayName: getCurrentUserDisplayName(),
+    photoUrl: getCurrentUserProfile()?.photoUrl ?? null,
   }))
   const profileMenuRef = useRef<HTMLDivElement | null>(null)
   const notificationMenuRef = useRef<HTMLDivElement | null>(null)
   const isHero = variant === 'hero'
   const unreadCount = useMemo(() => notifications.filter((item) => !item.read).length, [notifications])
+  const displayFirstName = useMemo(() => {
+    const rawName = authSnapshot.displayName?.trim() || 'User'
+    const firstName = rawName.split(/\s+/).filter(Boolean)[0]
+    return firstName || 'User'
+  }, [authSnapshot.displayName])
 
   const userInitials = useMemo(() => {
     const name = authSnapshot.displayName?.trim()
@@ -65,6 +71,7 @@ export function NavigationBar({ variant = 'default', onSignInClick, onSignUpClic
       setAuthSnapshot({
         authenticated: isAuthenticated(),
         displayName: getCurrentUserDisplayName(),
+        photoUrl: getCurrentUserProfile()?.photoUrl ?? null,
       })
     }
 
@@ -229,27 +236,32 @@ export function NavigationBar({ variant = 'default', onSignInClick, onSignUpClic
               <button
                 aria-expanded={isNotificationMenuOpen}
                 aria-label="Notifications"
-                className="inline-flex items-center justify-center rounded-full p-1 transition hover:bg-slate-100"
+                className="relative inline-flex items-center justify-center rounded-full p-1 transition hover:bg-slate-100"
                 onClick={handleToggleNotifications}
                 type="button"
               >
                 <img alt="Notifications" className="h-6 w-6 object-contain" src={notificationIcon} />
+                {unreadCount > 0 ? (
+                  <span className="absolute -right-1 -top-1 inline-flex min-w-[18px] items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold leading-4 text-white shadow-sm">
+                    {unreadCount > 99 ? '99+' : unreadCount}
+                  </span>
+                ) : null}
               </button>
 
               {isNotificationMenuOpen ? (
-                <div className="absolute right-0 top-11 z-50 w-80 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl">
-                  <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
-                    <p className="text-sm font-semibold text-slate-800">Notifications</p>
+                <div className="absolute right-0 top-11 z-50 w-[24rem] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl sm:w-[27rem]">
+                  <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+                    <p className="text-base font-semibold text-slate-800">Notifications</p>
                     <p className="text-xs font-medium text-slate-500">{unreadCount} unread</p>
                   </div>
 
                   {notifications.length === 0 ? (
-                    <p className="px-4 py-6 text-sm text-slate-500">No notifications yet.</p>
+                    <p className="px-5 py-7 text-sm text-slate-500">No notifications yet.</p>
                   ) : (
-                    <ul className="max-h-80 overflow-y-auto">
+                    <ul className="max-h-96 overflow-y-auto">
                       {notifications.map((item) => (
-                        <li className="border-b border-slate-100 px-4 py-3 last:border-b-0" key={item.id}>
-                          <p className="text-sm font-medium text-slate-700">{item.message}</p>
+                        <li className="border-b border-slate-100 px-5 py-4 last:border-b-0" key={item.id}>
+                          <p className="text-[15px] font-medium text-slate-700">{item.message}</p>
                           <p className="mt-1 text-xs text-slate-500">{formatNotificationTime(item.createdAt)}</p>
                         </li>
                       ))}
@@ -263,34 +275,53 @@ export function NavigationBar({ variant = 'default', onSignInClick, onSignUpClic
               <button
                 aria-expanded={isProfileMenuOpen}
                 aria-label="Open profile menu"
-                className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-slate-300 bg-white text-sm font-bold text-[#0b2a57] shadow-sm transition hover:border-blue-500 hover:text-blue-700"
+                className="inline-flex h-11 w-11 items-center justify-center overflow-hidden rounded-full border border-slate-300 bg-white text-sm font-bold text-[#0b2a57] shadow-sm transition hover:border-blue-500 hover:text-blue-700"
                 onClick={() => setIsProfileMenuOpen((current) => !current)}
                 type="button"
               >
-                {userInitials}
+                {authSnapshot.photoUrl ? (
+                  <img alt="Profile" className="h-full w-full object-cover" src={authSnapshot.photoUrl} />
+                ) : (
+                  userInitials
+                )}
               </button>
 
               {isProfileMenuOpen ? (
-                <div className="absolute right-0 top-12 z-50 w-56 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl">
-                <div className="border-b border-slate-100 px-4 py-3">
-                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Signed in as</p>
-                  <p className="mt-1 text-sm font-semibold text-slate-800">{authSnapshot.displayName ?? 'User'}</p>
+                <div className="absolute right-0 top-12 z-50 w-80 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_18px_36px_rgba(15,23,42,0.16)]">
+                <div className="p-3">
+                  <div className="rounded-2xl border border-slate-200 bg-[linear-gradient(120deg,#f8fbff_0%,#eef5ff_100%)] p-3">
+                    <div className="flex items-center gap-3">
+                      {authSnapshot.photoUrl ? (
+                        <img alt="Profile" className="h-12 w-12 rounded-full border border-slate-200 object-cover" src={authSnapshot.photoUrl} />
+                      ) : (
+                        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#0b2a57] text-sm font-bold text-white">{userInitials}</div>
+                      )}
+                      <div className="min-w-0">
+                        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Signed in as</p>
+                        <p className="mt-1 truncate text-base font-semibold text-slate-800">{displayFirstName}</p>
+                      </div>
+                    </div>
+                  </div>
                 </div>
 
-                <button
-                  className="inline-flex w-full px-4 py-3 text-left text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-                  onClick={handleOpenProfileSettings}
-                  type="button"
-                >
-                  Profile Settings
-                </button>
-                <button
-                  className="inline-flex w-full px-4 py-3 text-left text-sm font-semibold text-red-600 transition hover:bg-red-50"
-                  onClick={handleLogout}
-                  type="button"
-                >
-                  Logout
-                </button>
+                <div className="border-t border-slate-100 px-2 pb-2 pt-1">
+                  <button
+                    className="inline-flex w-full items-center justify-between rounded-xl px-3 py-3 text-left text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                    onClick={handleOpenProfileSettings}
+                    type="button"
+                  >
+                    <span>Profile Settings</span>
+                    <span className="text-slate-400">›</span>
+                  </button>
+                  <button
+                    className="inline-flex w-full items-center justify-between rounded-xl px-3 py-3 text-left text-sm font-semibold text-red-600 transition hover:bg-red-50"
+                    onClick={handleLogout}
+                    type="button"
+                  >
+                    <span>Logout</span>
+                    <span className="text-red-300">›</span>
+                  </button>
+                </div>
                 </div>
               ) : null}
             </div>
@@ -362,7 +393,7 @@ export function NavigationBar({ variant = 'default', onSignInClick, onSignUpClic
                 <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[#0b2a57] text-xs font-bold text-white">
                   {userInitials}
                 </div>
-                <p className="text-sm font-semibold text-slate-700">{authSnapshot.displayName ?? 'User'}</p>
+                <p className="text-sm font-semibold text-slate-700">{displayFirstName}</p>
               </div>
 
               <button

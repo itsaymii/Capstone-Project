@@ -10,12 +10,18 @@ const lucenaBounds: LatLngBoundsExpression = [
   [13.98, 121.69],
 ]
 
+const hazardColors = {
+  EQ: '#4ade80',
+  FR: '#fb923c',
+  AC: '#facc15',
+} as const
+
 const incidents = [
   {
     title: 'Minor Earthquake - East Zone',
     time: '10:00 PM',
     status: 'resolved',
-    color: '#2f855a',
+    color: hazardColors.EQ,
     code: 'EQ',
     location: 'East Zone, Lucena City',
     severity: 'Low',
@@ -27,7 +33,7 @@ const incidents = [
     title: 'Building Fire - Commercial District',
     time: '7:15 AM',
     status: 'active',
-    color: '#c2410c',
+    color: hazardColors.FR,
     code: 'FR',
     location: 'Commercial District, Lucena City',
     severity: 'High',
@@ -39,7 +45,7 @@ const incidents = [
     title: 'Multi-vehicle Accident - Highway',
     time: '9:00 AM',
     status: 'pending',
-    color: '#b7791f',
+    color: hazardColors.AC,
     code: 'AC',
     location: 'Pan-Philippine Highway, Lucena City',
     severity: 'Moderate',
@@ -51,7 +57,7 @@ const incidents = [
     title: 'Aftershock - East Zone',
     time: '1:00 AM',
     status: 'resolved',
-    color: '#2f855a',
+    color: hazardColors.EQ,
     code: 'EQ',
     location: 'East Zone, Lucena City',
     severity: 'Low',
@@ -63,7 +69,7 @@ const incidents = [
     title: 'Structural Fire - Barangay 10',
     time: '5:30 AM',
     status: 'active',
-    color: '#c2410c',
+    color: hazardColors.FR,
     code: 'FR',
     location: 'Barangay 10, Lucena City',
     severity: 'High',
@@ -75,7 +81,7 @@ const incidents = [
     title: 'Road Collision - Diversion Road',
     time: '8:40 AM',
     status: 'pending',
-    color: '#b7791f',
+    color: hazardColors.AC,
     code: 'AC',
     location: 'Diversion Road, Lucena City',
     severity: 'Moderate',
@@ -87,7 +93,7 @@ const incidents = [
     title: 'Seismic Tremor - North Sector',
     time: '11:45 PM',
     status: 'resolved',
-    color: '#2f855a',
+    color: hazardColors.EQ,
     code: 'EQ',
     location: 'North Sector, Lucena City',
     severity: 'Low',
@@ -99,7 +105,7 @@ const incidents = [
     title: 'Warehouse Fire - Industrial Zone',
     time: '2:20 AM',
     status: 'active',
-    color: '#c2410c',
+    color: hazardColors.FR,
     code: 'FR',
     location: 'Industrial Zone, Lucena City',
     severity: 'Critical',
@@ -113,9 +119,9 @@ type IncidentItem = (typeof incidents)[number]
 type IncidentTypeFilter = 'all' | 'EQ' | 'FR' | 'AC'
 
 const incidentTypeMeta: Record<Exclude<IncidentTypeFilter, 'all'>, { label: string; color: string }> = {
-  EQ: { label: 'Earthquake', color: '#2f855a' },
-  FR: { label: 'Fire', color: '#c2410c' },
-  AC: { label: 'Accident', color: '#b7791f' },
+  EQ: { label: 'Earthquake', color: hazardColors.EQ },
+  FR: { label: 'Fire', color: hazardColors.FR },
+  AC: { label: 'Accident', color: hazardColors.AC },
 }
 
 const statusClassByType: Record<string, string> = {
@@ -182,12 +188,33 @@ export function DisasterMapPage() {
     }).addTo(map)
 
     filteredIncidents.forEach((incident) => {
+      // Draw a soft halo first so each hazard point feels easier to spot.
+      L.circleMarker(incident.coordinates, {
+        radius: 14,
+        stroke: false,
+        fillColor: incident.color,
+        fillOpacity: 0.24,
+        interactive: false,
+      }).addTo(map)
+
+      if (incident.status === 'active') {
+        L.circleMarker(incident.coordinates, {
+          radius: 10,
+          color: incident.color,
+          weight: 2,
+          fillColor: incident.color,
+          fillOpacity: 0.18,
+          interactive: false,
+          className: 'hazard-marker-pulse',
+        }).addTo(map)
+      }
+
       L.circleMarker(incident.coordinates, {
         radius: 7,
         color: '#ffffff',
-        weight: 1,
+        weight: 1.5,
         fillColor: incident.color,
-        fillOpacity: 0.95,
+        fillOpacity: 0.98,
       })
         .addTo(map)
         .bindPopup(`<strong>${incident.title}</strong><br/>${incident.time}`)
@@ -247,7 +274,7 @@ export function DisasterMapPage() {
             <button
               className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
                 selectedType === 'all'
-                  ? 'border-[#234d77] bg-[#234d77] text-white'
+                  ? 'border-[#8bb5de] bg-[#e8f2fc] text-[#245785]'
                   : 'border-slate-300 bg-white text-slate-700 hover:border-slate-400'
               }`}
               onClick={() => setSelectedType('all')}
@@ -260,7 +287,7 @@ export function DisasterMapPage() {
               <button
                 className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
                   selectedType === typeCode
-                    ? 'border-slate-800 text-white'
+                    ? 'border-slate-300 text-slate-900'
                     : 'border-slate-300 bg-white text-slate-700 hover:border-slate-400'
                 }`}
                 key={typeCode}
@@ -279,20 +306,32 @@ export function DisasterMapPage() {
 
         <section className="w-full bg-[#f1f5f9] p-4 sm:p-5">
           <div className="grid w-full gap-4 xl:grid-cols-[minmax(0,2.3fr)_minmax(380px,1fr)]">
-            <div className="overflow-hidden rounded-3xl border border-white/15 bg-white/95 shadow-[0_20px_44px_rgba(4,19,42,0.35)]">
+            <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-[0_14px_30px_rgba(15,23,42,0.12)]">
               <div className="flex items-center justify-between border-b border-slate-200 bg-[linear-gradient(90deg,#e8f1fd_0%,#f6fbff_100%)] px-4 py-3">
                 <p className="text-xs font-bold uppercase tracking-[0.14em] text-[#1e4f86]">Operational Map View</p>
                 <p className="text-xs font-semibold text-slate-600">Lucena City Boundary</p>
               </div>
 
+              <div className="flex flex-wrap items-center gap-4 border-b border-slate-200 px-4 py-2 text-xs text-slate-600">
+                {(Object.keys(incidentTypeMeta) as Array<Exclude<IncidentTypeFilter, 'all'>>).map((typeCode) => (
+                  <div className="flex items-center gap-1.5" key={typeCode}>
+                    <span
+                      className="inline-block h-2.5 w-2.5 rounded-full shadow-[0_0_8px_rgba(148,163,184,0.5)]"
+                      style={{ backgroundColor: incidentTypeMeta[typeCode].color }}
+                    />
+                    <span className="font-semibold text-slate-700">{incidentTypeMeta[typeCode].label}</span>
+                  </div>
+                ))}
+              </div>
+
               <div className="h-[520px] w-full sm:h-[640px]" ref={mapContainerRef} />
             </div>
 
-            <aside className="h-full max-h-[688px] rounded-3xl border border-white/15 bg-white/95 p-4 shadow-[0_20px_44px_rgba(4,19,42,0.35)] sm:p-5">
+            <aside className="h-full max-h-[688px] rounded-3xl border border-slate-200 bg-white p-4 shadow-[0_14px_30px_rgba(15,23,42,0.12)] sm:p-5">
               <div className="border-b border-slate-200 pb-3">
                 <div className="flex items-center justify-between">
                   <h2 className="text-xl font-bold text-slate-900">Incident Log</h2>
-                  <span className="rounded-full bg-[#1e4f86] px-2.5 py-1 text-xs font-semibold text-white">{filteredIncidents.length}</span>
+                  <span className="rounded-full bg-[#e8f2fc] px-2.5 py-1 text-xs font-semibold text-[#245785]">{filteredIncidents.length}</span>
                 </div>
                 <p className="mt-1 text-xs text-slate-500">Validated updates from mapped response zones</p>
               </div>
@@ -307,7 +346,7 @@ export function DisasterMapPage() {
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
                           <span
-                            className="inline-flex rounded-md px-1.5 py-0.5 text-[10px] font-black text-white"
+                            className="inline-flex rounded-md px-1.5 py-0.5 text-[10px] font-black text-slate-900"
                             style={{ backgroundColor: incident.color, minWidth: '24px' }}
                           >
                             {incident.code}
@@ -345,7 +384,7 @@ export function DisasterMapPage() {
       </div>
 
       {selectedIncident ? (
-        <div className="fixed inset-0 z-[1300] bg-slate-900/45 p-4 backdrop-blur-[1px] sm:p-8" onClick={() => setSelectedIncident(null)}>
+        <div className="fixed inset-0 z-[1300] bg-slate-200/55 p-4 backdrop-blur-[1px] sm:p-8" onClick={() => setSelectedIncident(null)}>
           <div className="mx-auto mt-8 w-full max-w-3xl" onClick={(event) => event.stopPropagation()}>
             <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_20px_40px_rgba(15,23,42,0.22)] sm:p-6">
               <div className="flex items-start justify-between gap-3 border-b border-slate-200 pb-3">
