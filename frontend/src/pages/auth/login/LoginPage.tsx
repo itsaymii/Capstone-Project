@@ -476,11 +476,18 @@ export function LoginPage({ onRequestRegister, onRequestAdminLogin: _onRequestAd
                 <p className="text-center text-sm text-slate-600">
                   Don't have an account?{' '}
                   {onRequestRegister ? (
-                    <button className="font-semibold text-[#0b2a57] underline" onClick={onRequestRegister} type="button">
+                    <button
+                      className="font-semibold text-[#0b2a57] disabled:cursor-not-allowed disabled:text-slate-400"
+                      onClick={onRequestRegister}
+                      type="button"
+                    >
                       Create an account
                     </button>
                   ) : (
-                    <Link className="font-semibold text-[#0b2a57] underline" to="/register">
+                    <Link
+                      className="font-semibold text-[#0b2a57] disabled:cursor-not-allowed disabled:text-slate-400"
+                      to="/register"
+                    >
                       Create an account
                     </Link>
                   )}

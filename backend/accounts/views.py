@@ -1,6 +1,6 @@
 import random
 from datetime import timedelta
-from django.contrib.auth import authenticate
+from django.contrib.auth import authenticate, login
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
 from django.core.mail import send_mail
@@ -20,6 +20,19 @@ from .models import OneTimePassword
 OTP_EXPIRY_MINUTES = 3
 OTP_RESEND_COOLDOWN_SECONDS = 180
 OTP_RECENT_LOGIN_BYPASS_MINUTES = 5
+
+
+def _has_admin_access(user: User) -> bool:
+	return bool(user.is_staff or user.is_superuser)
+
+
+def _serialize_user(user: User, fallback_identifier: str = '') -> dict:
+	contact_value = (user.email or '').strip() or fallback_identifier or user.username
+	return {
+		'fullName': user.first_name or user.username,
+		'email': contact_value,
+		'isAdmin': _has_admin_access(user),
+	}
 
 
 def _generate_otp_code() -> str:
@@ -237,17 +250,38 @@ def login_user(request):
 	if not user:
 		return Response({'error': 'Invalid email/username or password.'}, status=status.HTTP_400_BAD_REQUEST)
 
-	if not force_otp and _has_recent_verified_login_otp(email=account.email, user_id=user.id):
+	if not user.is_active:
+		return Response({'error': 'This account is inactive.'}, status=status.HTTP_403_FORBIDDEN)
+
+	if not force_otp:
+		if not _has_admin_access(user):
+			return Response({'error': 'This account does not have admin dashboard access.'}, status=status.HTTP_403_FORBIDDEN)
+
+		login(request, user)
 		return Response(
 			{
 				'message': 'Login successful.',
 				'skipOtp': True,
-				'user': {
-					'fullName': user.first_name or user.username,
-					'email': user.email,
-				},
+				'user': _serialize_user(user=user, fallback_identifier=identifier),
 			},
 			status=status.HTTP_200_OK,
+		)
+
+	if _has_recent_verified_login_otp(email=account.email, user_id=user.id):
+		login(request, user)
+		return Response(
+			{
+				'message': 'Login successful.',
+				'skipOtp': True,
+				'user': _serialize_user(user=user, fallback_identifier=identifier),
+			},
+			status=status.HTTP_200_OK,
+		)
+
+	if not account.email:
+		return Response(
+			{'error': 'This account needs a valid email address before OTP login can be used.'},
+			status=status.HTTP_400_BAD_REQUEST,
 		)
 
 	recent_otp = _get_recent_otp_request(email=account.email, purpose=OneTimePassword.PURPOSE_LOGIN)
@@ -300,14 +334,12 @@ def verify_login_otp(request):
 
 	otp_record.is_used = True
 	otp_record.save(update_fields=['is_used'])
+	login(request, user)
 
 	return Response(
 		{
 			'message': 'Login successful.',
-			'user': {
-				'fullName': user.first_name or user.username,
-				'email': user.email,
-			},
+			'user': _serialize_user(user=user, fallback_identifier=email),
 		}
 	)
 

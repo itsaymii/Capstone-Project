@@ -1,5 +1,8 @@
 import axios from 'axios'
 import type {
+  AdminDashboardSummaryResponse,
+  DashboardCreateAccountPayload,
+  DashboardCreateAccountResponse,
   AuthApiResponse,
   LoginApiPayload,
   RegisterApiPayload,
@@ -7,8 +10,11 @@ import type {
   VerifyOtpPayload,
 } from '../types/api'
 
+const apiBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim() || 'http://127.0.0.1:8000'
+
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL,
+  baseURL: apiBaseUrl,
+  withCredentials: true,
 })
 
 export async function getTestMessage(): Promise<TestApiResponse> {
@@ -33,5 +39,15 @@ export async function loginAccount(payload: LoginApiPayload): Promise<AuthApiRes
 
 export async function verifyLoginOtp(payload: VerifyOtpPayload): Promise<AuthApiResponse> {
   const { data } = await api.post<AuthApiResponse>('/accounts/auth/login/verify-otp/', payload)
+  return data
+}
+
+export async function getAdminDashboardSummary(): Promise<AdminDashboardSummaryResponse> {
+  const { data } = await api.get<AdminDashboardSummaryResponse>('/dashboard/admin/summary/')
+  return data
+}
+
+export async function createDashboardAccount(payload: DashboardCreateAccountPayload): Promise<DashboardCreateAccountResponse> {
+  const { data } = await api.post<DashboardCreateAccountResponse>('/dashboard/admin/accounts/create/', payload)
   return data
 }

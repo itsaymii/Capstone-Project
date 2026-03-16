@@ -69,6 +69,12 @@ function parseApiError(
         retryAfterSeconds: errorData?.retryAfterSeconds,
       }
     }
+
+    if (!error.response) {
+      return {
+        message: 'Cannot connect to the backend server. Make sure Django is running on http://127.0.0.1:8000.',
+      }
+    }
   }
 
   return { message: fallback }

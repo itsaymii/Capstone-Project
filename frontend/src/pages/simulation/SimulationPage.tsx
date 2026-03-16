@@ -1,137 +1,18 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { NavigationBar } from '../../components/NavigationBar'
 import { isAuthenticated } from '../../services/auth'
+import {
+  SIMULATION_COURSES_CHANGED_EVENT,
+  getSimulationCourses,
+  isEmbeddedVideoUrl,
+  type SimulationCourse,
+  type SimulationCourseDifficulty,
+} from '../../services/simulationCourses'
 
 type CourseStatus = 'Not Started' | 'In Progress' | 'Completed'
-type CourseDifficulty = 'Beginner' | 'Intermediate' | 'Advanced'
 
-type SimulationCourse = {
-  id: string
-  title: string
-  tag: string
-  difficulty: CourseDifficulty
-  duration: string
-  lessons: number
-  progress: number
-  status: CourseStatus
-  description: string
-  accent: string
-  imageUrl: string
-  lessonOutline: Array<{
-    title: string
-    videoUrl: string
-    points: string[]
-  }>
-}
-
-const preparednessStats = [
-  { label: 'Total Registered Trainees', value: '2,431' },
-  { label: 'Completed Courses', value: '1,892' },
-  { label: 'Active Simulations', value: '6' },
-  { label: 'Preparedness Score', value: '82%' },
-]
-
-const initialSimulationCourses: SimulationCourse[] = [
-  {
-    id: 'earthquake',
-    title: 'Earthquake Response Course',
-    tag: 'Seismic Training',
-    difficulty: 'Beginner',
-    duration: '35 min',
-    lessons: 3,
-    progress: 0,
-    status: 'Not Started',
-    description: 'Practice early warning response, safe shelter decisions, and post-quake damage reporting drills.',
-    accent: '#f59e0b',
-    imageUrl:
-      'https://images.unsplash.com/photo-1508182314998-3bd49473002f?auto=format&fit=crop&w=1000&q=80',
-    lessonOutline: [
-      {
-        title: 'Lesson 1 - Before an Earthquake',
-        videoUrl: 'https://www.youtube.com/embed/BLEPakj1YTY',
-        points: [
-          'Prepare an emergency kit (water, flashlight, first aid).',
-          'Identify safe spots at home, such as under a sturdy table.',
-        ],
-      },
-      {
-        title: 'Lesson 2 - During an Earthquake',
-        videoUrl: 'https://www.youtube.com/embed/4WfA7xri9Kk',
-        points: ['Perform Drop, Cover, and Hold.', 'Stay away from windows and tall furniture.'],
-      },
-      {
-        title: 'Lesson 3 - After an Earthquake',
-        videoUrl: 'https://www.youtube.com/embed/Cz4N6A8x5q8',
-        points: ['Check if anyone is injured.', 'Evacuate calmly and proceed to the evacuation area.'],
-      },
-    ],
-  },
-  {
-    id: 'fire',
-    title: 'Fire Emergency Course',
-    tag: 'Fire Suppression',
-    difficulty: 'Intermediate',
-    duration: '40 min',
-    lessons: 3,
-    progress: 46,
-    status: 'In Progress',
-    description: 'Run scenario-based evacuation paths, extinguisher choices, and coordination with fire response teams.',
-    accent: '#ef4444',
-    imageUrl:
-      'https://images.unsplash.com/photo-1578825922519-485b4dd5c533?auto=format&fit=crop&w=1000&q=80',
-    lessonOutline: [
-      {
-        title: 'Lesson 1 - Preventing Fire',
-        videoUrl: 'https://www.youtube.com/embed/woLrY8J6f4g',
-        points: ['Check wiring and appliances regularly.', 'Do not leave cooking unattended.'],
-      },
-      {
-        title: 'Lesson 2 - During a Fire',
-        videoUrl: 'https://www.youtube.com/embed/7nL10C7FSbE',
-        points: ['Evacuate immediately using the nearest exit.', 'Crawl low when smoke is thick.'],
-      },
-      {
-        title: 'Lesson 3 - Call for Help',
-        videoUrl: 'https://www.youtube.com/embed/gxAA3gS8qzY',
-        points: ['Call the fire department.', 'Provide the exact location of the fire.'],
-      },
-    ],
-  },
-  {
-    id: 'accidents',
-    title: 'Road Accident Course',
-    tag: 'Traffic Triage',
-    difficulty: 'Advanced',
-    duration: '30 min',
-    lessons: 3,
-    progress: 100,
-    status: 'Completed',
-    description: 'Train incident scene control, first-response triage basics, and rapid escalation procedures.',
-    accent: '#0ea5e9',
-    imageUrl:
-      'https://images.unsplash.com/photo-1615461066841-6116e61058f4?auto=format&fit=crop&w=1000&q=80',
-    lessonOutline: [
-      {
-        title: 'Lesson 1 - Stay Safe',
-        videoUrl: 'https://www.youtube.com/embed/qxVYg6R3x9I',
-        points: ['Move away from traffic immediately.', 'Turn on hazard lights if you are the driver.'],
-      },
-      {
-        title: 'Lesson 2 - Help the Injured',
-        videoUrl: 'https://www.youtube.com/embed/5V2Vx4HjK8s',
-        points: ['Check if the victim is conscious.', 'Control bleeding if it is safe and possible.'],
-      },
-      {
-        title: 'Lesson 3 - Report the Incident',
-        videoUrl: 'https://www.youtube.com/embed/9j7M6vN2wL0',
-        points: ['Call an ambulance or police.', 'Report clear details of the incident location.'],
-      },
-    ],
-  },
-]
-
-function getDifficultyClasses(difficulty: CourseDifficulty): string {
+function getDifficultyClasses(difficulty: SimulationCourseDifficulty): string {
   if (difficulty === 'Beginner') {
     return 'border-emerald-200 bg-emerald-50 text-emerald-700'
   }
@@ -180,18 +61,97 @@ function CourseIcon({ courseId }: { courseId: string }) {
   )
 }
 
+function renderLessonVideo(videoUrl: string, title: string) {
+  if (!videoUrl) {
+    return (
+      <div className="mb-2 rounded-lg border border-dashed border-slate-300 bg-white px-4 py-6 text-center text-xs font-medium text-slate-500">
+        No lesson video has been added yet.
+      </div>
+    )
+  }
+
+  if (isEmbeddedVideoUrl(videoUrl)) {
+    return (
+      <div className="mb-2 overflow-hidden rounded-lg border border-slate-200 bg-black">
+        <iframe
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+          allowFullScreen
+          className="aspect-video w-full"
+          referrerPolicy="strict-origin-when-cross-origin"
+          src={videoUrl}
+          title={`${title} video`}
+        />
+      </div>
+    )
+  }
+
+  return (
+    <div className="mb-2 overflow-hidden rounded-lg border border-slate-200 bg-black">
+      <video className="aspect-video w-full" controls src={videoUrl}>
+        Your browser does not support the video tag.
+      </video>
+    </div>
+  )
+}
+
+function getMaterialActionLabel(url: string, fileName?: string): string {
+  if (url.startsWith('data:') || fileName) {
+    return 'Download material'
+  }
+
+  return 'Open material'
+}
+
 export function SimulationPage() {
   const navigate = useNavigate()
-  const [courses, setCourses] = useState<SimulationCourse[]>(initialSimulationCourses)
+  const [courses, setCourses] = useState<SimulationCourse[]>(() => getSimulationCourses())
   const [previewCourse, setPreviewCourse] = useState<SimulationCourse | null>(null)
   const [expandedCourseId, setExpandedCourseId] = useState<string | null>(null)
   const [activeCourseId, setActiveCourseId] = useState<string | null>(null)
   const [activeLessonIndex, setActiveLessonIndex] = useState(0)
   const [completedLessonVideos, setCompletedLessonVideos] = useState<Record<string, boolean>>({})
+  const [courseProgress, setCourseProgress] = useState<Record<string, number>>({})
+
+  useEffect(() => {
+    function syncCourses(): void {
+      setCourses(getSimulationCourses())
+    }
+
+    window.addEventListener(SIMULATION_COURSES_CHANGED_EVENT, syncCourses)
+    return () => window.removeEventListener(SIMULATION_COURSES_CHANGED_EVENT, syncCourses)
+  }, [])
+
+  const preparednessStats = useMemo(
+    () => [
+      { label: 'Total Registered Trainees', value: courses.reduce((total, course) => total + course.trainees, 0).toLocaleString() },
+      { label: 'Completed Courses', value: String(Object.values(courseProgress).filter((progress) => progress >= 100).length) },
+      { label: 'Active Simulations', value: String(courses.length) },
+      {
+        label: 'Preparedness Score',
+        value: `${courses.length > 0 ? Math.round(courses.reduce((total, course) => total + course.completionRate, 0) / courses.length) : 0}%`,
+      },
+    ],
+    [courseProgress, courses],
+  )
 
   const activeCourse = activeCourseId ? courses.find((course) => course.id === activeCourseId) ?? null : null
   const currentLessonVideoKey = activeCourse ? `${activeCourse.id}:${activeLessonIndex}` : null
   const isCurrentLessonVideoCompleted = currentLessonVideoKey ? Boolean(completedLessonVideos[currentLessonVideoKey]) : false
+
+  function getCourseProgressValue(courseId: string): number {
+    return courseProgress[courseId] ?? 0
+  }
+
+  function getCourseStatus(courseId: string): CourseStatus {
+    const progress = getCourseProgressValue(courseId)
+    if (progress >= 100) {
+      return 'Completed'
+    }
+    if (progress > 0) {
+      return 'In Progress'
+    }
+    return 'Not Started'
+  }
 
   function handleMarkLessonVideoComplete() {
     if (!currentLessonVideoKey) {
@@ -204,29 +164,19 @@ export function SimulationPage() {
     }))
   }
 
-  function setCourseProgress(courseId: string, lessonIndex: number, markCompleted = false) {
-    setCourses((previousCourses) =>
-      previousCourses.map((course) => {
-        if (course.id !== courseId) {
-          return course
-        }
+  function updateCourseProgress(courseId: string, lessonIndex: number, markCompleted = false) {
+    const targetCourse = courses.find((course) => course.id === courseId)
+    if (!targetCourse) {
+      return
+    }
 
-        if (markCompleted) {
-          return {
-            ...course,
-            progress: 100,
-            status: 'Completed',
-          }
-        }
-
-        const progressFromLesson = Math.round(((lessonIndex + 1) / course.lessonOutline.length) * 100)
-        return {
-          ...course,
-          progress: Math.max(course.progress, progressFromLesson),
-          status: 'In Progress',
-        }
-      }),
-    )
+    setCourseProgress((previous) => {
+      const progressFromLesson = markCompleted ? 100 : Math.round(((lessonIndex + 1) / targetCourse.lessonOutline.length) * 100)
+      return {
+        ...previous,
+        [courseId]: Math.max(previous[courseId] ?? 0, progressFromLesson),
+      }
+    })
   }
 
   function handleStartSimulation(courseId: string) {
@@ -239,7 +189,7 @@ export function SimulationPage() {
     setExpandedCourseId(courseId)
     setActiveCourseId(courseId)
     setActiveLessonIndex(0)
-    setCourseProgress(courseId, 0)
+    updateCourseProgress(courseId, 0)
   }
 
   function handleNextLesson() {
@@ -257,7 +207,7 @@ export function SimulationPage() {
 
     const nextLessonIndex = activeLessonIndex + 1
     setActiveLessonIndex(nextLessonIndex)
-    setCourseProgress(activeCourse.id, nextLessonIndex)
+    updateCourseProgress(activeCourse.id, nextLessonIndex)
   }
 
   function handlePreviousLesson() {
@@ -277,7 +227,7 @@ export function SimulationPage() {
       return
     }
 
-    setCourseProgress(activeCourse.id, activeCourse.lessonOutline.length - 1, true)
+    updateCourseProgress(activeCourse.id, activeCourse.lessonOutline.length - 1, true)
     setActiveCourseId(null)
     setActiveLessonIndex(0)
   }
@@ -324,7 +274,13 @@ export function SimulationPage() {
               key={course.id}
             >
               <div className="-mx-5 -mt-5 mb-4 h-36 overflow-hidden border-b border-slate-200 sm:-mx-6 sm:-mt-6">
-                <img alt={course.title} className="h-full w-full object-cover" src={course.imageUrl} />
+                {course.heroImageUrl ? (
+                  <img alt={course.title} className="h-full w-full object-cover" src={course.heroImageUrl} />
+                ) : (
+                  <div className="flex h-full items-center justify-center bg-[linear-gradient(135deg,#dbeafe_0%,#f8fafc_100%)] px-6 text-center text-sm font-semibold text-slate-500">
+                    No course cover image yet
+                  </div>
+                )}
               </div>
 
               <div
@@ -347,24 +303,27 @@ export function SimulationPage() {
                 <span className={`rounded-full border px-2.5 py-1 font-semibold ${getDifficultyClasses(course.difficulty)}`}>
                   Level: {course.difficulty}
                 </span>
-                <span className={`rounded-full border px-2.5 py-1 font-semibold ${getStatusClasses(course.status)}`}>
-                  {course.status}
+                <span className={`rounded-full border px-2.5 py-1 font-semibold ${getStatusClasses(getCourseStatus(course.id))}`}>
+                  {getCourseStatus(course.id)}
                 </span>
               </div>
 
               <div className="mt-4 space-y-1 text-xs text-slate-500">
                 <p>
-                  <span className="font-semibold text-slate-700">Lessons:</span> {course.lessons}
+                  <span className="font-semibold text-slate-700">Lessons:</span> {course.lessonOutline.length}
                 </p>
                 <p>
-                  <span className="font-semibold text-slate-700">Progress:</span> {course.progress}%
+                  <span className="font-semibold text-slate-700">Progress:</span> {getCourseProgressValue(course.id)}%
+                </p>
+                <p>
+                  <span className="font-semibold text-slate-700">Learning Materials:</span> {course.learningMaterials.length}
                 </p>
               </div>
 
               <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-slate-200">
                 <div
                   className="h-full rounded-full"
-                  style={{ backgroundColor: course.accent, width: `${course.progress}%` }}
+                  style={{ backgroundColor: course.accent, width: `${getCourseProgressValue(course.id)}%` }}
                 />
               </div>
 
@@ -381,6 +340,7 @@ export function SimulationPage() {
                   {course.lessonOutline.map((lesson) => (
                     <div key={lesson.title}>
                       <p className="text-xs font-semibold text-slate-800">{lesson.title}</p>
+                      {lesson.summary ? <p className="mt-1 text-[11px] text-slate-500">{lesson.summary}</p> : null}
                       <ul className="mt-1 list-disc space-y-1 pl-4 text-[11px] leading-relaxed text-slate-600">
                         {lesson.points.map((point) => (
                           <li key={point}>{point}</li>
@@ -420,41 +380,60 @@ export function SimulationPage() {
         <div className="fixed inset-0 z-[1300] bg-slate-900/40 p-4 backdrop-blur-[1px] sm:p-8" onClick={() => setPreviewCourse(null)}>
           <div className="mx-auto mt-8 w-full max-w-2xl" onClick={(event) => event.stopPropagation()}>
             <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_20px_40px_rgba(15,23,42,0.25)]">
-              <img alt={previewCourse.title} className="h-48 w-full object-cover" src={previewCourse.imageUrl} />
+              {previewCourse.heroImageUrl ? (
+                <img alt={previewCourse.title} className="h-48 w-full object-cover" src={previewCourse.heroImageUrl} />
+              ) : (
+                <div className="flex h-48 items-center justify-center bg-[linear-gradient(135deg,#dbeafe_0%,#f8fafc_100%)] px-6 text-center text-sm font-semibold text-slate-500">
+                  No course cover image yet
+                </div>
+              )}
               <div className="p-5 sm:p-6">
                 <p className="text-xs font-bold uppercase tracking-[0.16em] text-[#0b2a57]">Simulation Preview</p>
                 <h3 className="mt-2 text-2xl font-black text-slate-900">{previewCourse.title}</h3>
-                <p className="mt-2 text-sm leading-relaxed text-slate-600">
-                  {previewCourse.description} This module includes guided checkpoints, decision branches, and incident debrief scoring.
-                </p>
+                <p className="mt-2 text-sm leading-relaxed text-slate-600">{previewCourse.description}</p>
+                {previewCourse.audience ? <p className="mt-2 text-sm leading-relaxed text-slate-500"><span className="font-semibold text-slate-700">For:</span> {previewCourse.audience}</p> : null}
 
                 <div className="mt-4 flex flex-wrap gap-2 text-xs">
                   <span className={`rounded-full border px-2.5 py-1 font-semibold ${getDifficultyClasses(previewCourse.difficulty)}`}>
                     {previewCourse.difficulty}
                   </span>
                   <span className="rounded-full border border-slate-200 bg-slate-100 px-2.5 py-1 font-semibold text-slate-700">
-                    {previewCourse.lessons} Lessons
+                    {previewCourse.lessonOutline.length} Lessons
                   </span>
                   <span className="rounded-full border border-slate-200 bg-slate-100 px-2.5 py-1 font-semibold text-slate-700">
                     {previewCourse.duration}
                   </span>
                 </div>
 
+                {(previewCourse.objectives.length > 0 || previewCourse.prerequisites.length > 0) ? (
+                  <div className="mt-5 grid gap-4 lg:grid-cols-2">
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                      <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-600">Learning Objectives</p>
+                      <ul className="mt-3 list-disc space-y-1.5 pl-5 text-sm text-slate-600">
+                        {previewCourse.objectives.map((objective) => (
+                          <li key={objective}>{objective}</li>
+                        ))}
+                      </ul>
+                    </div>
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                      <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-600">Prerequisites</p>
+                      <ul className="mt-3 list-disc space-y-1.5 pl-5 text-sm text-slate-600">
+                        {previewCourse.prerequisites.map((item) => (
+                          <li key={item}>{item}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+                ) : null}
+
                 <div className="mt-5 space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
                   <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-600">Course Lessons</p>
                   {previewCourse.lessonOutline.map((lesson) => (
                     <div key={lesson.title}>
-                      <div className="mb-2 overflow-hidden rounded-lg border border-slate-200 bg-black">
-                        <iframe
-                          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                          allowFullScreen
-                          className="aspect-video w-full"
-                          referrerPolicy="strict-origin-when-cross-origin"
-                          src={lesson.videoUrl}
-                          title={`${lesson.title} video`}
-                        />
-                      </div>
+                      {renderLessonVideo(lesson.videoUrl, lesson.title)}
                       <p className="text-sm font-semibold text-slate-800">{lesson.title}</p>
+                      {lesson.videoFileName ? <p className="mt-1 text-[11px] text-slate-400">Stored file: {lesson.videoFileName}</p> : null}
+                      {lesson.summary ? <p className="mt-1 text-xs text-slate-500 sm:text-sm">{lesson.summary}</p> : null}
                       <ul className="mt-1 list-disc space-y-1 pl-5 text-xs text-slate-600 sm:text-sm">
                         {lesson.points.map((point) => (
                           <li key={point}>{point}</li>
@@ -462,6 +441,31 @@ export function SimulationPage() {
                       </ul>
                     </div>
                   ))}
+                </div>
+
+                <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-600">Learning Materials</p>
+                  {previewCourse.learningMaterials.length > 0 ? (
+                    <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                      {previewCourse.learningMaterials.map((material) => (
+                        <article className="rounded-xl border border-slate-200 bg-white p-3" key={material.id}>
+                          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#0b2a57]">{material.type}</p>
+                          <p className="mt-2 text-sm font-semibold text-slate-800">{material.title}</p>
+                          <p className="mt-1 text-xs leading-relaxed text-slate-500 sm:text-sm">{material.description || 'No description added yet.'}</p>
+                          {material.fileName ? <p className="mt-2 text-[11px] text-slate-400">Stored file: {material.fileName}</p> : null}
+                          {material.url ? (
+                            <a className="mt-3 inline-flex text-xs font-semibold text-[#0b2a57] hover:text-[#123a73] sm:text-sm" download={material.fileName || undefined} href={material.url} rel="noreferrer" target="_blank">
+                              {getMaterialActionLabel(material.url, material.fileName)}
+                            </a>
+                          ) : (
+                            <p className="mt-3 text-xs text-slate-400">No material link added yet.</p>
+                          )}
+                        </article>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="mt-3 text-sm text-slate-500">No learning materials have been added yet.</p>
+                  )}
                 </div>
 
                 <div className="mt-5 flex gap-2">
@@ -506,24 +510,49 @@ export function SimulationPage() {
               </div>
 
               <div className="space-y-4 px-5 py-5 sm:px-6 sm:py-6">
-                <div className="overflow-hidden rounded-xl border border-slate-200 bg-black">
-                  <iframe
-                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                    allowFullScreen
-                    className="aspect-video w-full"
-                    referrerPolicy="strict-origin-when-cross-origin"
-                    src={activeCourse.lessonOutline[activeLessonIndex].videoUrl}
-                    title={`${activeCourse.lessonOutline[activeLessonIndex].title} training video`}
-                  />
-                </div>
+                {renderLessonVideo(activeCourse.lessonOutline[activeLessonIndex].videoUrl, activeCourse.lessonOutline[activeLessonIndex].title)}
 
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
                   <p className="text-sm font-semibold text-slate-900">{activeCourse.lessonOutline[activeLessonIndex].title}</p>
+                  {activeCourse.lessonOutline[activeLessonIndex].videoFileName ? (
+                    <p className="mt-1 text-xs text-slate-400">Stored file: {activeCourse.lessonOutline[activeLessonIndex].videoFileName}</p>
+                  ) : null}
+                  {activeCourse.lessonOutline[activeLessonIndex].summary ? (
+                    <p className="mt-1 text-sm text-slate-500">{activeCourse.lessonOutline[activeLessonIndex].summary}</p>
+                  ) : null}
                   <ul className="mt-2 list-disc space-y-1.5 pl-5 text-sm leading-relaxed text-slate-600">
                     {activeCourse.lessonOutline[activeLessonIndex].points.map((point) => (
                       <li key={point}>{point}</li>
                     ))}
                   </ul>
+                </div>
+
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-sm font-semibold text-slate-900">Learning Materials</p>
+                    <span className="text-xs text-slate-500">{activeCourse.learningMaterials.length} available</span>
+                  </div>
+                  {activeCourse.learningMaterials.length > 0 ? (
+                    <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                      {activeCourse.learningMaterials.map((material) => (
+                        <article className="rounded-xl border border-slate-200 bg-white p-3" key={material.id}>
+                          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#0b2a57]">{material.type}</p>
+                          <p className="mt-1 text-sm font-semibold text-slate-800">{material.title}</p>
+                          <p className="mt-1 text-xs text-slate-500">{material.description || 'No description added yet.'}</p>
+                          {material.fileName ? <p className="mt-2 text-[11px] text-slate-400">Stored file: {material.fileName}</p> : null}
+                          {material.url ? (
+                            <a className="mt-3 inline-flex text-xs font-semibold text-[#0b2a57] hover:text-[#123a73]" download={material.fileName || undefined} href={material.url} rel="noreferrer" target="_blank">
+                              {getMaterialActionLabel(material.url, material.fileName)}
+                            </a>
+                          ) : (
+                            <p className="mt-3 text-xs text-slate-400">No material link added yet.</p>
+                          )}
+                        </article>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="mt-3 text-sm text-slate-500">No learning materials have been added for this course yet.</p>
+                  )}
                 </div>
 
                 <div className="flex flex-wrap gap-2">
