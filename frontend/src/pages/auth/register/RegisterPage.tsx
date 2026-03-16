@@ -457,11 +457,11 @@ export function RegisterPage({ onRequestLogin, onRegistered, modalMode = false }
                 <p className="text-center text-sm text-slate-600">
                   Already have an account?{' '}
                   {onRequestLogin ? (
-                    <button className="font-semibold text-[#0b2a57] underline" onClick={onRequestLogin} type="button">
+                    <button className="font-semibold text-[#0b2a57]" onClick={onRequestLogin} type="button">
                       Sign in
                     </button>
                   ) : (
-                    <Link className="font-semibold text-[#0b2a57] underline" to="/login">
+                    <Link className="font-semibold text-[#0b2a57]" to="/login">
                       Sign in
                     </Link>
                   )}

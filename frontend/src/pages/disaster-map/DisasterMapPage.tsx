@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import L, { type LatLngBoundsExpression } from 'leaflet'
 import 'leaflet/dist/leaflet.css'
+import { AdminSidebar } from '../../components/AdminSidebar'
 import { NavigationBar } from '../../components/NavigationBar'
 import { useNavigate } from 'react-router-dom'
 import { isAuthenticated } from '../../services/auth'
@@ -130,8 +131,9 @@ const statusClassByType: Record<string, string> = {
   pending: 'border border-amber-200 bg-amber-50 text-amber-800',
 }
 
-export function DisasterMapPage() {
+export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | 'admin' }) {
   const navigate = useNavigate()
+  const isAdminVariant = variant === 'admin'
   const mapContainerRef = useRef<HTMLDivElement | null>(null)
   const mapInstanceRef = useRef<L.Map | null>(null)
   const [selectedIncident, setSelectedIncident] = useState<IncidentItem | null>(null)
@@ -142,7 +144,7 @@ export function DisasterMapPage() {
   const filteredIncidents = selectedType === 'all' ? incidents : incidents.filter((incident) => incident.code === selectedType)
 
   function handleIncidentClick(incident: IncidentItem) {
-    if (!isAuthenticated()) {
+    if (!isAdminVariant && !isAuthenticated()) {
       navigate('/login')
       return
     }
@@ -233,34 +235,48 @@ export function DisasterMapPage() {
   }, [filteredIncidents])
 
   return (
-    <main className="min-h-screen bg-[#f1f5f9] text-slate-800">
-      <NavigationBar variant="hero" />
+    <div className={isAdminVariant ? 'min-h-screen bg-[#181c23] text-slate-100 md:flex' : 'min-h-screen bg-[#f1f5f9] text-slate-800'}>
+      {isAdminVariant ? <AdminSidebar activeKey="gisMapping" /> : null}
+
+      <main className={isAdminVariant ? 'flex-1' : ''}>
+        {isAdminVariant ? (
+          <div className="border-b border-slate-800 bg-[#181c23]">
+            <div className="mx-auto w-full max-w-7xl px-6 py-5 sm:px-10">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Admin Operations</p>
+              <h1 className="mt-1 text-2xl font-black text-white">Disaster Map Console</h1>
+            </div>
+          </div>
+        ) : (
+          <NavigationBar variant="hero" />
+        )}
 
       <div className="w-full px-0 py-0">
-        <section className="border-b border-slate-300 bg-[#f7fafd] px-6 py-10 sm:px-10 sm:py-12">
+        <section className={`${isAdminVariant ? 'border-b border-slate-800 bg-[#1d2230]' : 'border-b border-slate-300 bg-[#f7fafd]'} px-6 py-10 sm:px-10 sm:py-12`}>
           <div className="mx-auto w-full max-w-7xl">
-            <p className="inline-flex rounded-full border border-[#234d77]/25 bg-[#234d77]/10 px-3 py-1 text-xs font-bold uppercase tracking-[0.15em] text-[#234d77]">
-              Lucena City DRRMO Monitoring Desk
+            <p className={`inline-flex rounded-full px-3 py-1 text-xs font-bold uppercase tracking-[0.15em] ${isAdminVariant ? 'border border-blue-500/30 bg-blue-500/10 text-blue-200' : 'border border-[#234d77]/25 bg-[#234d77]/10 text-[#234d77]'}`}>
+              {isAdminVariant ? 'Hazard Mapping Control' : 'Lucena City DRRMO Monitoring Desk'}
             </p>
-            <h1 className="mt-3 text-3xl font-black tracking-tight text-slate-900 sm:text-4xl">Disaster Incident Map</h1>
-            <p className="mt-2 max-w-3xl text-sm leading-relaxed text-slate-600 sm:text-base">
-              Official incident mapping interface for situational awareness, response tracking, and incident verification within Lucena City.
+            <h1 className={`mt-3 text-3xl font-black tracking-tight sm:text-4xl ${isAdminVariant ? 'text-white' : 'text-slate-900'}`}>Disaster Incident Map</h1>
+            <p className={`mt-2 max-w-3xl text-sm leading-relaxed sm:text-base ${isAdminVariant ? 'text-slate-300' : 'text-slate-600'}`}>
+              {isAdminVariant
+                ? 'Admin-side incident mapping for validation, field review, and operational hazard monitoring within Lucena City.'
+                : 'Official incident mapping interface for situational awareness, response tracking, and incident verification within Lucena City.'}
             </p>
 
             <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <div className="rounded-2xl border border-slate-300 bg-white px-4 py-3">
+              <div className={`rounded-2xl px-4 py-3 ${isAdminVariant ? 'border border-slate-700 bg-[#232837]' : 'border border-slate-300 bg-white'}`}>
                 <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">Total Reports</p>
-                <p className="mt-1 text-2xl font-black text-slate-900">{incidents.length}</p>
+                <p className={`mt-1 text-2xl font-black ${isAdminVariant ? 'text-white' : 'text-slate-900'}`}>{incidents.length}</p>
               </div>
-              <div className="rounded-2xl border border-[#f3c7c7] bg-[#fff5f5] px-4 py-3">
+              <div className={`rounded-2xl px-4 py-3 ${isAdminVariant ? 'border border-red-500/30 bg-red-500/10' : 'border border-[#f3c7c7] bg-[#fff5f5]'}`}>
                 <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#9f2f2f]">Active</p>
                 <p className="mt-1 text-2xl font-black text-[#8f2424]">{activeCount}</p>
               </div>
-              <div className="rounded-2xl border border-[#efd8b0] bg-[#fff8ed] px-4 py-3">
+              <div className={`rounded-2xl px-4 py-3 ${isAdminVariant ? 'border border-amber-500/30 bg-amber-500/10' : 'border border-[#efd8b0] bg-[#fff8ed]'}`}>
                 <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#946121]">Pending</p>
                 <p className="mt-1 text-2xl font-black text-[#7f5015]">{pendingCount}</p>
               </div>
-              <div className="rounded-2xl border border-[#bfe3ca] bg-[#effaf3] px-4 py-3">
+              <div className={`rounded-2xl px-4 py-3 ${isAdminVariant ? 'border border-emerald-500/30 bg-emerald-500/10' : 'border border-[#bfe3ca] bg-[#effaf3]'}`}>
                 <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#2b6a47]">Resolved</p>
                 <p className="mt-1 text-2xl font-black text-[#245a3b]">{resolvedCount}</p>
               </div>
@@ -268,8 +284,8 @@ export function DisasterMapPage() {
           </div>
         </section>
 
-        <section className="w-full border-b border-slate-300 bg-[#f1f5f9] px-4 py-4 sm:px-5">
-          <div className="mx-auto flex w-full max-w-7xl flex-wrap items-center gap-2 rounded-2xl border border-slate-300 bg-white p-3 sm:p-4">
+        <section className={`w-full px-4 py-4 sm:px-5 ${isAdminVariant ? 'border-b border-slate-800 bg-[#181c23]' : 'border-b border-slate-300 bg-[#f1f5f9]'}`}>
+          <div className={`mx-auto flex w-full max-w-7xl flex-wrap items-center gap-2 rounded-2xl p-3 sm:p-4 ${isAdminVariant ? 'border border-slate-700 bg-[#232837]' : 'border border-slate-300 bg-white'}`}>
             <p className="mr-1 text-xs font-bold uppercase tracking-[0.14em] text-slate-600">Incident Type Mapping</p>
             <button
               className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
@@ -304,10 +320,10 @@ export function DisasterMapPage() {
           </div>
         </section>
 
-        <section className="w-full bg-[#f1f5f9] p-4 sm:p-5">
+        <section className={`w-full p-4 sm:p-5 ${isAdminVariant ? 'bg-[#181c23]' : 'bg-[#f1f5f9]'}`}>
           <div className="grid w-full gap-4 xl:grid-cols-[minmax(0,2.3fr)_minmax(380px,1fr)]">
-            <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-[0_14px_30px_rgba(15,23,42,0.12)]">
-              <div className="flex items-center justify-between border-b border-slate-200 bg-[linear-gradient(90deg,#e8f1fd_0%,#f6fbff_100%)] px-4 py-3">
+            <div className={`overflow-hidden rounded-3xl shadow-[0_14px_30px_rgba(15,23,42,0.12)] ${isAdminVariant ? 'border border-slate-700 bg-[#232837]' : 'border border-slate-200 bg-white'}`}>
+              <div className={`flex items-center justify-between px-4 py-3 ${isAdminVariant ? 'border-b border-slate-700 bg-[#1d2230]' : 'border-b border-slate-200 bg-[linear-gradient(90deg,#e8f1fd_0%,#f6fbff_100%)]'}`}>
                 <p className="text-xs font-bold uppercase tracking-[0.14em] text-[#1e4f86]">Operational Map View</p>
                 <p className="text-xs font-semibold text-slate-600">Lucena City Boundary</p>
               </div>
@@ -327,10 +343,10 @@ export function DisasterMapPage() {
               <div className="h-[520px] w-full sm:h-[640px]" ref={mapContainerRef} />
             </div>
 
-            <aside className="h-full max-h-[688px] rounded-3xl border border-slate-200 bg-white p-4 shadow-[0_14px_30px_rgba(15,23,42,0.12)] sm:p-5">
-              <div className="border-b border-slate-200 pb-3">
+            <aside className={`h-full max-h-[688px] rounded-3xl p-4 shadow-[0_14px_30px_rgba(15,23,42,0.12)] sm:p-5 ${isAdminVariant ? 'border border-slate-700 bg-[#232837]' : 'border border-slate-200 bg-white'}`}>
+              <div className={`pb-3 ${isAdminVariant ? 'border-b border-slate-700' : 'border-b border-slate-200'}`}>
                 <div className="flex items-center justify-between">
-                  <h2 className="text-xl font-bold text-slate-900">Incident Log</h2>
+                  <h2 className={`text-xl font-bold ${isAdminVariant ? 'text-white' : 'text-slate-900'}`}>Incident Log</h2>
                   <span className="rounded-full bg-[#e8f2fc] px-2.5 py-1 text-xs font-semibold text-[#245785]">{filteredIncidents.length}</span>
                 </div>
                 <p className="mt-1 text-xs text-slate-500">Validated updates from mapped response zones</p>
@@ -339,7 +355,7 @@ export function DisasterMapPage() {
               <div className="mt-4 max-h-[500px] space-y-3 overflow-y-auto pr-1">
                 {filteredIncidents.map((incident) => (
                   <article
-                    className="group w-full rounded-xl border border-slate-200 bg-[#fbfdff] p-3 transition duration-150 hover:border-slate-300 hover:bg-white"
+                    className={`group w-full rounded-xl p-3 transition duration-150 ${isAdminVariant ? 'border border-slate-700 bg-[#1d2230] hover:border-slate-500' : 'border border-slate-200 bg-[#fbfdff] hover:border-slate-300 hover:bg-white'}`}
                     key={incident.title}
                   >
                     <div className="flex items-start justify-between gap-2">
@@ -351,7 +367,7 @@ export function DisasterMapPage() {
                           >
                             {incident.code}
                           </span>
-                          <p className="truncate text-sm font-semibold text-slate-900">{incident.title}</p>
+                          <p className={`truncate text-sm font-semibold ${isAdminVariant ? 'text-white' : 'text-slate-900'}`}>{incident.title}</p>
                         </div>
                         <p className="mt-1 pl-7 text-xs text-slate-500">{incident.time}</p>
                       </div>
@@ -376,14 +392,16 @@ export function DisasterMapPage() {
                 ))}
               </div>
               <p className="mt-4 text-xs text-slate-500">
-                Public incident summaries are visible. Login is required to open full incident information.
+                {isAdminVariant
+                  ? 'Admin console can open and review any mapped incident without redirecting to public screens.'
+                  : 'Public incident summaries are visible. Login is required to open full incident information.'}
               </p>
             </aside>
           </div>
         </section>
       </div>
 
-      {selectedIncident ? (
+        {selectedIncident ? (
         <div className="fixed inset-0 z-[1300] bg-slate-200/55 p-4 backdrop-blur-[1px] sm:p-8" onClick={() => setSelectedIncident(null)}>
           <div className="mx-auto mt-8 w-full max-w-3xl" onClick={(event) => event.stopPropagation()}>
             <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_20px_40px_rgba(15,23,42,0.22)] sm:p-6">
@@ -420,7 +438,8 @@ export function DisasterMapPage() {
             </section>
           </div>
         </div>
-      ) : null}
-    </main>
+        ) : null}
+      </main>
+    </div>
   )
 }

@@ -5,6 +5,7 @@ export interface TestApiResponse {
 export interface AuthUser {
   fullName: string
   email: string
+  isAdmin?: boolean
 }
 
 export interface AuthApiResponse {
@@ -30,4 +31,29 @@ export interface LoginApiPayload {
 export interface VerifyOtpPayload {
   email: string
   otp: string
+}
+
+export interface AdminDashboardSummary {
+  totalUsers: number
+  totalAdminUsers: number
+  activeUsersLast30Days: number
+  pendingOtps: number
+  verifiedOtpsToday: number
+}
+
+export interface AdminDashboardSummaryResponse {
+  summary: AdminDashboardSummary
+}
+
+export interface DashboardCreateAccountPayload {
+  fullName: string
+  email: string
+  username?: string
+  password: string
+  isAdmin: boolean
+}
+
+export interface DashboardCreateAccountResponse {
+  message: string
+  user: AuthUser
 }

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ChangeEvent, FormEvent } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { NavigationBar } from '../../components/NavigationBar'
 import {
   getCurrentUserProfile,
@@ -25,7 +26,13 @@ const cityOptions = ['Lucena City', 'Tayabas City', 'Sariaya', 'Candelaria', 'Pa
 
 const provinceOptions = ['Quezon', 'Batangas', 'Laguna', 'Cavite']
 
-export function ProfileSettingsPage() {
+type ProfileSettingsPageProps = {
+  variant?: 'citizen' | 'admin'
+}
+
+export function ProfileSettingsPage({ variant = 'citizen' }: ProfileSettingsPageProps) {
+  const navigate = useNavigate()
+  const isAdminVariant = variant === 'admin'
   const [isEditing, setIsEditing] = useState(false)
   const [fullName, setFullName] = useState('')
   const [email, setEmail] = useState('')
@@ -163,6 +170,23 @@ export function ProfileSettingsPage() {
   const readOnlyFieldClass =
     'w-full rounded-xl border border-slate-200 bg-slate-100 px-3 py-2 text-sm text-slate-600 shadow-inner outline-none'
   const fieldClassName = isEditing ? editableFieldClass : readOnlyFieldClass
+  const pageClassName = isAdminVariant
+    ? 'min-h-screen bg-[#181c23] text-slate-100'
+    : 'min-h-screen bg-gradient-to-br from-slate-100 via-sky-50 to-slate-200 text-slate-800'
+  const containerClassName = isAdminVariant
+    ? 'mx-auto w-full max-w-5xl px-6 py-8 sm:px-8'
+    : 'mx-auto w-full max-w-5xl px-6 py-10 sm:px-8'
+  const sectionClassName = isAdminVariant
+    ? 'rounded-3xl border border-slate-700 bg-[#232837] p-6 shadow-[0_18px_45px_-24px_rgba(0,0,0,0.55)] sm:p-8'
+    : 'rounded-3xl border border-white/70 bg-white/90 p-6 shadow-[0_18px_45px_-24px_rgba(15,23,42,0.45)] backdrop-blur sm:p-8'
+  const headingToneClassName = isAdminVariant ? 'text-slate-100' : 'text-slate-900'
+  const subTextClassName = isAdminVariant ? 'text-slate-400' : 'text-slate-600'
+  const surfaceClassName = isAdminVariant
+    ? 'rounded-2xl border border-slate-700 bg-[#1d2230] p-4 shadow-sm'
+    : 'rounded-2xl border border-slate-200 bg-white p-4 shadow-sm'
+  const accentSurfaceClassName = isAdminVariant
+    ? 'mt-6 flex items-center gap-4 rounded-2xl border border-slate-700 bg-[#1d2230] p-4 shadow-sm'
+    : 'mt-6 flex items-center gap-4 rounded-2xl border border-slate-200 bg-gradient-to-r from-slate-50 via-white to-sky-50 p-4 shadow-sm'
 
   function handleSaveProfile(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -198,14 +222,32 @@ export function ProfileSettingsPage() {
   }
 
   return (
-    <main className="min-h-screen bg-gradient-to-br from-slate-100 via-sky-50 to-slate-200 text-slate-800">
-      <NavigationBar variant="hero" />
+    <main className={pageClassName}>
+      {isAdminVariant ? (
+        <div className="border-b border-slate-800 bg-[#181c23]">
+          <div className="mx-auto flex w-full max-w-5xl items-center justify-between px-6 py-5 sm:px-8">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Admin Panel</p>
+              <h1 className="mt-1 text-2xl font-black text-white">Profile Settings</h1>
+            </div>
+            <button
+              className="rounded-xl border border-slate-700 bg-[#232837] px-4 py-2 text-sm font-semibold text-slate-200 transition hover:border-blue-500 hover:text-white"
+              onClick={() => navigate('/admin-dashboard')}
+              type="button"
+            >
+              Back to Dashboard
+            </button>
+          </div>
+        </div>
+      ) : (
+        <NavigationBar variant="hero" />
+      )}
 
-      <div className="mx-auto w-full max-w-5xl px-6 py-10 sm:px-8">
-        <section className="rounded-3xl border border-white/70 bg-white/90 p-6 shadow-[0_18px_45px_-24px_rgba(15,23,42,0.45)] backdrop-blur sm:p-8">
+      <div className={containerClassName}>
+        <section className={sectionClassName}>
           <p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-500">Account</p>
           <div className="mt-2 flex flex-wrap items-center gap-3">
-            <h1 className="text-3xl font-black text-slate-900 sm:text-4xl">Profile Settings</h1>
+            <h1 className={`text-3xl font-black sm:text-4xl ${headingToneClassName}`}>Profile Settings</h1>
             <span
               className={`inline-flex rounded-full border px-3 py-1 text-[11px] font-bold uppercase tracking-[0.14em] ${
                 isEditing ? 'border-blue-200 bg-blue-50 text-blue-700' : 'border-slate-200 bg-slate-100 text-slate-600'
@@ -214,9 +256,9 @@ export function ProfileSettingsPage() {
               {isEditing ? 'Editing' : 'View Only'}
             </span>
           </div>
-          <p className="mt-2 text-sm text-slate-600">Manage your account details used across the DRRMO portal.</p>
+          <p className={`mt-2 text-sm ${subTextClassName}`}>Manage your account details used across the DRRMO portal.</p>
 
-          <div className="mt-6 flex items-center gap-4 rounded-2xl border border-slate-200 bg-gradient-to-r from-slate-50 via-white to-sky-50 p-4 shadow-sm">
+          <div className={accentSurfaceClassName}>
             {photoPreviewUrl ? (
               <img alt="Profile" className="h-14 w-14 rounded-full border-2 border-white object-cover shadow" src={photoPreviewUrl} />
             ) : (
@@ -225,12 +267,12 @@ export function ProfileSettingsPage() {
               </div>
             )}
             <div>
-              <p className="text-sm font-semibold text-slate-900">{fullName || 'User Profile'}</p>
-              <p className="text-xs text-slate-600">{email || 'No email found'}</p>
+              <p className={`text-sm font-semibold ${headingToneClassName}`}>{fullName || 'User Profile'}</p>
+              <p className={`text-xs ${subTextClassName}`}>{email || 'No email found'}</p>
             </div>
           </div>
 
-          <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className={`mt-4 ${surfaceClassName}`}>
             <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Profile Picture</p>
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <button
@@ -338,7 +380,7 @@ export function ProfileSettingsPage() {
               </label>
             </div>
 
-            <div className="rounded-2xl border border-slate-200 bg-gradient-to-b from-slate-50 to-white p-4 shadow-sm">
+            <div className={isAdminVariant ? 'rounded-2xl border border-slate-700 bg-[#1d2230] p-4 shadow-sm' : 'rounded-2xl border border-slate-200 bg-gradient-to-b from-slate-50 to-white p-4 shadow-sm'}>
               <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Address Information</p>
               <div className="mt-3 grid gap-5 sm:grid-cols-2">
                 <label className="block sm:col-span-2">
@@ -406,7 +448,7 @@ export function ProfileSettingsPage() {
               </div>
             </div>
 
-            <div className="rounded-2xl border border-slate-200 bg-gradient-to-b from-slate-50 to-white p-4 shadow-sm">
+            <div className={isAdminVariant ? 'rounded-2xl border border-slate-700 bg-[#1d2230] p-4 shadow-sm' : 'rounded-2xl border border-slate-200 bg-gradient-to-b from-slate-50 to-white p-4 shadow-sm'}>
               <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Emergency Contact</p>
               <div className="mt-3 grid gap-5 sm:grid-cols-2">
                 <label className="block">
