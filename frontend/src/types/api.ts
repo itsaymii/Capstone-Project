@@ -3,9 +3,14 @@ export interface TestApiResponse {
 }
 
 export interface AuthUser {
+  id?: number
   fullName: string
   email: string
+  username?: string
   isAdmin?: boolean
+  isActive?: boolean
+  dateJoined?: string | null
+  lastLogin?: string | null
 }
 
 export interface AuthApiResponse {
@@ -56,4 +61,26 @@ export interface DashboardCreateAccountPayload {
 export interface DashboardCreateAccountResponse {
   message: string
   user: AuthUser
+}
+
+export interface DashboardAccountsResponse {
+  users: AuthUser[]
+}
+
+export interface DashboardUpdateAccountPayload {
+  fullName: string
+  email: string
+  username: string
+  password?: string
+  isAdmin: boolean
+  isActive: boolean
+}
+
+export interface DashboardUpdateAccountResponse {
+  message: string
+  user: AuthUser
+}
+
+export interface DashboardDeleteAccountResponse {
+  message: string
 }

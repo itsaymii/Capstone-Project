@@ -17,15 +17,6 @@ function SidebarIcon({ icon }: { icon: AdminNavIcon }) {
     )
   }
 
-  if (icon === 'database') {
-    return (
-      <svg aria-hidden className="h-4 w-4" fill="none" viewBox="0 0 24 24">
-        <ellipse cx="12" cy="6.5" rx="6.5" ry="2.75" stroke="currentColor" strokeWidth="1.8" />
-        <path d="M5.5 6.5v5c0 1.52 2.91 2.75 6.5 2.75s6.5-1.23 6.5-2.75v-5M5.5 11.5v5c0 1.52 2.91 2.75 6.5 2.75s6.5-1.23 6.5-2.75v-5" stroke="currentColor" strokeWidth="1.8" />
-      </svg>
-    )
-  }
-
   if (icon === 'mapping') {
     return (
       <svg aria-hidden className="h-4 w-4" fill="none" viewBox="0 0 24 24">
