@@ -26,10 +26,15 @@ def _has_admin_access(user: User) -> bool:
 	return bool(user.is_staff or user.is_superuser)
 
 
+def _get_user_full_name(user: User) -> str:
+	full_name = f"{user.first_name} {user.last_name}".strip()
+	return full_name or user.username
+
+
 def _serialize_user(user: User, fallback_identifier: str = '') -> dict:
 	contact_value = (user.email or '').strip() or fallback_identifier or user.username
 	return {
-		'fullName': user.first_name or user.username,
+		'fullName': _get_user_full_name(user),
 		'email': contact_value,
 		'isAdmin': _has_admin_access(user),
 	}

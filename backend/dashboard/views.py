@@ -27,6 +27,24 @@ def _build_unique_username(seed: str) -> str:
     return username
 
 
+def _get_user_full_name(user: User) -> str:
+    full_name = f"{user.first_name} {user.last_name}".strip()
+    return full_name or user.username
+
+
+def _serialize_dashboard_user(user: User) -> dict:
+    return {
+        'id': user.id,
+        'fullName': _get_user_full_name(user),
+        'email': user.email,
+        'username': user.username,
+        'isAdmin': bool(user.is_staff or user.is_superuser),
+        'isActive': user.is_active,
+        'dateJoined': timezone.localtime(user.date_joined).isoformat() if user.date_joined else None,
+        'lastLogin': timezone.localtime(user.last_login).isoformat() if user.last_login else None,
+    }
+
+
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def admin_dashboard_summary(request):
@@ -86,11 +104,74 @@ def create_dashboard_account(request):
     return Response(
         {
             'message': 'Account created successfully.',
-            'user': {
-                'fullName': user.first_name or user.username,
-                'email': user.email,
-                'isAdmin': user.is_staff,
-            },
+            'user': _serialize_dashboard_user(user),
         },
         status=status.HTTP_201_CREATED,
+    )
+
+
+@api_view(['GET'])
+@permission_classes([IsAdminUser])
+def list_dashboard_accounts(request):
+    users = User.objects.order_by('-date_joined', '-id')
+    return Response({'users': [_serialize_dashboard_user(user) for user in users]})
+
+
+@api_view(['PUT', 'PATCH', 'DELETE'])
+@permission_classes([IsAdminUser])
+def dashboard_account_detail(request, user_id: int):
+    user = User.objects.filter(id=user_id).first()
+    if not user:
+        return Response({'error': 'User account not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+    if request.method == 'DELETE':
+        if request.user.id == user.id:
+            return Response({'error': 'You cannot delete the account currently in use.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        user.delete()
+        return Response({'message': 'Account deleted successfully.'}, status=status.HTTP_200_OK)
+
+    full_name = (request.data.get('fullName') or '').strip()
+    email = (request.data.get('email') or '').strip().lower()
+    username = (request.data.get('username') or '').strip().lower()
+    password = request.data.get('password') or ''
+
+    if not full_name or not email or not username:
+        return Response({'error': 'Full name, email, and username are required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        validate_email(email)
+    except ValidationError:
+        return Response({'error': 'Please provide a valid email address.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if len(password) > 0 and len(password) < 6:
+        return Response({'error': 'Password must be at least 6 characters.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if User.objects.filter(email__iexact=email).exclude(id=user.id).exists():
+        return Response({'error': 'This email is already in use.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if User.objects.filter(username__iexact=username).exclude(id=user.id).exists():
+        return Response({'error': 'This username is already in use.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    is_admin = bool(request.data.get('isAdmin'))
+    is_active = bool(request.data.get('isActive', True))
+
+    if request.user.id == user.id and not is_admin:
+        return Response({'error': 'You cannot remove your own admin access.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    user.first_name = full_name
+    user.email = email
+    user.username = username
+    user.is_staff = is_admin
+    user.is_active = is_active
+    if password:
+        user.set_password(password)
+    user.save()
+
+    return Response(
+        {
+            'message': 'Account updated successfully.',
+            'user': _serialize_dashboard_user(user),
+        },
+        status=status.HTTP_200_OK,
     )
