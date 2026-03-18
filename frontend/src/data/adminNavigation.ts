@@ -28,7 +28,7 @@ export type AdminNavItem = {
 }
 
 export const adminNavItems: AdminNavItem[] = [
-  { key: 'dashboardOverview', label: 'Overview', to: '/admin-dashboard', icon: 'dashboard' },
+  { key: 'dashboardOverview', label: 'Dashboard', to: '/admin-dashboard', icon: 'dashboard' },
   { key: 'gisMapping', label: 'Mapping', to: '/admin-dashboard?section=map', icon: 'mapping' },
   { key: 'riskScoring', label: 'Scoring', to: '/admin-dashboard?section=scoring', icon: 'risk' },
   { key: 'predictiveTrends', label: 'Trends', to: '/admin-dashboard?section=trends', icon: 'trend' },

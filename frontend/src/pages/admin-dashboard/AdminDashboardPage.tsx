@@ -14,6 +14,13 @@ import type { AdminNavKey } from '../../data/adminNavigation'
 import type { AuthUser } from '../../types/api'
 import { getCurrentUserProfile, logoutUser } from '../../services/auth'
 import { createDashboardAccount, deleteDashboardAccount, getDashboardAccounts, updateDashboardAccount } from '../../services/api'
+import {
+  NOTIFICATIONS_CHANGED_EVENT,
+  getNotifications,
+  markAllNotificationsRead,
+  type NotificationItem,
+} from '../../services/notifications'
+import notificationIcon from '../../images/notification.png'
 
 type WorkspaceSection = 'overview' | 'reports' | 'map' | 'simulation' | 'scoring' | 'trends' | 'resources' | 'users' | 'settings'
 type MapFilter = 'all' | HazardType
@@ -192,7 +199,38 @@ function getWorkspaceSection(sectionParam: string | null): WorkspaceSection {
   return 'overview'
 }
 
-function HeaderIcon({ name }: { name: 'search' | 'bell' | 'message' }) {
+function formatNotificationTime(value: string): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return ''
+  }
+
+  const minutesAgo = Math.max(0, Math.floor((Date.now() - date.getTime()) / 60000))
+  if (minutesAgo < 1) {
+    return 'Just now'
+  }
+
+  if (minutesAgo < 60) {
+    return `${minutesAgo}m ago`
+  }
+
+  const hoursAgo = Math.floor(minutesAgo / 60)
+  if (hoursAgo < 24) {
+    return `${hoursAgo}h ago`
+  }
+
+  const daysAgo = Math.floor(hoursAgo / 24)
+  if (daysAgo < 7) {
+    return `${daysAgo}d ago`
+  }
+
+  return date.toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+  })
+}
+
+function HeaderIcon({ name }: { name: 'search' | 'bell' }) {
   if (name === 'search') {
     return (
       <svg aria-hidden className="h-4 w-4" fill="none" viewBox="0 0 24 24">
@@ -210,32 +248,13 @@ function HeaderIcon({ name }: { name: 'search' | 'bell' | 'message' }) {
     )
   }
 
-  if (name === 'message') {
-    return (
-      <svg aria-hidden className="h-4 w-4" fill="none" viewBox="0 0 24 24">
-        <path d="M6 7.5h12A1.5 1.5 0 0 1 19.5 9v6A1.5 1.5 0 0 1 18 16.5H10l-4 3v-3H6A1.5 1.5 0 0 1 4.5 15V9A1.5 1.5 0 0 1 6 7.5Z" stroke="currentColor" strokeLinejoin="round" strokeWidth="1.8" />
-      </svg>
-    )
-  }
-
-  if (name === 'grid') {
-    return (
-      <svg aria-hidden className="h-4 w-4" fill="none" viewBox="0 0 24 24">
-        <path d="M6 6h4v4H6zm8 0h4v4h-4zM6 14h4v4H6zm8 0h4v4h-4z" stroke="currentColor" strokeLinejoin="round" strokeWidth="1.8" />
-      </svg>
-    )
-  }
-
-  return (
-    <svg aria-hidden className="h-4 w-4" fill="none" viewBox="0 0 24 24">
-      <path d="M6 7.5h12A1.5 1.5 0 0 1 19.5 9v6A1.5 1.5 0 0 1 18 16.5H10l-4 3v-3H6A1.5 1.5 0 0 1 4.5 15V9A1.5 1.5 0 0 1 6 7.5Z" stroke="currentColor" strokeLinejoin="round" strokeWidth="1.8" />
-    </svg>
-  )
+  return null
 }
 
 export function AdminDashboardPage() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
+  const notificationsMenuRef = useRef<HTMLDivElement | null>(null)
   const topProfileMenuRef = useRef<HTMLDivElement | null>(null)
   const [currentDate, setCurrentDate] = useState('')
   const [currentTime, setCurrentTime] = useState('')
@@ -246,6 +265,8 @@ export function AdminDashboardPage() {
   const [reportHazardFilter, setReportHazardFilter] = useState<ReportHazardFilter>('all')
   const [reportLocationFilter, setReportLocationFilter] = useState('')
   const [mapFilter, setMapFilter] = useState<MapFilter>('all')
+  const [notifications, setNotifications] = useState<NotificationItem[]>(() => getNotifications())
+  const [isNotificationsOpen, setIsNotificationsOpen] = useState(false)
   const [isTopProfileMenuOpen, setIsTopProfileMenuOpen] = useState(false)
   const [dashboardUsers, setDashboardUsers] = useState<AuthUser[]>([])
   const [isUsersLoading, setIsUsersLoading] = useState(false)
@@ -275,6 +296,7 @@ export function AdminDashboardPage() {
     }
     return `${nameParts[0][0]}${nameParts[1][0]}`.toUpperCase()
   }, [displayName])
+  const unreadNotificationsCount = useMemo(() => notifications.filter((item) => !item.read).length, [notifications])
 
   useEffect(() => {
     function syncDateTime(): void {
@@ -302,18 +324,31 @@ export function AdminDashboardPage() {
 
   useEffect(() => {
     function handleDocumentClick(event: MouseEvent): void {
-      if (!topProfileMenuRef.current) {
-        return
+      if (topProfileMenuRef.current && !topProfileMenuRef.current.contains(event.target as Node)) {
+        setIsTopProfileMenuOpen(false)
       }
 
-      if (!topProfileMenuRef.current.contains(event.target as Node)) {
-        setIsTopProfileMenuOpen(false)
+      if (notificationsMenuRef.current && !notificationsMenuRef.current.contains(event.target as Node)) {
+        setIsNotificationsOpen(false)
       }
     }
 
     document.addEventListener('mousedown', handleDocumentClick)
 
     return () => document.removeEventListener('mousedown', handleDocumentClick)
+  }, [])
+
+  useEffect(() => {
+    function syncNotifications(): void {
+      setNotifications(getNotifications())
+    }
+
+    syncNotifications()
+    window.addEventListener(NOTIFICATIONS_CHANGED_EVENT, syncNotifications)
+
+    return () => {
+      window.removeEventListener(NOTIFICATIONS_CHANGED_EVENT, syncNotifications)
+    }
   }, [])
 
   useEffect(() => {
@@ -974,6 +1009,15 @@ export function AdminDashboardPage() {
   function handleOpenAdminProfile(): void {
     setIsTopProfileMenuOpen(false)
     navigate('/admin-profile-settings')
+  }
+
+  function handleToggleNotifications(): void {
+    setIsNotificationsOpen((current) => !current)
+    setIsTopProfileMenuOpen(false)
+  }
+
+  function handleMarkAllNotificationsRead(): void {
+    markAllNotificationsRead()
   }
 
   function getUsersApiErrorMessage(error: unknown, fallbackMessage: string): string {
@@ -2040,7 +2084,7 @@ export function AdminDashboardPage() {
           : 'dashboardOverview'
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-[#f4f7fb] text-slate-900">
+    <div className="relative min-h-screen overflow-x-hidden bg-[#f4f7fb] text-slate-900">
       <div className="relative z-10 flex min-h-screen">
         <AdminSidebar
           activeKey={activeSidebarKey}
@@ -2058,27 +2102,71 @@ export function AdminDashboardPage() {
         />
 
         <main className="flex min-h-screen flex-1 flex-col">
-          <header className="mx-4 mt-4 flex flex-col gap-4 sm:mx-6">
+          <header className="sticky top-0 z-30 mx-4 mt-4 flex flex-col gap-4 pb-2 sm:mx-6">
             <div className="flex flex-wrap items-center gap-3 rounded-[24px] border border-slate-200 bg-white px-4 py-4 shadow-[0_12px_32px_rgba(15,23,42,0.08)] md:flex-nowrap md:px-5">
-              <div className="inline-flex min-w-fit items-center rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs font-medium text-slate-700">
+              <div className="inline-flex min-w-fit items-center px-1 py-1 text-sm font-semibold text-slate-800">
                 {currentDate} | {currentTime}
               </div>
 
-              <label className="flex min-w-[220px] flex-1 items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-slate-500">
-                <HeaderIcon name="search" />
-                <input className="w-full bg-transparent text-sm text-slate-900 outline-none placeholder:text-slate-400" placeholder="Search..." type="text" />
-              </label>
-
               <div className="ml-auto flex items-center gap-2">
-                <button className="flex h-11 w-11 items-center justify-center rounded-2xl border border-slate-200 bg-slate-50 text-slate-700 transition hover:bg-slate-100" type="button">
-                  <HeaderIcon name="bell" />
-                </button>
-                <button className="flex h-11 w-11 items-center justify-center rounded-2xl border border-slate-200 bg-slate-50 text-slate-700 transition hover:bg-slate-100" type="button">
-                  <HeaderIcon name="message" />
-                </button>
+                <label className="flex min-w-[220px] w-full max-w-[360px] items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-slate-500 md:max-w-[420px]">
+                  <HeaderIcon name="search" />
+                  <input className="w-full bg-transparent text-sm text-slate-900 outline-none placeholder:text-slate-400" placeholder="Search..." type="text" />
+                </label>
+
+                <div className="relative" ref={notificationsMenuRef}>
+                  <button
+                    aria-label="Notifications"
+                    className="relative inline-flex h-9 w-9 items-center justify-center text-blue-800 transition hover:opacity-80"
+                    onClick={handleToggleNotifications}
+                    type="button"
+                  >
+                    <img alt="" aria-hidden className="h-6 w-6 object-contain" src={notificationIcon} />
+                    {unreadNotificationsCount > 0 ? (
+                      <span className="absolute -right-1 -top-1 flex min-h-[1.1rem] min-w-[1.1rem] items-center justify-center rounded-full bg-rose-600 px-1 text-[10px] font-bold text-white">
+                        {unreadNotificationsCount > 9 ? '9+' : unreadNotificationsCount}
+                      </span>
+                    ) : null}
+                  </button>
+
+                  {isNotificationsOpen ? (
+                    <div className="absolute right-0 top-[calc(100%+0.75rem)] z-30 w-[320px] max-w-[84vw] rounded-2xl border border-slate-200 bg-white p-2 shadow-[0_18px_38px_rgba(15,23,42,0.12)]">
+                      <div className="flex items-center justify-between border-b border-slate-200 px-3 pb-3 pt-2">
+                        <div>
+                          <p className="text-sm font-semibold text-slate-900">Notifications</p>
+                          <p className="text-xs text-slate-500">{unreadNotificationsCount} unread</p>
+                        </div>
+                        <button
+                          className="text-xs font-semibold text-blue-700 transition hover:text-blue-800 disabled:text-slate-300"
+                          disabled={unreadNotificationsCount === 0}
+                          onClick={handleMarkAllNotificationsRead}
+                          type="button"
+                        >
+                          Mark all as read
+                        </button>
+                      </div>
+
+                      <div className="max-h-[320px] overflow-y-auto py-2">
+                        {notifications.length === 0 ? (
+                          <p className="px-3 py-8 text-center text-sm text-slate-500">No notifications yet.</p>
+                        ) : (
+                          notifications.slice(0, 10).map((item) => (
+                            <div
+                              className={`rounded-xl px-3 py-2.5 ${item.read ? 'text-slate-600' : 'bg-blue-50 text-slate-900'}`}
+                              key={item.id}
+                            >
+                              <p className="text-sm leading-relaxed">{item.message}</p>
+                              <p className="mt-1 text-[11px] text-slate-500">{formatNotificationTime(item.createdAt)}</p>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
                 <div className="relative" ref={topProfileMenuRef}>
                   <button
-                    className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-slate-900 transition hover:bg-slate-100"
+                    className="flex items-center gap-3 px-1 py-1 text-slate-900 transition hover:opacity-85"
                     onClick={() => setIsTopProfileMenuOpen((current) => !current)}
                     type="button"
                   >
@@ -2122,14 +2210,16 @@ export function AdminDashboardPage() {
               </div>
             </div>
 
-            <div className="flex flex-wrap items-end justify-between gap-4 px-1">
-              <div>
-                <p className="text-sm font-medium text-slate-500">Hazard operations workspace</p>
-                <h1 className="mt-1 text-3xl font-semibold tracking-tight text-slate-900 md:text-4xl">
-                  Welcome back, <span className="text-blue-800">{firstName}</span>
-                </h1>
+            {activeSection === 'overview' ? (
+              <div className="flex flex-wrap items-end justify-between gap-4 px-1">
+                <div>
+                  <p className="text-sm font-medium text-slate-500">Hazard operations workspace</p>
+                  <h1 className="mt-1 text-3xl font-semibold tracking-tight text-slate-900 md:text-4xl">
+                    Welcome back, <span className="text-blue-800">{firstName}</span>
+                  </h1>
+                </div>
               </div>
-            </div>
+            ) : null}
           </header>
 
           {activeSection === 'overview' ? renderOverviewSection() : null}

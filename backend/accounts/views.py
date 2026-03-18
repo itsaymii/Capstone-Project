@@ -22,6 +22,23 @@ OTP_RESEND_COOLDOWN_SECONDS = 180
 OTP_RECENT_LOGIN_BYPASS_MINUTES = 5
 
 
+def _coerce_bool(value, default: bool = False) -> bool:
+	if isinstance(value, bool):
+		return value
+
+	if value is None:
+		return default
+
+	if isinstance(value, str):
+		normalized = value.strip().lower()
+		if normalized in {'true', '1', 'yes', 'y', 'on'}:
+			return True
+		if normalized in {'false', '0', 'no', 'n', 'off', ''}:
+			return False
+
+	return bool(value)
+
+
 def _has_admin_access(user: User) -> bool:
 	return bool(user.is_staff or user.is_superuser)
 
@@ -242,7 +259,7 @@ def verify_register_otp(request):
 def login_user(request):
 	identifier = (request.data.get('email') or request.data.get('identifier') or '').strip().lower()
 	password = request.data.get('password') or ''
-	force_otp = bool(request.data.get('forceOtp'))
+	force_otp = _coerce_bool(request.data.get('forceOtp'), default=True)
 
 	if not identifier or not password:
 		return Response({'error': 'Please enter your email/username and password.'}, status=status.HTTP_400_BAD_REQUEST)
