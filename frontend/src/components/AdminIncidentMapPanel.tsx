@@ -6,20 +6,13 @@ import type { HazardIncident, HazardType } from '../data/adminOperations'
 type IncidentMapFilter = 'all' | HazardType
 type ReportableHazardType = Extract<HazardType, 'FR' | 'AC'>
 type IncidentSeverity = HazardIncident['severity']
-type RespondedToOption =
-  | 'RCA'
-  | 'Fire Incident'
-  | 'Crime Against Person/Property'
-  | 'Medical Emergency'
-  | 'Ambulance Assistance'
-  | 'Stand-By Medical Team'
-  | 'Drowning'
 
-type ActivityLogEntry = {
+type AccidentVictimEntry = {
   id: string
-  time: string
-  activity: string
-  remarks: string
+  name: string
+  age: string
+  address: string
+  condition: string
 }
 
 type FireFormState = {
@@ -33,16 +26,13 @@ type FireFormState = {
 }
 
 type AccidentFormState = {
-  team: string
-  reportDate: string
-  shiftTime: string
-  dutyFor: string
-  respondedTo: RespondedToOption
-  location: string
+  accidentType: string
+  address: string
+  actionTaken: string
   severity: IncidentSeverity
   latitude: string
   longitude: string
-  activityLogs: ActivityLogEntry[]
+  victims: AccidentVictimEntry[]
 }
 
 type NewIncidentInput = {
@@ -80,22 +70,23 @@ const hazardTypeMeta: Record<HazardType, { label: string; color: string }> = {
 }
 
 const severityOptions: IncidentSeverity[] = ['Low', 'Moderate', 'High', 'Critical']
-const respondedToOptions: RespondedToOption[] = [
-  'RCA',
+const accidentTypeOptions = [
+  'Road Crash Accident',
   'Fire Incident',
   'Crime Against Person/Property',
   'Medical Emergency',
   'Ambulance Assistance',
-  'Stand-By Medical Team',
+  'Stand-by Medical Team',
   'Drowning',
 ]
 
-function createActivityLogEntry(): ActivityLogEntry {
+function createVictimEntry(): AccidentVictimEntry {
   return {
     id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-    time: '',
-    activity: '',
-    remarks: '',
+    name: '',
+    age: '',
+    address: '',
+    condition: '',
   }
 }
 
@@ -111,16 +102,13 @@ const defaultFireFormState: FireFormState = {
 
 function createDefaultAccidentFormState(): AccidentFormState {
   return {
-    team: 'BRAVO',
-    reportDate: new Date().toISOString().slice(0, 10),
-    shiftTime: '08:00H - 08:00H',
-    dutyFor: '',
-    respondedTo: 'RCA',
-    location: '',
+    accidentType: 'Road Crash Accident',
+    address: '',
+    actionTaken: '',
     severity: 'Moderate',
     latitude: '13.934',
     longitude: '121.621',
-    activityLogs: [createActivityLogEntry()],
+    victims: [createVictimEntry()],
   }
 }
 
@@ -253,7 +241,7 @@ export function AdminIncidentMapPanel({ incidents, selectedType, onSelectType, o
     }
   }
 
-  function handleAccidentFieldChange(field: Exclude<keyof AccidentFormState, 'code' | 'activityLogs'>, value: string): void {
+  function handleAccidentFieldChange(field: Exclude<keyof AccidentFormState, 'code' | 'victims'>, value: string): void {
     setAccidentFormState((current) => ({
       ...current,
       [field]: value,
@@ -263,10 +251,10 @@ export function AdminIncidentMapPanel({ incidents, selectedType, onSelectType, o
     }
   }
 
-  function handleActivityLogChange(entryId: string, field: keyof Omit<ActivityLogEntry, 'id'>, value: string): void {
+  function handleVictimFieldChange(entryId: string, field: keyof Omit<AccidentVictimEntry, 'id'>, value: string): void {
     setAccidentFormState((current) => ({
       ...current,
-      activityLogs: current.activityLogs.map((entry) =>
+      victims: current.victims.map((entry) =>
         entry.id === entryId
           ? {
               ...entry,
@@ -283,7 +271,7 @@ export function AdminIncidentMapPanel({ incidents, selectedType, onSelectType, o
   function handleAddActivityLog(): void {
     setAccidentFormState((current) => ({
       ...current,
-      activityLogs: [...current.activityLogs, createActivityLogEntry()],
+      victims: [...current.victims, createVictimEntry()],
     }))
     if (accidentFeedbackMessage) {
       setAccidentFeedbackMessage('')
@@ -292,13 +280,13 @@ export function AdminIncidentMapPanel({ incidents, selectedType, onSelectType, o
 
   function handleRemoveActivityLog(entryId: string): void {
     setAccidentFormState((current) => {
-      if (current.activityLogs.length === 1) {
+      if (current.victims.length === 1) {
         return current
       }
 
       return {
         ...current,
-        activityLogs: current.activityLogs.filter((entry) => entry.id !== entryId),
+        victims: current.victims.filter((entry) => entry.id !== entryId),
       }
     })
     if (accidentFeedbackMessage) {
@@ -343,37 +331,38 @@ export function AdminIncidentMapPanel({ incidents, selectedType, onSelectType, o
       return
     }
 
-    const populatedActivityLogs = accidentFormState.activityLogs.filter((entry) => entry.time.trim() && entry.activity.trim())
-
-    if (!accidentFormState.team.trim() || !accidentFormState.reportDate || !accidentFormState.shiftTime.trim() || !accidentFormState.dutyFor.trim() || !accidentFormState.location.trim()) {
-      setAccidentFeedbackMessage('Complete the accident report header, location, and duty personnel fields first.')
+    if (!accidentFormState.accidentType.trim() || !accidentFormState.address.trim() || !accidentFormState.actionTaken.trim()) {
+      setAccidentFeedbackMessage('Complete the type of accident, address, and A/T fields first.')
       return
     }
 
-    if (populatedActivityLogs.length === 0) {
-      setAccidentFeedbackMessage('Add at least one accident activity log with time and activity details.')
+    const populatedVictims = accidentFormState.victims.filter(
+      (victim) => victim.name.trim() && victim.age.trim() && victim.address.trim() && victim.condition.trim(),
+    )
+
+    if (populatedVictims.length === 0) {
+      setAccidentFeedbackMessage('Add at least one victim with complete name, age, address, and condition details.')
       return
     }
 
-    const activitySummary = populatedActivityLogs
-      .map((entry) => {
-        const remarks = entry.remarks.trim() ? ` Remarks: ${entry.remarks.trim()}.` : ''
-        return `${entry.time.trim()} - ${entry.activity.trim()}.${remarks}`
+    const victimSummary = populatedVictims
+      .map((victim, index) => {
+        return `Victim ${index + 1}: ${victim.name.trim()}, Age ${victim.age.trim()}, Address ${victim.address.trim()}, Condition ${victim.condition.trim()}.`
       })
       .join(' ')
 
     onCreateIncident({
       code: 'AC',
-      title: `${accidentFormState.respondedTo} - ${accidentFormState.location.trim()}`,
-      location: accidentFormState.location.trim(),
-      responseTeam: accidentFormState.team.trim(),
+      title: `${accidentFormState.accidentType} - ${accidentFormState.address.trim()}`,
+      location: accidentFormState.address.trim(),
+      responseTeam: 'Accident Response Team',
       severity: accidentFormState.severity,
-      description: `Accomplishment report dated ${accidentFormState.reportDate} (${accidentFormState.shiftTime.trim()}) for ${accidentFormState.dutyFor.trim()}. Responded to: ${accidentFormState.respondedTo}. ${activitySummary}`,
+      description: `Type of Accident: ${accidentFormState.accidentType}. Address: ${accidentFormState.address.trim()}. ${victimSummary} A/T: ${accidentFormState.actionTaken.trim()}.`,
       coordinates: [latitude, longitude],
     })
 
     setAccidentFormState(createDefaultAccidentFormState())
-    setAccidentFeedbackMessage('Accident accomplishment report added to the map and reports list.')
+    setAccidentFeedbackMessage('Accident report added to the map and reports list.')
   }
 
   return (
@@ -431,7 +420,7 @@ export function AdminIncidentMapPanel({ incidents, selectedType, onSelectType, o
 
         <aside className="overflow-x-hidden rounded-[28px] border border-slate-200 bg-white p-4 shadow-[0_12px_32px_rgba(15,23,42,0.08)] sm:p-5 md:h-[calc(100vh-13rem)] md:overflow-hidden">
           <div className="border-b border-slate-200 pb-4">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Accomplishment Reports</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Initial Reports</p>
             <h2 className="mt-1 text-xl font-bold text-slate-900 sm:text-2xl">{activeReportForm === 'FR' ? 'Fire Report Form' : 'Accident Report Form'}</h2>
             <p className="mt-2 text-sm leading-relaxed text-slate-600">
               Click Fire or Accident in the map filters and the matching accomplishment report form will appear here.
@@ -459,285 +448,280 @@ export function AdminIncidentMapPanel({ incidents, selectedType, onSelectType, o
           ) : null}
 
           {selectedType === 'FR' || selectedType === 'AC' ? (
-            <div className="mt-5 grid gap-5 overflow-x-hidden md:h-[calc(100%-7.5rem)] md:overflow-y-auto md:pr-1">
+            <div className="mt-5 grid gap-5 overflow-x-hidden pb-3 md:h-[calc(100%-7.5rem)] md:overflow-y-auto md:pr-2 md:pb-6">
               {activeReportForm === 'FR' ? (
-                <section className="grid gap-4 overflow-x-hidden">
-              <label className="grid gap-2 text-sm font-medium text-slate-700">
-                Incident title
-                <input
-                  className="w-full min-w-0 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-700"
-                  onChange={(event) => handleFireFieldChange('title', event.target.value)}
-                  placeholder="Example: Vehicle Fire - Barangay 6"
-                  type="text"
-                  value={fireFormState.title}
-                />
-              </label>
+                <section className="grid gap-5 overflow-x-hidden">
+                  <div className="rounded-2xl border border-orange-200 bg-[linear-gradient(135deg,#fff1ea_0%,#ffffff_60%)] p-4">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-orange-700">Fire Report</p>
+                    <h3 className="mt-1 text-lg font-bold text-slate-900">Incident Details</h3>
+                    <p className="mt-1 text-xs text-slate-600">Complete the fire incident information and submit it to the live map.</p>
 
-              <label className="grid gap-2 text-sm font-medium text-slate-700">
-                Location
-                <input
-                  className="w-full min-w-0 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-700"
-                  onChange={(event) => handleFireFieldChange('location', event.target.value)}
-                  placeholder="Exact place in Lucena City"
-                  type="text"
-                  value={fireFormState.location}
-                />
-              </label>
+                    <label className="mt-4 grid gap-2 text-sm font-medium text-slate-700">
+                      Incident title
+                      <input
+                        className="w-full min-w-0 rounded-xl border border-orange-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-orange-500 focus:ring-2 focus:ring-orange-100"
+                        onChange={(event) => handleFireFieldChange('title', event.target.value)}
+                        placeholder="Example: Vehicle Fire - Barangay 6"
+                        type="text"
+                        value={fireFormState.title}
+                      />
+                    </label>
 
-              <div className="grid gap-4 sm:grid-cols-2">
-                <label className="grid gap-2 text-sm font-medium text-slate-700">
-                  Severity
-                  <select
-                    className="w-full min-w-0 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-700"
-                    onChange={(event) => handleFireFieldChange('severity', event.target.value)}
-                    value={fireFormState.severity}
-                  >
-                    {severityOptions.map((severity) => (
-                      <option key={severity} value={severity}>
-                        {severity}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="grid gap-2 text-sm font-medium text-slate-700">
-                  Response team
-                  <input
-                    className="w-full min-w-0 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-700"
-                    onChange={(event) => handleFireFieldChange('responseTeam', event.target.value)}
-                    placeholder="Assigned fire unit"
-                    type="text"
-                    value={fireFormState.responseTeam}
-                  />
-                </label>
-              </div>
+                    <label className="mt-4 grid gap-2 text-sm font-medium text-slate-700">
+                      Location
+                      <input
+                        className="w-full min-w-0 rounded-xl border border-orange-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-orange-500 focus:ring-2 focus:ring-orange-100"
+                        onChange={(event) => handleFireFieldChange('location', event.target.value)}
+                        placeholder="Exact place in Lucena City"
+                        type="text"
+                        value={fireFormState.location}
+                      />
+                    </label>
 
-              <div className="grid gap-4 sm:grid-cols-2">
-                <label className="grid gap-2 text-sm font-medium text-slate-700">
-                  Latitude
-                  <input
-                    className="w-full min-w-0 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-700"
-                    onChange={(event) => handleFireFieldChange('latitude', event.target.value)}
-                    type="text"
-                    value={fireFormState.latitude}
-                  />
-                </label>
-                <label className="grid gap-2 text-sm font-medium text-slate-700">
-                  Longitude
-                  <input
-                    className="w-full min-w-0 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-700"
-                    onChange={(event) => handleFireFieldChange('longitude', event.target.value)}
-                    type="text"
-                    value={fireFormState.longitude}
-                  />
-                </label>
-              </div>
-
-              <label className="grid gap-2 text-sm font-medium text-slate-700">
-                Description
-                <textarea
-                  className="min-h-28 w-full min-w-0 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-700"
-                  onChange={(event) => handleFireFieldChange('description', event.target.value)}
-                  placeholder="Short fire incident description, affected area, and current action taken"
-                  value={fireFormState.description}
-                />
-              </label>
-
-              {fireFeedbackMessage ? <p className="rounded-2xl border border-orange-200 bg-white px-4 py-3 text-sm font-medium text-orange-900">{fireFeedbackMessage}</p> : null}
-
-              <button
-                className="rounded-xl bg-orange-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-orange-700"
-                onClick={handleFireSubmit}
-                type="button"
-              >
-                Add fire report to map
-              </button>
-                </section>
-              ) : (
-                <section className="grid gap-4 overflow-x-hidden">
-              <div className="grid gap-4 sm:grid-cols-2">
-                <label className="grid gap-2 text-sm font-medium text-slate-700">
-                  Team
-                  <input
-                    className="w-full min-w-0 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-700"
-                    onChange={(event) => handleAccidentFieldChange('team', event.target.value)}
-                    placeholder="Example: BRAVO"
-                    type="text"
-                    value={accidentFormState.team}
-                  />
-                </label>
-                <label className="grid gap-2 text-sm font-medium text-slate-700">
-                  Date
-                  <input
-                    className="w-full min-w-0 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-700"
-                    onChange={(event) => handleAccidentFieldChange('reportDate', event.target.value)}
-                    type="date"
-                    value={accidentFormState.reportDate}
-                  />
-                </label>
-              </div>
-
-              <div className="grid gap-4 sm:grid-cols-2">
-                <label className="grid gap-2 text-sm font-medium text-slate-700">
-                  Time
-                  <input
-                    className="w-full min-w-0 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-700"
-                    onChange={(event) => handleAccidentFieldChange('shiftTime', event.target.value)}
-                    placeholder="Example: 08:00H - 08:00H"
-                    type="text"
-                    value={accidentFormState.shiftTime}
-                  />
-                </label>
-                <label className="grid gap-2 text-sm font-medium text-slate-700">
-                  For
-                  <input
-                    className="w-full min-w-0 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-700"
-                    onChange={(event) => handleAccidentFieldChange('dutyFor', event.target.value)}
-                    placeholder="Personnel name"
-                    type="text"
-                    value={accidentFormState.dutyFor}
-                  />
-                </label>
-              </div>
-
-              <div className="grid gap-4 sm:grid-cols-2">
-                <label className="grid gap-2 text-sm font-medium text-slate-700">
-                  Responded To
-                  <select
-                    className="w-full min-w-0 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-700"
-                    onChange={(event) => handleAccidentFieldChange('respondedTo', event.target.value)}
-                    value={accidentFormState.respondedTo}
-                  >
-                    {respondedToOptions.map((option) => (
-                      <option key={option} value={option}>
-                        {option}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="grid gap-2 text-sm font-medium text-slate-700">
-                  Severity
-                  <select
-                    className="w-full min-w-0 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-700"
-                    onChange={(event) => handleAccidentFieldChange('severity', event.target.value)}
-                    value={accidentFormState.severity}
-                  >
-                    {severityOptions.map((severity) => (
-                      <option key={severity} value={severity}>
-                        {severity}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-
-              <label className="grid gap-2 text-sm font-medium text-slate-700">
-                Incident location
-                <input
-                  className="w-full min-w-0 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-700"
-                  onChange={(event) => handleAccidentFieldChange('location', event.target.value)}
-                  placeholder="Example: Near Rotonda, Isabang, Lucena City"
-                  type="text"
-                  value={accidentFormState.location}
-                />
-              </label>
-
-              <div className="grid gap-4 sm:grid-cols-2">
-                <label className="grid gap-2 text-sm font-medium text-slate-700">
-                  Latitude
-                  <input
-                    className="w-full min-w-0 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-700"
-                    onChange={(event) => handleAccidentFieldChange('latitude', event.target.value)}
-                    type="text"
-                    value={accidentFormState.latitude}
-                  />
-                </label>
-                <label className="grid gap-2 text-sm font-medium text-slate-700">
-                  Longitude
-                  <input
-                    className="w-full min-w-0 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-700"
-                    onChange={(event) => handleAccidentFieldChange('longitude', event.target.value)}
-                    type="text"
-                    value={accidentFormState.longitude}
-                  />
-                </label>
-              </div>
-
-              <div className="grid gap-3 border-t border-slate-200 pt-3">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
-                    <p className="text-sm font-semibold text-slate-900">Activity Log</p>
-                    <p className="text-xs text-slate-500">Fill in the Time, Activity, and Remarks rows based on the accomplishment report.</p>
-                  </div>
-                  <button
-                    className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-100 sm:self-auto"
-                    onClick={handleAddActivityLog}
-                    type="button"
-                  >
-                    Add row
-                  </button>
-                </div>
-
-                <div className="grid gap-3">
-                  {accidentFormState.activityLogs.map((entry, index) => (
-                    <div className="grid gap-3 border-t border-slate-200 pt-3 first:border-t-0 first:pt-0" key={entry.id}>
-                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                        <p className="text-sm font-semibold text-slate-800">Entry {index + 1}</p>
-                        <button
-                          className="text-left text-xs font-semibold text-rose-700 disabled:text-slate-300 sm:text-right"
-                          disabled={accidentFormState.activityLogs.length === 1}
-                          onClick={() => handleRemoveActivityLog(entry.id)}
-                          type="button"
+                    <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                      <label className="grid gap-2 text-sm font-medium text-slate-700">
+                        Severity
+                        <select
+                          className="w-full min-w-0 rounded-xl border border-orange-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-orange-500 focus:ring-2 focus:ring-orange-100"
+                          onChange={(event) => handleFireFieldChange('severity', event.target.value)}
+                          value={fireFormState.severity}
                         >
-                          Remove
-                        </button>
-                      </div>
-
-                      <div className="mt-3 grid gap-3 sm:grid-cols-[180px_minmax(0,1fr)]">
-                        <label className="grid gap-2 text-sm font-medium text-slate-700">
-                          Time
-                          <input
-                            className="w-full min-w-0 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-700"
-                            onChange={(event) => handleActivityLogChange(entry.id, 'time', event.target.value)}
-                            placeholder="Example: 0925H"
-                            type="text"
-                            value={entry.time}
-                          />
-                        </label>
-                        <label className="grid gap-2 text-sm font-medium text-slate-700">
-                          Remarks
-                          <input
-                            className="w-full min-w-0 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-700"
-                            onChange={(event) => handleActivityLogChange(entry.id, 'remarks', event.target.value)}
-                            placeholder="Optional remarks"
-                            type="text"
-                            value={entry.remarks}
-                          />
-                        </label>
-                      </div>
-
-                      <label className="mt-3 grid gap-2 text-sm font-medium text-slate-700">
-                        Activity
-                        <textarea
-                          className="min-h-28 w-full min-w-0 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-700"
-                          onChange={(event) => handleActivityLogChange(entry.id, 'activity', event.target.value)}
-                          placeholder="Example: Ambulance assistance, victim details, first aid, and transport notes"
-                          value={entry.activity}
+                          {severityOptions.map((severity) => (
+                            <option key={severity} value={severity}>
+                              {severity}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="grid gap-2 text-sm font-medium text-slate-700">
+                        Response team
+                        <input
+                          className="w-full min-w-0 rounded-xl border border-orange-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-orange-500 focus:ring-2 focus:ring-orange-100"
+                          onChange={(event) => handleFireFieldChange('responseTeam', event.target.value)}
+                          placeholder="Assigned fire unit"
+                          type="text"
+                          value={fireFormState.responseTeam}
                         />
                       </label>
                     </div>
-                  ))}
-                </div>
-              </div>
 
-              {accidentFeedbackMessage ? <p className="rounded-2xl border border-amber-200 bg-white px-4 py-3 text-sm font-medium text-amber-900">{accidentFeedbackMessage}</p> : null}
+                    <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                      <label className="grid gap-2 text-sm font-medium text-slate-700">
+                        Latitude
+                        <input
+                          className="w-full min-w-0 rounded-xl border border-orange-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-orange-500 focus:ring-2 focus:ring-orange-100"
+                          onChange={(event) => handleFireFieldChange('latitude', event.target.value)}
+                          type="text"
+                          value={fireFormState.latitude}
+                        />
+                      </label>
+                      <label className="grid gap-2 text-sm font-medium text-slate-700">
+                        Longitude
+                        <input
+                          className="w-full min-w-0 rounded-xl border border-orange-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-orange-500 focus:ring-2 focus:ring-orange-100"
+                          onChange={(event) => handleFireFieldChange('longitude', event.target.value)}
+                          type="text"
+                          value={fireFormState.longitude}
+                        />
+                      </label>
+                    </div>
+                  </div>
 
-              <button
-                className="rounded-xl bg-amber-500 px-4 py-3 text-sm font-semibold text-slate-950 transition hover:bg-amber-400"
-                onClick={handleAccidentSubmit}
-                type="button"
-              >
-                Add accident report to map
-              </button>
+                  <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                    <label className="grid gap-2 text-sm font-medium text-slate-700">
+                      Description
+                      <textarea
+                        className="min-h-28 w-full min-w-0 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-orange-500 focus:ring-2 focus:ring-orange-100"
+                        onChange={(event) => handleFireFieldChange('description', event.target.value)}
+                        placeholder="Short fire incident description, affected area, and current action taken"
+                        value={fireFormState.description}
+                      />
+                    </label>
+                  </div>
+
+                  {fireFeedbackMessage ? <p className="rounded-2xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm font-medium text-orange-900">{fireFeedbackMessage}</p> : null}
+
+                  <button
+                    className="mt-1 rounded-xl bg-[linear-gradient(90deg,#ea580c_0%,#fb923c_100%)] px-4 py-3 text-sm font-semibold text-white shadow-[0_10px_22px_rgba(234,88,12,0.28)] transition hover:brightness-105 mb-1"
+                    onClick={handleFireSubmit}
+                    type="button"
+                  >
+                    Submit fire report to map
+                  </button>
+                </section>
+              ) : (
+                <section className="grid gap-5 overflow-x-hidden">
+                  <div className="rounded-2xl border border-amber-200 bg-[linear-gradient(135deg,#fff8e7_0%,#ffffff_60%)] p-4">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-amber-700">Accident Report</p>
+                    <h3 className="mt-1 text-lg font-bold text-slate-900">Incident Details</h3>
+                    <p className="mt-1 text-xs text-slate-600">Fill out the core incident information before adding victim details.</p>
+
+                    <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                      <label className="grid gap-2 text-sm font-medium text-slate-700">
+                        Type of Accident
+                        <select
+                          className="w-full min-w-0 rounded-xl border border-amber-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
+                          onChange={(event) => handleAccidentFieldChange('accidentType', event.target.value)}
+                          value={accidentFormState.accidentType}
+                        >
+                          {accidentTypeOptions.map((option) => (
+                            <option key={option} value={option}>
+                              {option}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="grid gap-2 text-sm font-medium text-slate-700">
+                        Severity
+                        <select
+                          className="w-full min-w-0 rounded-xl border border-amber-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
+                          onChange={(event) => handleAccidentFieldChange('severity', event.target.value)}
+                          value={accidentFormState.severity}
+                        >
+                          {severityOptions.map((severity) => (
+                            <option key={severity} value={severity}>
+                              {severity}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+
+                    <label className="mt-4 grid gap-2 text-sm font-medium text-slate-700">
+                      Address
+                      <input
+                        className="w-full min-w-0 rounded-xl border border-amber-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
+                        onChange={(event) => handleAccidentFieldChange('address', event.target.value)}
+                        placeholder="Example: Near Rotonda, Isabang, Lucena City"
+                        type="text"
+                        value={accidentFormState.address}
+                      />
+                    </label>
+
+                    <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                      <label className="grid gap-2 text-sm font-medium text-slate-700">
+                        Latitude
+                        <input
+                          className="w-full min-w-0 rounded-xl border border-amber-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
+                          onChange={(event) => handleAccidentFieldChange('latitude', event.target.value)}
+                          type="text"
+                          value={accidentFormState.latitude}
+                        />
+                      </label>
+                      <label className="grid gap-2 text-sm font-medium text-slate-700">
+                        Longitude
+                        <input
+                          className="w-full min-w-0 rounded-xl border border-amber-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
+                          onChange={(event) => handleAccidentFieldChange('longitude', event.target.value)}
+                          type="text"
+                          value={accidentFormState.longitude}
+                        />
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Victim Information</p>
+                        <p className="mt-1 text-sm font-semibold text-slate-900">Victims</p>
+                        <p className="text-xs text-slate-600">Add victim details with name, age, address, and condition.</p>
+                      </div>
+                      <button
+                        className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:border-amber-300 hover:bg-amber-50 sm:self-auto"
+                        onClick={handleAddActivityLog}
+                        type="button"
+                      >
+                        + Add victim
+                      </button>
+                    </div>
+
+                    <div className="mt-4 grid gap-3">
+                      {accidentFormState.victims.map((entry, index) => (
+                        <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-[0_6px_18px_rgba(15,23,42,0.05)]" key={entry.id}>
+                          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                            <p className="text-sm font-semibold text-slate-800">Victim {index + 1}</p>
+                            <button
+                              className="text-left text-xs font-semibold text-rose-700 transition hover:text-rose-800 disabled:text-slate-300 sm:text-right"
+                              disabled={accidentFormState.victims.length === 1}
+                              onClick={() => handleRemoveActivityLog(entry.id)}
+                              type="button"
+                            >
+                              Remove
+                            </button>
+                          </div>
+
+                          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                            <label className="grid gap-2 text-sm font-medium text-slate-700">
+                              Name
+                              <input
+                                className="w-full min-w-0 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
+                                onChange={(event) => handleVictimFieldChange(entry.id, 'name', event.target.value)}
+                                placeholder="Full name"
+                                type="text"
+                                value={entry.name}
+                              />
+                            </label>
+                            <label className="grid gap-2 text-sm font-medium text-slate-700">
+                              Age
+                              <input
+                                className="w-full min-w-0 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
+                                onChange={(event) => handleVictimFieldChange(entry.id, 'age', event.target.value)}
+                                placeholder="Age"
+                                type="text"
+                                value={entry.age}
+                              />
+                            </label>
+                          </div>
+
+                          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                            <label className="grid gap-2 text-sm font-medium text-slate-700">
+                              Address
+                              <input
+                                className="w-full min-w-0 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
+                                onChange={(event) => handleVictimFieldChange(entry.id, 'address', event.target.value)}
+                                placeholder="Victim address"
+                                type="text"
+                                value={entry.address}
+                              />
+                            </label>
+                            <label className="grid gap-2 text-sm font-medium text-slate-700">
+                              Condition
+                              <input
+                                className="w-full min-w-0 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
+                                onChange={(event) => handleVictimFieldChange(entry.id, 'condition', event.target.value)}
+                                placeholder="Example: Stable, Critical, Minor injury"
+                                type="text"
+                                value={entry.condition}
+                              />
+                            </label>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                    <label className="grid gap-2 text-sm font-medium text-slate-700">
+                      A/T (Action Taken)
+                      <textarea
+                        className="min-h-24 w-full min-w-0 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
+                        onChange={(event) => handleAccidentFieldChange('actionTaken', event.target.value)}
+                        placeholder="Describe the action taken for this accident response"
+                        value={accidentFormState.actionTaken}
+                      />
+                    </label>
+                  </div>
+
+                  {accidentFeedbackMessage ? <p className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900">{accidentFeedbackMessage}</p> : null}
+
+                  <button
+                    className="mt-1 rounded-xl bg-[linear-gradient(90deg,#f59e0b_0%,#fbbf24_100%)] px-4 py-3 text-sm font-semibold text-slate-950 shadow-[0_10px_22px_rgba(245,158,11,0.28)] transition hover:brightness-105 mb-1"
+                    onClick={handleAccidentSubmit}
+                    type="button"
+                  >
+                    Submit accident report to map
+                  </button>
                 </section>
               )}
             </div>

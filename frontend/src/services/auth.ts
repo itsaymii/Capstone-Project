@@ -219,7 +219,10 @@ export async function requestLoginOtp(
   try {
     const response = await loginAccount({ email: normalizedEmail, password, forceOtp })
 
-    if (response.skipOtp && response.user) {
+    const hasUserPayload = Boolean(response.user)
+    const shouldBypassOtp = forceOtp === false && (response.skipOtp || hasUserPayload)
+
+    if (shouldBypassOtp && response.user) {
       persistAuthenticatedSession(
         {
           fullName: response.user.fullName,
@@ -234,6 +237,13 @@ export async function requestLoginOtp(
         message: response.message ?? 'Login successful.',
         otpEmail: response.user.email,
         skipOtp: true,
+      }
+    }
+
+    if (forceOtp === false) {
+      return {
+        success: false,
+        error: response.message ?? 'Unable to complete admin login right now.',
       }
     }
 

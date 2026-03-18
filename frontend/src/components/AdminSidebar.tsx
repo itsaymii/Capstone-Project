@@ -124,7 +124,7 @@ export function AdminSidebar({ activeKey, actionOverrides }: AdminSidebarProps) 
     <>
       <div className="border-b border-slate-800 bg-[#181c23] px-4 py-3 md:hidden">
         <div className="mb-3 flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-blue-700 text-sm font-bold text-white">
+          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#0b2a57] text-sm font-bold text-white">
             {profile?.photoUrl ? <img alt="Profile" className="h-full w-full rounded-full object-cover" src={profile.photoUrl} /> : initials}
           </div>
           <div>
@@ -138,7 +138,7 @@ export function AdminSidebar({ activeKey, actionOverrides }: AdminSidebarProps) 
             const isActive = activeKey === item.key
             const mobileClassName = `whitespace-nowrap rounded-full border px-3 py-2 text-xs font-semibold transition ${
               isActive
-                ? 'border-blue-500 bg-blue-500 text-white'
+                ? 'border-[#0b2a57] bg-[#0b2a57] text-white'
                 : 'border-slate-700 bg-[#232837] text-slate-200 hover:border-slate-500'
             }`
 
@@ -159,10 +159,12 @@ export function AdminSidebar({ activeKey, actionOverrides }: AdminSidebarProps) 
         </nav>
       </div>
 
-      <aside className="hidden px-4 py-4 md:block md:w-[300px]">
-        <div className="sticky top-4 flex min-h-[calc(100vh-2rem)] flex-col rounded-[28px] border border-slate-200 bg-white px-4 py-9 shadow-[0_16px_40px_rgba(15,23,42,0.08)]">
+      <aside className="hidden md:block md:w-[300px] md:shrink-0" aria-hidden="true" />
+
+      <aside className="hidden px-4 py-4 md:fixed md:inset-y-0 md:left-0 md:z-20 md:block md:w-[300px]">
+        <div className="flex h-full flex-col rounded-[28px] border border-slate-200 bg-white px-4 py-9 shadow-[0_16px_40px_rgba(15,23,42,0.08)]">
           <div className="mb-8 flex items-center gap-3 px-2">
-            <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-full bg-blue-700 text-base font-bold text-white shadow-[0_0_18px_rgba(29,78,216,0.18)]">
+            <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-full bg-[#0b2a57] text-base font-bold text-white shadow-[0_0_18px_rgba(11,42,87,0.18)]">
               {profile?.photoUrl ? <img alt="Profile" className="h-full w-full object-cover" src={profile.photoUrl} /> : initials}
             </div>
             <div>
@@ -177,8 +179,8 @@ export function AdminSidebar({ activeKey, actionOverrides }: AdminSidebarProps) 
                 const isAction = Boolean(actionOverrides?.[item.key])
                 const buttonClassName = `flex w-full items-center gap-3 rounded-lg px-4 py-2 text-left transition ${
                   activeKey === item.key
-                    ? 'border border-blue-700 bg-blue-700 text-white shadow-[0_10px_20px_rgba(29,78,216,0.12)]'
-                    : 'text-slate-700 hover:bg-slate-100 hover:text-slate-900'
+                    ? 'border border-[#0b2a57] bg-[#0b2a57] text-white shadow-[0_10px_20px_rgba(11,42,87,0.18)]'
+                    : 'text-slate-700 hover:bg-[#0b2a57]/10 hover:text-[#0b2a57]'
                 }`
 
                 return (
@@ -192,8 +194,8 @@ export function AdminSidebar({ activeKey, actionOverrides }: AdminSidebarProps) 
                         className={({ isActive }) =>
                           `flex w-full items-center gap-3 rounded-lg px-4 py-2 text-left transition ${
                             isActive
-                              ? 'border border-blue-700 bg-blue-700 text-white shadow-[0_10px_20px_rgba(29,78,216,0.12)]'
-                              : 'text-slate-700 hover:bg-slate-100 hover:text-slate-900'
+                              ? 'border border-[#0b2a57] bg-[#0b2a57] text-white shadow-[0_10px_20px_rgba(11,42,87,0.18)]'
+                              : 'text-slate-700 hover:bg-[#0b2a57]/10 hover:text-[#0b2a57]'
                           }`
                         }
                         to={item.to}
@@ -208,7 +210,7 @@ export function AdminSidebar({ activeKey, actionOverrides }: AdminSidebarProps) 
           </nav>
 
           <div className="mt-auto flex items-center gap-3 px-2 pt-8">
-            <div className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full bg-blue-700 text-sm font-bold text-white shadow-[0_0_14px_rgba(29,78,216,0.18)]">
+            <div className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full bg-[#0b2a57] text-sm font-bold text-white shadow-[0_0_14px_rgba(11,42,87,0.18)]">
               {profile?.photoUrl ? <img alt="Profile" className="h-full w-full object-cover" src={profile.photoUrl} /> : initials}
             </div>
             <div className="min-w-0">
