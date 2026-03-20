@@ -180,7 +180,7 @@ export function LoginPage({ onRequestRegister, onRequestAdminLogin: _onRequestAd
   async function handleCredentialSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setIsSubmitting(true)
-    const result = await requestLoginOtp(email, password, keepLoggedIn)
+    const result = await requestLoginOtp(email, password, keepLoggedIn, true, 'citizen')
     setIsSubmitting(false)
 
     if (!result.success) {
@@ -270,7 +270,7 @@ export function LoginPage({ onRequestRegister, onRequestAdminLogin: _onRequestAd
     }
 
     setIsSubmitting(true)
-    const result = await requestLoginOtp(email, password)
+    const result = await requestLoginOtp(email, password, false, true, 'citizen')
     setIsSubmitting(false)
 
     if (!result.success) {

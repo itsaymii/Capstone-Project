@@ -33,7 +33,7 @@ export function AdminLoginPage() {
     event.preventDefault()
     setIsSubmitting(true)
 
-    const result = await requestLoginOtp(email, password, keepLoggedIn, false)
+    const result = await requestLoginOtp(email, password, keepLoggedIn, false, 'admin')
     setIsSubmitting(false)
 
     if (!result.success) {

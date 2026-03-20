@@ -15,6 +15,8 @@ type LoginPayload = {
   keepLoggedIn: boolean
 }
 
+type LoginContext = 'admin' | 'citizen'
+
 type SessionUser = {
   fullName: string
   email: string
@@ -61,12 +63,24 @@ function parseApiError(
   retryAfterSeconds?: number
 } {
   if (axios.isAxiosError(error)) {
-    const errorData = error.response?.data as { error?: string; retryAfterSeconds?: number } | undefined
-    const apiError = errorData?.error
+    const errorData = error.response?.data as
+      | { error?: string; message?: string; detail?: string; retryAfterSeconds?: number }
+      | string
+      | undefined
+
+    if (typeof errorData === 'string' && errorData.trim()) {
+      return { message: errorData.trim() }
+    }
+
+    const apiError =
+      (typeof errorData === 'object' && errorData?.error) ||
+      (typeof errorData === 'object' && errorData?.message) ||
+      (typeof errorData === 'object' && errorData?.detail)
+
     if (apiError) {
       return {
         message: apiError,
-        retryAfterSeconds: errorData?.retryAfterSeconds,
+        retryAfterSeconds: typeof errorData === 'object' ? errorData?.retryAfterSeconds : undefined,
       }
     }
 
@@ -74,6 +88,10 @@ function parseApiError(
       return {
         message: 'Cannot connect to the backend server. Make sure Django is running on http://127.0.0.1:8000.',
       }
+    }
+
+    return {
+      message: `Request failed (${error.response.status}). Please try again.`,
     }
   }
 
@@ -209,6 +227,7 @@ export async function requestLoginOtp(
   password: string,
   keepLoggedIn = false,
   forceOtp = true,
+  loginContext: LoginContext = 'citizen',
 ): Promise<AuthResult> {
   const normalizedEmail = normalizeEmail(email)
 
@@ -217,7 +236,7 @@ export async function requestLoginOtp(
   }
 
   try {
-    const response = await loginAccount({ email: normalizedEmail, password, forceOtp })
+    const response = await loginAccount({ email: normalizedEmail, password, forceOtp, loginContext })
 
     const hasUserPayload = Boolean(response.user)
     const shouldBypassOtp = forceOtp === false && (response.skipOtp || hasUserPayload)
