@@ -9,9 +9,11 @@ from django.conf import settings
 from django.db.models import Q
 from django.utils.html import strip_tags
 from django.utils import timezone
-from django.contrib.auth.hashers import check_password, make_password
+from django.contrib.auth.hashers import check_password, identify_hasher, make_password
+from django.views.decorators.csrf import csrf_exempt
 from rest_framework import status
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, authentication_classes, permission_classes
+from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
 from .models import OneTimePassword
@@ -136,6 +138,14 @@ def _get_retry_after_seconds(otp_record: OneTimePassword) -> int:
 	return int(remaining) + 1
 
 
+def _is_encoded_password(password_value: str) -> bool:
+	try:
+		identify_hasher(password_value)
+		return True
+	except Exception:
+		return False
+
+
 def _has_recent_verified_login_otp(email: str, user_id: int) -> bool:
 	recent_verified_otps = OneTimePassword.objects.filter(
 		email__iexact=email,
@@ -157,6 +167,9 @@ def test_connection(request):
 
 
 @api_view(['POST'])
+@csrf_exempt
+@authentication_classes([])
+@permission_classes([AllowAny])
 def register_user(request):
 	full_name = (request.data.get('fullName') or '').strip()
 	email = (request.data.get('email') or '').strip().lower()
@@ -210,6 +223,9 @@ def register_user(request):
 
 
 @api_view(['POST'])
+@csrf_exempt
+@authentication_classes([])
+@permission_classes([AllowAny])
 def verify_register_otp(request):
 	email = (request.data.get('email') or '').strip().lower()
 	otp = (request.data.get('otp') or '').strip()
@@ -256,10 +272,14 @@ def verify_register_otp(request):
 
 
 @api_view(['POST'])
+@csrf_exempt
+@authentication_classes([])
+@permission_classes([AllowAny])
 def login_user(request):
 	identifier = (request.data.get('email') or request.data.get('identifier') or '').strip().lower()
 	password = request.data.get('password') or ''
 	force_otp = _coerce_bool(request.data.get('forceOtp'), default=True)
+	login_context = (request.data.get('loginContext') or '').strip().lower()
 
 	if not identifier or not password:
 		return Response({'error': 'Please enter your email/username and password.'}, status=status.HTTP_400_BAD_REQUEST)
@@ -269,11 +289,23 @@ def login_user(request):
 		return Response({'error': 'Invalid email/username or password.'}, status=status.HTTP_400_BAD_REQUEST)
 
 	user = authenticate(request, username=account.username, password=password)
+	if not user and account.password and not _is_encoded_password(account.password):
+		if account.password == password:
+			account.set_password(password)
+			account.save(update_fields=['password'])
+			user = authenticate(request, username=account.username, password=password)
+
 	if not user:
 		return Response({'error': 'Invalid email/username or password.'}, status=status.HTTP_400_BAD_REQUEST)
 
 	if not user.is_active:
 		return Response({'error': 'This account is inactive.'}, status=status.HTTP_403_FORBIDDEN)
+
+	if login_context == 'admin' and not _has_admin_access(user):
+		return Response({'error': 'This account does not have admin dashboard access.'}, status=status.HTTP_403_FORBIDDEN)
+
+	if login_context == 'citizen' and _has_admin_access(user):
+		return Response({'error': 'Admin accounts must log in through the admin login page.'}, status=status.HTTP_403_FORBIDDEN)
 
 	if not force_otp:
 		if not _has_admin_access(user):
@@ -338,6 +370,9 @@ def login_user(request):
 
 
 @api_view(['POST'])
+@csrf_exempt
+@authentication_classes([])
+@permission_classes([AllowAny])
 def verify_login_otp(request):
 	email = (request.data.get('email') or '').strip().lower()
 	otp = (request.data.get('otp') or '').strip()

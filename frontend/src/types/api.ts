@@ -31,6 +31,7 @@ export interface LoginApiPayload {
   email: string
   password: string
   forceOtp?: boolean
+  loginContext?: 'admin' | 'citizen'
 }
 
 export interface VerifyOtpPayload {
