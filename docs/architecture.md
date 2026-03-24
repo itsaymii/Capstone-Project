@@ -1,9 +1,12 @@
-# 🏗 System Architecture
+# System Architecture
+
+This diagram shows the high-level structure of the system.
 
 ```mermaid
-graph TD
-A[Citizen / Responder] --> B[React Frontend]
-B -->|REST API| C[Django Backend]
-C --> D[Database]
-C -->|JSON Response| B
-B --> E[Interactive Map]
+flowchart TD
+	U[Citizen or Responder] --> FE[React Frontend]
+	FE -->|REST API| BE[Django Backend]
+	BE --> DB[(Database)]
+	BE -->|JSON Response| FE
+	FE --> MAP[Interactive Map]
+```

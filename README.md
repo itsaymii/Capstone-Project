@@ -11,13 +11,12 @@ A web-based system designed to collect, manage, and visualize accident and disas
 
 
 ## 📊 Documentation
+- [Docs Index](docs/README.md)
 - [System Architecture](docs/architecture.md)
 - [System Flow](docs/system-flow.md)
 - [Authentication Flow](docs/authentication-flow.md)
 - [Database ERD](docs/erd.md)
-- [API Documentation](docs/api-documentation.md)
 - [Deployment Guide](docs/deployment.md)
-- [Contributing Guide](docs/CONTRIBUTING.md)
 
 ## ⚙️ Installation
 ### Frontend

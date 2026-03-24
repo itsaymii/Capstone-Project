@@ -1,7 +1,10 @@
-# 🚀 Deployment Architecture
+# Deployment Architecture
+
+This diagram shows the runtime deployment setup.
 
 ```mermaid
-graph TD
-A[User Browser] --> B[Vercel / Frontend Hosting]
-B --> C[Backend Server]
-C --> D[PostgreSQL Database]
+flowchart TD
+	UB[User Browser] --> FH[Frontend Hosting]
+	FH --> BS[Backend Server]
+	BS --> DB[(Database)]
+```
