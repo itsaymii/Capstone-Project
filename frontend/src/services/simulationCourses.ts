@@ -35,8 +35,6 @@ export type SimulationCourse = {
   accent: string
   heroImageUrl: string
   heroImageName?: string
-  trainees: number
-  completionRate: number
   lessonOutline: SimulationLesson[]
   learningMaterials: SimulationLearningMaterial[]
 }
@@ -88,8 +86,6 @@ export function createEmptySimulationCourse(): SimulationCourse {
     accent: '#0b2a57',
     heroImageUrl: '',
     heroImageName: '',
-    trainees: 0,
-    completionRate: 0,
     lessonOutline: [createEmptyLesson()],
     learningMaterials: [createEmptyLearningMaterial()],
   }
@@ -139,8 +135,6 @@ const defaultSimulationCourses: SimulationCourse[] = [
     accent: '#f59e0b',
     heroImageUrl: 'https://images.unsplash.com/photo-1508182314998-3bd49473002f?auto=format&fit=crop&w=1000&q=80',
     heroImageName: 'earthquake-course-cover.jpg',
-    trainees: 831,
-    completionRate: 78,
     lessonOutline: [
       {
         id: 'earthquake-lesson-1',
@@ -212,8 +206,6 @@ const defaultSimulationCourses: SimulationCourse[] = [
     accent: '#ef4444',
     heroImageUrl: 'https://images.unsplash.com/photo-1578825922519-485b4dd5c533?auto=format&fit=crop&w=1000&q=80',
     heroImageName: 'fire-course-cover.jpg',
-    trainees: 924,
-    completionRate: 84,
     lessonOutline: [
       {
         id: 'fire-lesson-1',
@@ -281,8 +273,6 @@ const defaultSimulationCourses: SimulationCourse[] = [
     accent: '#0ea5e9',
     heroImageUrl: 'https://images.unsplash.com/photo-1615461066841-6116e61058f4?auto=format&fit=crop&w=1000&q=80',
     heroImageName: 'road-accident-course-cover.jpg',
-    trainees: 676,
-    completionRate: 81,
     lessonOutline: [
       {
         id: 'accidents-lesson-1',
@@ -362,6 +352,19 @@ function isMaterialType(value: unknown): value is LearningMaterialType {
   return value === 'PDF' || value === 'Guide' || value === 'Checklist' || value === 'Worksheet' || value === 'External Link'
 }
 
+function hasLegacyStoredMetrics(input: unknown): boolean {
+  if (!Array.isArray(input)) {
+    return false
+  }
+
+  return input.some(
+    (item) =>
+      Boolean(item) &&
+      typeof item === 'object' &&
+      ('trainees' in item || 'completionRate' in item),
+  )
+}
+
 function normalizeCourses(input: unknown): SimulationCourse[] | null {
   if (!Array.isArray(input)) {
     return null
@@ -417,8 +420,6 @@ function normalizeCourses(input: unknown): SimulationCourse[] | null {
         accent: typeof item.accent === 'string' && item.accent ? item.accent : '#0b2a57',
         heroImageUrl: typeof item.heroImageUrl === 'string' ? item.heroImageUrl : '',
         heroImageName: typeof item.heroImageName === 'string' ? item.heroImageName : '',
-        trainees: typeof item.trainees === 'number' ? item.trainees : 0,
-        completionRate: typeof item.completionRate === 'number' ? item.completionRate : 0,
         lessonOutline: lessons.length > 0 ? lessons : [createEmptyLesson()],
         learningMaterials,
       }
@@ -440,7 +441,15 @@ export function getSimulationCourses(): SimulationCourse[] {
 
     const parsed = JSON.parse(raw) as unknown
     const normalized = normalizeCourses(parsed)
-    return normalized ? cloneCourses(normalized) : cloneCourses(defaultSimulationCourses)
+    if (!normalized) {
+      return cloneCourses(defaultSimulationCourses)
+    }
+
+    if (hasLegacyStoredMetrics(parsed)) {
+      localStorage.setItem(SIMULATION_COURSES_KEY, JSON.stringify(normalized))
+    }
+
+    return cloneCourses(normalized)
   } catch {
     return cloneCourses(defaultSimulationCourses)
   }

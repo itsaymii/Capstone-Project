@@ -7,6 +7,9 @@ import type {
   DashboardDeleteAccountResponse,
   DashboardUpdateAccountPayload,
   DashboardUpdateAccountResponse,
+  SimulationAdminMetricsResponse,
+  SimulationProgressPayload,
+  SimulationProgressResponse,
   AuthApiResponse,
   LoginApiPayload,
   RegisterApiPayload,
@@ -104,5 +107,20 @@ export async function updateDashboardAccount(userId: number, payload: DashboardU
 
 export async function deleteDashboardAccount(userId: number): Promise<DashboardDeleteAccountResponse> {
   const { data } = await api.delete<DashboardDeleteAccountResponse>(`/dashboard/admin/accounts/${userId}/`)
+  return data
+}
+
+export async function getSimulationProgress(): Promise<SimulationProgressResponse> {
+  const { data } = await api.get<SimulationProgressResponse>('/dashboard/simulation/progress/')
+  return data
+}
+
+export async function saveSimulationProgress(payload: SimulationProgressPayload): Promise<SimulationProgressResponse> {
+  const { data } = await api.put<SimulationProgressResponse>('/dashboard/simulation/progress/', payload)
+  return data
+}
+
+export async function getSimulationAdminMetrics(): Promise<SimulationAdminMetricsResponse> {
+  const { data } = await api.get<SimulationAdminMetricsResponse>('/dashboard/admin/simulation/metrics/')
   return data
 }

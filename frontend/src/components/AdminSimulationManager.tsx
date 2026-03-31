@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { ChangeEvent } from 'react'
+import { getSimulationAdminMetrics } from '../services/api'
 import {
   SIMULATION_COURSES_CHANGED_EVENT,
   createEmptyLearningMaterial,
@@ -12,9 +13,11 @@ import {
   type SimulationCourse,
   type SimulationCourseDifficulty,
 } from '../services/simulationCourses'
+import type { SimulationAdminCourseMetrics } from '../types/api'
 
 type EditableCourse = SimulationCourse | null
 type FeedbackTone = 'success' | 'error'
+type CourseWithMetrics = SimulationCourse & SimulationAdminCourseMetrics
 type AdminSimulationManagerProps = {
   embedded?: boolean
 }
@@ -45,15 +48,50 @@ function getMaterialTypeFromFile(file: File): LearningMaterialType {
 
 export function AdminSimulationManager({ embedded = false }: AdminSimulationManagerProps) {
   const [courses, setCourses] = useState<SimulationCourse[]>(() => getSimulationCourses())
+  const [courseMetrics, setCourseMetrics] = useState<Record<string, SimulationAdminCourseMetrics>>({})
   const [editingCourse, setEditingCourse] = useState<EditableCourse>(null)
   const [draftCourse, setDraftCourse] = useState<EditableCourse>(null)
   const [isCreatingCourse, setIsCreatingCourse] = useState(false)
   const [feedbackMessage, setFeedbackMessage] = useState('')
   const [feedbackTone, setFeedbackTone] = useState<FeedbackTone>('success')
 
+  const coursesWithMetrics = useMemo(
+    () =>
+      courses.map((course) => ({
+        ...course,
+        trainees: courseMetrics[course.id]?.trainees ?? 0,
+        completionRate: courseMetrics[course.id]?.completionRate ?? 0,
+      }) satisfies CourseWithMetrics),
+    [courseMetrics, courses],
+  )
+
   useEffect(() => {
     setDraftCourse(editingCourse ? JSON.parse(JSON.stringify(editingCourse)) : null)
   }, [editingCourse])
+
+  useEffect(() => {
+    let isActive = true
+
+    async function loadCourseMetrics(): Promise<void> {
+      try {
+        const response = await getSimulationAdminMetrics()
+        if (!isActive) {
+          return
+        }
+
+        setCourseMetrics(response.courses ?? {})
+      } catch {
+        if (isActive) {
+          setCourseMetrics({})
+        }
+      }
+    }
+
+    void loadCourseMetrics()
+    return () => {
+      isActive = false
+    }
+  }, [])
 
   useEffect(() => {
     function syncCourses(): void {
@@ -113,6 +151,28 @@ export function AdminSimulationManager({ embedded = false }: AdminSimulationMana
     ? 'border-red-200 bg-red-50 text-red-800'
     : 'border-red-500/30 bg-red-500/10 text-red-100'
   const modalOverlayClass = embedded ? 'fixed inset-0 z-[1400] bg-slate-900/25 p-4 sm:p-8' : 'fixed inset-0 z-[1400] bg-slate-950/60 p-4 backdrop-blur-[2px] sm:p-8'
+
+  function getTraineeCountLabel(count: number): string {
+    return count.toLocaleString()
+  }
+
+  function getCourseMetrics(courseId: string | undefined): SimulationAdminCourseMetrics {
+    if (!courseId) {
+      return {
+        trainees: 0,
+        completed: 0,
+        completionRate: 0,
+      }
+    }
+
+    return (
+      courseMetrics[courseId] ?? {
+        trainees: 0,
+        completed: 0,
+        completionRate: 0,
+      }
+    )
+  }
 
   function showFeedback(message: string, tone: FeedbackTone): void {
     setFeedbackMessage(message)
@@ -484,7 +544,7 @@ export function AdminSimulationManager({ embedded = false }: AdminSimulationMana
         </section>
 
         <section className="grid gap-5 lg:grid-cols-3">
-          {courses.map((course) => (
+          {coursesWithMetrics.map((course) => (
             <article className={cardClass} key={course.id}>
               <div className="flex items-start justify-between gap-3">
                 <span className={`rounded-full border px-3 py-1 text-[11px] font-bold uppercase tracking-[0.14em] ${embedded ? 'border-blue-300 bg-blue-100 text-blue-900' : 'border-slate-600 bg-[#1d2230] text-slate-300'}`}>
@@ -505,11 +565,13 @@ export function AdminSimulationManager({ embedded = false }: AdminSimulationMana
               <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
                 <div className={`${subPanelClass} px-3 py-2`}>
                   <p className={`text-xs uppercase tracking-[0.14em] ${mutedTextClass}`}>Trainees</p>
-                  <p className={`mt-1 font-semibold ${headingTextClass}`}>{course.trainees}</p>
+                  <p className={`mt-1 font-semibold ${headingTextClass}`}>{getTraineeCountLabel(course.trainees)}</p>
+                  <p className={`mt-1 text-[11px] ${mutedTextClass}`}>Automatically counted from learner activity</p>
                 </div>
                 <div className={`${subPanelClass} px-3 py-2`}>
                   <p className={`text-xs uppercase tracking-[0.14em] ${mutedTextClass}`}>Completion</p>
-                  <p className="mt-1 font-semibold text-emerald-300">{course.completionRate}%</p>
+                  <p className={`mt-1 font-semibold ${embedded ? 'text-emerald-700' : 'text-emerald-300'}`}>{course.completionRate}%</p>
+                  <p className={`mt-1 text-[11px] ${mutedTextClass}`}>Computed from completed trainees</p>
                 </div>
               </div>
 
@@ -603,14 +665,20 @@ export function AdminSimulationManager({ embedded = false }: AdminSimulationMana
                       </div>
                     </div>
                   </div>
-                  <label className="block">
+                  <div className="block">
                     <span className={`mb-2 block text-xs font-semibold uppercase tracking-wide ${mutedTextClass}`}>Trainees</span>
-                    <input className={inputClass} min="0" onChange={(event) => updateDraftField('trainees', Number(event.target.value))} type="number" value={draftCourse.trainees} />
-                  </label>
-                  <label className="block">
+                    <div className={`${subPanelClass} flex min-h-11 items-center justify-between px-3 py-2 text-sm`}>
+                      <span className={headingTextClass}>{getTraineeCountLabel(getCourseMetrics(draftCourse.id).trainees)}</span>
+                      <span className={mutedTextClass}>Auto-counted</span>
+                    </div>
+                  </div>
+                  <div className="block">
                     <span className={`mb-2 block text-xs font-semibold uppercase tracking-wide ${mutedTextClass}`}>Completion Rate</span>
-                    <input className={inputClass} max="100" min="0" onChange={(event) => updateDraftField('completionRate', Number(event.target.value))} type="number" value={draftCourse.completionRate} />
-                  </label>
+                    <div className={`${subPanelClass} flex min-h-11 items-center justify-between px-3 py-2 text-sm`}>
+                      <span className={headingTextClass}>{getCourseMetrics(draftCourse.id).completionRate}%</span>
+                      <span className={mutedTextClass}>Auto-computed</span>
+                    </div>
+                  </div>
                   <label className="block sm:col-span-2">
                     <span className={`mb-2 block text-xs font-semibold uppercase tracking-wide ${mutedTextClass}`}>Description</span>
                     <textarea className={largeTextareaClass} onChange={(event) => updateDraftField('description', event.target.value)} value={draftCourse.description} />

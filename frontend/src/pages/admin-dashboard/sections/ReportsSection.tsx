@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import type { HazardIncident } from '../../../data/adminOperations'
+import type { EarthquakeEvent } from '../../../services/earthquakes'
 import { glassPanelClass, glassPanelSoftClass } from './constants'
 
 type ReportHazardFilter = 'all' | 'FR' | 'EQ' | 'AC'
@@ -30,6 +31,69 @@ type UnifiedHazardReportRow = {
 
 type ReportsSectionProps = {
   reports: HazardIncident[]
+  earthquakeEvents: EarthquakeEvent[]
+  earthquakeFeedStatus: 'loading' | 'ready' | 'error'
+  earthquakeLastUpdated: Date | null
+}
+
+function getEarthquakeSeverity(magnitude: number): HazardIncident['severity'] {
+  if (magnitude >= 5) return 'Critical'
+  if (magnitude >= 4) return 'High'
+  if (magnitude >= 3) return 'Moderate'
+  return 'Low'
+}
+
+function getImpactLevelFromSeverity(severity: HazardIncident['severity']): string {
+  switch (severity) {
+    case 'Critical':
+      return 'Severe'
+    case 'High':
+      return 'Significant'
+    case 'Moderate':
+      return 'Localized'
+    default:
+      return 'Minimal'
+  }
+}
+
+function getRiskLevelFromSeverity(severity: HazardIncident['severity']): string {
+  switch (severity) {
+    case 'Critical':
+      return 'Critical'
+    case 'High':
+      return 'High'
+    case 'Moderate':
+      return 'Medium'
+    default:
+      return 'Low'
+  }
+}
+
+function getAlertLevelFromSeverity(severity: HazardIncident['severity']): string {
+  switch (severity) {
+    case 'Critical':
+      return 'Emergency'
+    case 'High':
+      return 'Warning'
+    case 'Moderate':
+      return 'Watch'
+    default:
+      return 'Advisory'
+  }
+}
+
+function getEarthquakeStatus(event: EarthquakeEvent): string {
+  const hoursSinceEvent = (Date.now() - event.rawTimestamp) / (1000 * 60 * 60)
+
+  if (event.magnitude >= 4.5 || hoursSinceEvent <= 24) {
+    return 'Active monitoring'
+  }
+
+  if (event.magnitude >= 3.5 || hoursSinceEvent <= 72) {
+    return 'Field review'
+  }
+
+  return 'Logged'
 }
 
 function escapeHtmlCell(value: string): string {
@@ -99,29 +163,32 @@ const unifiedHazardReportColumns: ReportTableColumn<UnifiedHazardReportRow>[] = 
   { key: 'status', label: 'Status' },
 ]
 
-export function ReportsSection({ reports }: ReportsSectionProps) {
+export function ReportsSection({
+  reports,
+  earthquakeEvents,
+  earthquakeFeedStatus,
+  earthquakeLastUpdated,
+}: ReportsSectionProps) {
   const [reportStartDate, setReportStartDate] = useState('')
   const [reportEndDate, setReportEndDate] = useState('')
   const [reportHazardFilter, setReportHazardFilter] = useState<ReportHazardFilter>('all')
   const [reportLocationFilter, setReportLocationFilter] = useState('')
 
   const normalizedReportLocationFilter = reportLocationFilter.trim().toLowerCase()
+  const isDateFilterActive = Boolean(reportStartDate || reportEndDate)
 
-  const unifiedHazardReportRows = useMemo<UnifiedHazardReportRow[]>(() => {
+  const localHazardReportRows = useMemo<UnifiedHazardReportRow[]>(() => {
     const fireCauseLookup: Record<string, string> = {
       'fire-commercial': 'Electrical overload',
       'fire-barangay-10': 'Unattended cooking flame',
       'fire-industrial': 'Chemical ignition in storage area',
-    }
-    const earthquakeMagnitudeLookup: Record<string, string> = {
-      'eq-east-zone': '4.2',
     }
     const accidentCauseLookup: Record<string, string> = {
       'acc-highway': 'Multi-vehicle collision',
       'acc-diversion': 'Road collision during peak traffic',
     }
 
-    return reports.map((incident, index) => {
+    return reports.filter((incident) => incident.code !== 'EQ').map((incident, index) => {
       const hazardCode: 'FR' | 'EQ' | 'AC' = incident.code
       const dateValue = buildIncidentDateValue(incident.time, index)
       const riskLevel =
@@ -155,7 +222,7 @@ export function ReportsSection({ reports }: ReportsSectionProps) {
         location: incident.location,
         dateTime: formatReportDateTime(dateValue),
         responseTeam: incident.responseTeam,
-        magnitude: incident.code === 'EQ' ? earthquakeMagnitudeLookup[incident.id] ?? '3.8' : '-',
+        magnitude: '-',
         cause:
           incident.code === 'FR'
             ? fireCauseLookup[incident.id] ?? 'Under investigation'
@@ -173,6 +240,38 @@ export function ReportsSection({ reports }: ReportsSectionProps) {
       }
     })
   }, [reports])
+
+  const earthquakeReportRows = useMemo<UnifiedHazardReportRow[]>(() => {
+    return [...earthquakeEvents]
+      .sort((left, right) => right.rawTimestamp - left.rawTimestamp)
+      .map((event, index) => {
+        const severity = getEarthquakeSeverity(event.magnitude)
+        const dateValue = new Date(event.rawTimestamp).toISOString()
+
+        return {
+          reportId: `EQ-${String(index + 1).padStart(3, '0')}`,
+          reportType: 'Earthquake',
+          location: event.place,
+          dateTime: formatReportDateTime(dateValue),
+          responseTeam: 'Seismic Assessment Unit',
+          magnitude: event.magnitude.toFixed(1),
+          cause: 'Tectonic movement detected by USGS feed',
+          impactLevel: getImpactLevelFromSeverity(severity),
+          riskLevel: getRiskLevelFromSeverity(severity),
+          alertLevel: getAlertLevelFromSeverity(severity),
+          sentVia: 'USGS API',
+          status: getEarthquakeStatus(event),
+          hazardCode: 'EQ',
+          locationKey: event.place,
+          dateValue,
+        }
+      })
+  }, [earthquakeEvents])
+
+  const unifiedHazardReportRows = useMemo(
+    () => [...earthquakeReportRows, ...localHazardReportRows],
+    [earthquakeReportRows, localHazardReportRows],
+  )
 
   function matchesReportDateRange(dateValue?: string): boolean {
     if (!dateValue) return true
@@ -210,6 +309,8 @@ export function ReportsSection({ reports }: ReportsSectionProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [unifiedHazardReportRows, reportHazardFilter, normalizedReportLocationFilter, reportStartDate, reportEndDate],
   )
+
+  const visibleReportLabel = `${filteredUnifiedHazardReportRows.length} of ${unifiedHazardReportRows.length} records visible`
 
   function resetReportFilters(): void {
     setReportStartDate('')
@@ -384,8 +485,31 @@ export function ReportsSection({ reports }: ReportsSectionProps) {
               <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Reports Desk</p>
               <h2 className="mt-1 text-2xl font-bold text-slate-900">Unified Hazard Report Table</h2>
               <p className="mt-2 max-w-3xl text-sm leading-relaxed text-slate-600">
-                All incident reports now appear in one clean table. Use the Type column to distinguish Earthquake, Fire, and Accident records, then print or export the filtered results.
+                Fire and accident records remain local for now, while earthquake rows pull live Quezon-region events from the available USGS API.
               </p>
+              <div className="mt-3 flex flex-wrap items-center gap-2 text-xs font-medium">
+                <span
+                  className={`rounded-full px-3 py-1 ${
+                    earthquakeFeedStatus === 'loading'
+                      ? 'bg-amber-100 text-amber-700'
+                      : earthquakeFeedStatus === 'error'
+                        ? 'bg-red-100 text-red-700'
+                        : 'bg-emerald-100 text-emerald-700'
+                  }`}
+                >
+                  {earthquakeFeedStatus === 'loading'
+                    ? 'Loading earthquake feed'
+                    : earthquakeFeedStatus === 'error'
+                      ? 'Earthquake feed unavailable'
+                      : `${earthquakeEvents.length} live earthquake rows loaded`}
+                </span>
+                {earthquakeLastUpdated ? (
+                  <span className="text-slate-500">
+                    Updated {earthquakeLastUpdated.toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' })}
+                  </span>
+                ) : null}
+                <span className="text-slate-500">Default view shows all records. Date filters only narrow the list after you pick a start or end date.</span>
+              </div>
             </div>
             <button
               className="rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
@@ -398,7 +522,7 @@ export function ReportsSection({ reports }: ReportsSectionProps) {
 
           <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
             <label className="grid gap-2 text-sm font-medium text-slate-700">
-              Start date
+              Start date (optional)
               <input
                 className="rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-700"
                 onChange={(event) => setReportStartDate(event.target.value)}
@@ -407,7 +531,7 @@ export function ReportsSection({ reports }: ReportsSectionProps) {
               />
             </label>
             <label className="grid gap-2 text-sm font-medium text-slate-700">
-              End date
+              End date (optional)
               <input
                 className="rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-700"
                 onChange={(event) => setReportEndDate(event.target.value)}
@@ -438,6 +562,15 @@ export function ReportsSection({ reports }: ReportsSectionProps) {
                 value={reportLocationFilter}
               />
             </label>
+          </div>
+
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+            <span className="font-semibold text-slate-800">{visibleReportLabel}</span>
+            <span>
+              {isDateFilterActive
+                ? 'Date filter is active. Clear the date fields to show the full dataset again.'
+                : 'No date filter applied. All available records are currently displayed.'}
+            </span>
           </div>
         </div>
 

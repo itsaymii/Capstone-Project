@@ -85,3 +85,23 @@ export interface DashboardUpdateAccountResponse {
 export interface DashboardDeleteAccountResponse {
   message: string
 }
+
+export interface SimulationProgressPayload {
+  courseProgress: Record<string, number>
+  completedLessonVideos: Record<string, boolean>
+  completedCourses: Record<string, string>
+}
+
+export interface SimulationProgressResponse extends SimulationProgressPayload {
+  updatedAt?: string | null
+}
+
+export interface SimulationAdminCourseMetrics {
+  trainees: number
+  completed: number
+  completionRate: number
+}
+
+export interface SimulationAdminMetricsResponse {
+  courses: Record<string, SimulationAdminCourseMetrics>
+}

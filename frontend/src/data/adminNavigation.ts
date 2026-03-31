@@ -31,7 +31,7 @@ export const adminNavItems: AdminNavItem[] = [
   { key: 'dashboardOverview', label: 'Dashboard', to: '/admin-dashboard', icon: 'dashboard' },
   { key: 'gisMapping', label: 'Mapping', to: '/admin-dashboard?section=map', icon: 'mapping' },
   { key: 'riskScoring', label: 'Scoring', to: '/admin-dashboard?section=scoring', icon: 'risk' },
-  { key: 'predictiveTrends', label: 'Trends', to: '/admin-dashboard?section=trends', icon: 'trend' },
+  { key: 'predictiveTrends', label: 'Analytics', to: '/admin-dashboard?section=trends', icon: 'trend' },
   { key: 'evacuationResources', label: 'Resources', to: '/admin-dashboard?section=resources', icon: 'resources' },
   { key: 'communityPortal', label: 'Users', to: '/admin-dashboard?section=users', icon: 'community' },
   { key: 'simulationTool', label: 'Simulation', to: '/admin-dashboard?section=simulation', icon: 'simulation' },

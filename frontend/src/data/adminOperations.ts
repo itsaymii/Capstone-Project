@@ -14,16 +14,6 @@ export type HazardIncident = {
   coordinates: [number, number]
 }
 
-export type SimulationModule = {
-  id: string
-  title: string
-  tag: string
-  trainees: number
-  completionRate: number
-  duration: string
-  description: string
-}
-
 export const hazardIncidents: HazardIncident[] = [
   {
     id: 'eq-east-zone',
@@ -99,35 +89,6 @@ export const hazardIncidents: HazardIncident[] = [
   },
 ]
 
-export const simulationModules: SimulationModule[] = [
-  {
-    id: 'earthquake',
-    title: 'Earthquake Response Course',
-    tag: 'Seismic Training',
-    trainees: 831,
-    completionRate: 78,
-    duration: '35 min',
-    description: 'Covers quake alerts, safe cover actions, evacuation, and post-event reporting drills.',
-  },
-  {
-    id: 'fire',
-    title: 'Fire Emergency Course',
-    tag: 'Fire Suppression',
-    trainees: 924,
-    completionRate: 84,
-    duration: '40 min',
-    description: 'Focuses on extinguisher use, evacuation paths, suppression support, and command escalation.',
-  },
-  {
-    id: 'accident',
-    title: 'Road Accident Course',
-    tag: 'Traffic Triage',
-    trainees: 676,
-    completionRate: 81,
-    duration: '30 min',
-    description: 'Trains field responders on scene control, casualty triage, and rapid coordination steps.',
-  },
-]
 
 export const hazardMeta: Record<HazardType, { label: string; accent: string; surface: string }> = {
   EQ: { label: 'Earthquake', accent: 'text-emerald-100', surface: 'bg-emerald-400/12 border-emerald-300/22' },

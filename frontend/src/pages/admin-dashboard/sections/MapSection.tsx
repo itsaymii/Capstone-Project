@@ -1,7 +1,7 @@
 import { AdminIncidentMapPanel } from '../../../components/AdminIncidentMapPanel'
 import type { HazardIncident, HazardType } from '../../../data/adminOperations'
 
-type MapFilter = 'all' | HazardType
+type MapFilter = HazardType
 
 type NewIncidentInput = {
   code: Extract<HazardType, 'FR' | 'AC'>

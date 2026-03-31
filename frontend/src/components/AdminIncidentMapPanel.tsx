@@ -1,9 +1,17 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import L, { type LatLngBoundsExpression } from 'leaflet'
 import 'leaflet/dist/leaflet.css'
+import 'leaflet.heat'
 import type { HazardIncident, HazardType } from '../data/adminOperations'
+import {
+  type EarthquakeEvent,
+  type HeatPoint,
+  fetchQuezonRegionEarthquakes,
+  toHeatPoints,
+  countNearLucena,
+} from '../services/earthquakes'
 
-type IncidentMapFilter = 'all' | HazardType
+type IncidentMapFilter = HazardType
 type ReportableHazardType = Extract<HazardType, 'FR' | 'AC'>
 type IncidentSeverity = HazardIncident['severity']
 
@@ -57,6 +65,17 @@ const lucenaBounds: LatLngBoundsExpression = [
   [13.98, 121.69],
 ]
 
+const philippinesBounds: LatLngBoundsExpression = [
+  [4.5, 116.0],
+  [21.5, 127.5],
+]
+
+/** Lucena City / southern Quezon Province view — tightly focused area for the EQ heatmap. */
+const quezonRegionBounds: LatLngBoundsExpression = [
+  [13.72, 121.3],
+  [14.12, 121.92],
+]
+
 const hazardColors: Record<HazardType, string> = {
   EQ: '#4ade80',
   FR: '#fb923c',
@@ -67,6 +86,16 @@ const hazardTypeMeta: Record<HazardType, { label: string; color: string }> = {
   EQ: { label: 'Earthquake', color: hazardColors.EQ },
   FR: { label: 'Fire', color: hazardColors.FR },
   AC: { label: 'Accident', color: hazardColors.AC },
+}
+
+function getEarthquakeDescription(event: EarthquakeEvent): string {
+  if (event.magnitude >= 5) {
+    return `Strong seismic event at ${event.depth.toFixed(1)} km depth. Priority validation recommended.`
+  }
+  if (event.magnitude >= 4) {
+    return `Moderate event at ${event.depth.toFixed(1)} km depth. Field teams advised to verify affected zones.`
+  }
+  return `Minor-to-light event at ${event.depth.toFixed(1)} km depth. Continue routine monitoring.`
 }
 
 const severityOptions: IncidentSeverity[] = ['Low', 'Moderate', 'High', 'Critical']
@@ -120,9 +149,49 @@ export function AdminIncidentMapPanel({ incidents, selectedType, onSelectType, o
   const [fireFeedbackMessage, setFireFeedbackMessage] = useState('')
   const [accidentFeedbackMessage, setAccidentFeedbackMessage] = useState('')
   const [activeReportForm, setActiveReportForm] = useState<ReportableHazardType>('FR')
+  const [earthquakeEvents, setEarthquakeEvents] = useState<EarthquakeEvent[]>([])
+  const [eqHeatPoints, setEqHeatPoints] = useState<HeatPoint[]>([])
+  const [eqFetchStatus, setEqFetchStatus] = useState<'idle' | 'loading' | 'error'>('idle')
+  const [showHeatmap, setShowHeatmap] = useState(true)
+  const [eqLastRefreshed, setEqLastRefreshed] = useState<Date | null>(null)
+  const [eqIsRefreshing, setEqIsRefreshing] = useState(false)
+
+  const loadEarthquakes = useCallback(async (silent = false) => {
+    if (silent) {
+      setEqIsRefreshing(true)
+    } else {
+      setEqFetchStatus('loading')
+    }
+    try {
+      const events = await fetchQuezonRegionEarthquakes(1825, 1.0)
+      setEarthquakeEvents(events)
+      setEqHeatPoints(toHeatPoints(events))
+      setEqFetchStatus('idle')
+      setEqLastRefreshed(new Date())
+    } catch {
+      if (!silent) setEqFetchStatus('error')
+    } finally {
+      setEqIsRefreshing(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (selectedType === 'EQ' && earthquakeEvents.length === 0 && eqFetchStatus === 'idle') {
+      void loadEarthquakes()
+    }
+  }, [selectedType, earthquakeEvents.length, eqFetchStatus, loadEarthquakes])
+
+  // Auto-refresh every 5 minutes while the earthquake view is active
+  useEffect(() => {
+    if (selectedType !== 'EQ') return
+    const intervalId = setInterval(() => {
+      void loadEarthquakes(true)
+    }, 5 * 60 * 1000)
+    return () => clearInterval(intervalId)
+  }, [selectedType, loadEarthquakes])
 
   const filteredIncidents = useMemo(
-    () => (selectedType === 'all' ? incidents : incidents.filter((incident) => incident.code === selectedType)),
+    () => incidents.filter((incident) => incident.code === selectedType),
     [incidents, selectedType],
   )
 
@@ -133,6 +202,21 @@ export function AdminIncidentMapPanel({ incidents, selectedType, onSelectType, o
       AC: incidents.filter((incident) => incident.code === 'AC').length,
     }),
     [incidents],
+  )
+
+  const earthquakeIncidentCards = useMemo(
+    () =>
+      [...earthquakeEvents]
+        .sort((a, b) => b.rawTimestamp - a.rawTimestamp)
+        .slice(0, 20)
+        .map((event) => ({
+          id: event.id,
+          title: `Earthquake Event - ${event.place}`,
+          time: event.time,
+          location: event.place,
+          description: getEarthquakeDescription(event),
+        })),
+    [earthquakeEvents],
   )
 
   useEffect(() => {
@@ -150,16 +234,18 @@ export function AdminIncidentMapPanel({ incidents, selectedType, onSelectType, o
       mapInstanceRef.current = null
     }
 
+    const isEqView = selectedType === 'EQ'
+
     const map = L.map(mapContainerRef.current, {
       zoomControl: true,
       attributionControl: false,
-      maxBounds: lucenaBounds,
+      maxBounds: philippinesBounds,
       maxBoundsViscosity: 1,
-      minZoom: 12,
+      minZoom: isEqView ? 6 : 10,
       maxZoom: 17,
     })
 
-    map.fitBounds(lucenaBounds)
+    map.fitBounds(isEqView ? quezonRegionBounds : lucenaBounds)
 
     L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
       attribution: '&copy; OpenStreetMap &copy; CARTO',
@@ -173,37 +259,69 @@ export function AdminIncidentMapPanel({ incidents, selectedType, onSelectType, o
       dashArray: '6 5',
     }).addTo(map)
 
-    filteredIncidents.forEach((incident) => {
-      L.circleMarker(incident.coordinates, {
-        radius: 14,
-        stroke: false,
-        fillColor: hazardColors[incident.code],
-        fillOpacity: 0.24,
-        interactive: false,
-      }).addTo(map)
-
-      if (incident.status === 'active') {
-        L.circleMarker(incident.coordinates, {
-          radius: 10,
-          color: hazardColors[incident.code],
-          weight: 2,
-          fillColor: hazardColors[incident.code],
-          fillOpacity: 0.18,
-          interactive: false,
-          className: 'hazard-marker-pulse',
+    if (isEqView) {
+      // ── Earthquake heatmap layer ──
+      if (showHeatmap && eqHeatPoints.length > 0) {
+        L.heatLayer(eqHeatPoints, {
+          minOpacity: 0.35,
+          radius: 28,
+          blur: 22,
+          max: 1.0,
+          gradient: { 0.2: '#3b82f6', 0.45: '#06b6d4', 0.65: '#22c55e', 0.8: '#facc15', 1.0: '#ef4444' },
         }).addTo(map)
       }
 
-      L.circleMarker(incident.coordinates, {
-        radius: 7,
-        color: '#ffffff',
-        weight: 1.5,
-        fillColor: hazardColors[incident.code],
-        fillOpacity: 0.98,
+      // Circle markers for M≥3.5 events
+      earthquakeEvents
+        .filter((e) => e.magnitude >= 3.5)
+        .forEach((event) => {
+          const radiusPx = Math.max(4, (event.magnitude - 1) * 3)
+          L.circleMarker([event.lat, event.lng], {
+            radius: radiusPx,
+            color: '#ffffff',
+            weight: 1,
+            fillColor: hazardColors.EQ,
+            fillOpacity: 0.85,
+          })
+            .addTo(map)
+            .bindPopup(
+              `<strong>M${event.magnitude.toFixed(1)}</strong><br/>${event.place}<br/><small>${event.time} · ${event.depth.toFixed(0)} km deep</small>`,
+            )
+        })
+    } else {
+      // ── Standard incident markers ──
+      filteredIncidents.forEach((incident) => {
+        L.circleMarker(incident.coordinates, {
+          radius: 14,
+          stroke: false,
+          fillColor: hazardColors[incident.code],
+          fillOpacity: 0.24,
+          interactive: false,
+        }).addTo(map)
+
+        if (incident.status === 'active') {
+          L.circleMarker(incident.coordinates, {
+            radius: 10,
+            color: hazardColors[incident.code],
+            weight: 2,
+            fillColor: hazardColors[incident.code],
+            fillOpacity: 0.18,
+            interactive: false,
+            className: 'hazard-marker-pulse',
+          }).addTo(map)
+        }
+
+        L.circleMarker(incident.coordinates, {
+          radius: 7,
+          color: '#ffffff',
+          weight: 1.5,
+          fillColor: hazardColors[incident.code],
+          fillOpacity: 0.98,
+        })
+          .addTo(map)
+          .bindPopup(`<strong>${incident.title}</strong><br/>${incident.location}<br/>${incident.time}`)
       })
-        .addTo(map)
-        .bindPopup(`<strong>${incident.title}</strong><br/>${incident.location}<br/>${incident.time}`)
-    })
+    }
 
     window.setTimeout(() => {
       map.invalidateSize()
@@ -215,7 +333,7 @@ export function AdminIncidentMapPanel({ incidents, selectedType, onSelectType, o
       map.remove()
       mapInstanceRef.current = null
     }
-  }, [filteredIncidents])
+  }, [filteredIncidents, selectedType, eqHeatPoints, earthquakeEvents, showHeatmap])
 
   useEffect(() => {
     if (selectedType === 'FR' || selectedType === 'AC') {
@@ -371,21 +489,12 @@ export function AdminIncidentMapPanel({ incidents, selectedType, onSelectType, o
         <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_12px_32px_rgba(15,23,42,0.08)] md:flex md:h-[calc(100vh-13rem)] md:flex-col">
           <div className="flex flex-col gap-4 border-b border-slate-200 bg-[linear-gradient(90deg,#e8f1fd_0%,#f6fbff_100%)] px-4 py-4 sm:px-5 sm:py-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Dashboard Mapping</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                {selectedType === 'EQ' ? 'Seismic Mapping — Quezon Province' : 'Dashboard Mapping'}
+              </p>
               <h2 className="mt-1 text-xl font-bold text-slate-900 sm:text-2xl">Lucena Incident Map</h2>
             </div>
             <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap">
-              <button
-                className={`rounded-full border px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.12em] transition ${
-                  selectedType === 'all'
-                    ? 'border-blue-700 bg-blue-700 text-white'
-                    : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
-                }`}
-                onClick={() => handleMapTypeSelect('all')}
-                type="button"
-              >
-                All
-              </button>
               {(Object.keys(hazardTypeMeta) as HazardType[]).map((typeCode) => (
                 <button
                   className={`rounded-full border px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.12em] transition ${
@@ -402,18 +511,70 @@ export function AdminIncidentMapPanel({ incidents, selectedType, onSelectType, o
                   {hazardTypeMeta[typeCode].label}
                 </button>
               ))}
+              {selectedType === 'EQ' ? (
+                <button
+                  className={`rounded-full border px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.12em] transition ${
+                    showHeatmap
+                      ? 'border-emerald-500 bg-emerald-500 text-white'
+                      : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
+                  }`}
+                  onClick={() => setShowHeatmap((v) => !v)}
+                  type="button"
+                >
+                  {showHeatmap ? 'Heatmap ON' : 'Heatmap OFF'}
+                </button>
+              ) : null}
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3 border-b border-slate-200 px-4 py-3 text-xs text-slate-600 sm:px-5">
-            {(Object.keys(hazardTypeMeta) as HazardType[]).map((typeCode) => (
-              <div className="flex items-center gap-2" key={typeCode}>
-                <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: hazardTypeMeta[typeCode].color }} />
-                <span className="font-semibold text-slate-700">{hazardTypeMeta[typeCode].label}</span>
-                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600">{incidentCounts[typeCode]}</span>
+          {selectedType === 'EQ' ? (
+            <div className="flex flex-wrap items-center gap-3 border-b border-slate-200 bg-slate-50 px-4 py-2.5 text-[11px] sm:px-5">
+              <span className="font-semibold uppercase tracking-[0.12em] text-slate-500">Heatmap gradient</span>
+              <div className="flex items-center gap-1.5">
+                <span className="inline-block h-2.5 w-2.5 rounded-full bg-[#3b82f6]" />
+                <span className="text-slate-600">Low activity</span>
               </div>
-            ))}
-          </div>
+              <div className="flex items-center gap-1.5">
+                <span className="inline-block h-2.5 w-2.5 rounded-full bg-[#22c55e]" />
+                <span className="text-slate-600">Moderate</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="inline-block h-2.5 w-2.5 rounded-full bg-[#facc15]" />
+                <span className="text-slate-600">High</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="inline-block h-2.5 w-2.5 rounded-full bg-[#ef4444]" />
+                <span className="text-slate-600">Critical zone</span>
+              </div>
+              <div className="ml-auto flex items-center gap-2">
+                {eqFetchStatus === 'loading' ? (
+                  <span className="animate-pulse font-semibold text-blue-600">Fetching data…</span>
+                ) : eqIsRefreshing ? (
+                  <span className="animate-pulse font-semibold text-blue-500">Refreshing…</span>
+                ) : eqFetchStatus === 'error' ? (
+                  <span className="font-semibold text-red-600">Fetch failed</span>
+                ) : (
+                  <span className="flex items-center gap-1 rounded-full border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.1em] text-emerald-700">
+                    <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
+                    Live · 5 min
+                  </span>
+                )}
+                {earthquakeEvents.length > 0 && eqFetchStatus !== 'loading' ? (
+                  <span className="font-semibold text-slate-600">{earthquakeEvents.length} events</span>
+                ) : null}
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-center gap-3 border-b border-slate-200 px-4 py-3 text-xs text-slate-600 sm:px-5">
+              {(Object.keys(hazardTypeMeta) as HazardType[]).map((typeCode) => (
+                <div className="flex items-center gap-2" key={typeCode}>
+                  <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: hazardTypeMeta[typeCode].color }} />
+                  <span className="font-semibold text-slate-700">{hazardTypeMeta[typeCode].label}</span>
+                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600">{incidentCounts[typeCode]}</span>
+                </div>
+              ))}
+            </div>
+          )}
 
           <div className="h-[520px] w-full sm:h-[640px] md:h-auto md:flex-1" ref={mapContainerRef} />
         </div>
@@ -429,21 +590,81 @@ export function AdminIncidentMapPanel({ incidents, selectedType, onSelectType, o
 
           {selectedType === 'EQ' ? (
             <div className="mt-5 rounded-[24px] border border-emerald-200 bg-[linear-gradient(180deg,#ecfdf5_0%,#ffffff_100%)] p-4 sm:p-5">
-              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-700">Earthquake Mapping</p>
-              <h3 className="mt-1 text-xl font-bold text-slate-900">View-only map layer</h3>
-              <p className="mt-2 text-sm leading-relaxed text-slate-600">
-                Earthquake incidents are view-only. Select Fire or Accident from the map filter to open the corresponding accomplishment report form on this panel.
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-700">Seismic Data</p>
+                {eqFetchStatus === 'error' ? (
+                  <button
+                    className="rounded-lg border border-red-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-red-800 hover:bg-red-50"
+                    onClick={() => void loadEarthquakes()}
+                    type="button"
+                  >
+                    Retry
+                  </button>
+                ) : null}
+              </div>
+              <h3 className="mt-1 text-xl font-bold text-slate-900">PHIVOLCS / USGS Earthquakes</h3>
+              <p className="mt-1 text-xs leading-relaxed text-slate-600">
+                Quezon Province &mdash; last 5 years · USGS FDSN (same catalog as PHIVOLCS).
+                {eqLastRefreshed
+                  ? ` Updated ${eqLastRefreshed.toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}.`
+                  : ''}{' '}
+                Auto-refreshes every 5 min.
               </p>
-            </div>
-          ) : null}
 
-          {selectedType === 'all' ? (
-            <div className="mt-5 rounded-[24px] border border-slate-200 bg-slate-50 p-4 sm:p-5">
-              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Form Selection</p>
-              <h3 className="mt-1 text-xl font-bold text-slate-900">No report form selected</h3>
-              <p className="mt-2 text-sm leading-relaxed text-slate-600">
-                Select Fire or Accident from the mapping filters to open the matching accomplishment report form.
-              </p>
+              {eqFetchStatus === 'loading' ? (
+                <div className="mt-4 flex items-center gap-3">
+                  <div className="h-5 w-5 animate-spin rounded-full border-2 border-emerald-400 border-t-transparent" />
+                  <span className="text-sm text-slate-600">Fetching seismic data…</span>
+                </div>
+              ) : eqFetchStatus === 'error' ? (
+                <p className="mt-3 text-sm font-semibold text-red-700">Failed to load seismic data. Check connection.</p>
+              ) : earthquakeEvents.length > 0 ? (
+                <>
+                  <div className="mt-4 grid grid-cols-2 gap-2">
+                    <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2.5">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-emerald-700">Total events</p>
+                      <p className="mt-0.5 text-xl font-black text-emerald-900">{earthquakeEvents.length}</p>
+                    </div>
+                    <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2.5">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-red-700">Near Lucena</p>
+                      <p className="mt-0.5 text-xl font-black text-red-900">{countNearLucena(earthquakeEvents)}</p>
+                    </div>
+                    <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-amber-700">Strongest (M)</p>
+                      <p className="mt-0.5 text-xl font-black text-amber-900">
+                        {Math.max(...earthquakeEvents.map((e) => e.magnitude)).toFixed(1)}
+                      </p>
+                    </div>
+                    <div className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2.5">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-blue-700">Significant (≥3.5)</p>
+                      <p className="mt-0.5 text-xl font-black text-blue-900">
+                        {earthquakeEvents.filter((e) => e.magnitude >= 3.5).length}
+                      </p>
+                    </div>
+                  </div>
+
+                  <p className="mt-4 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">Most Recent Events</p>
+                  <div className="mt-2 max-h-[260px] space-y-2 overflow-y-auto">
+                    {earthquakeIncidentCards.map((incident) => (
+                      <article className="rounded-xl border border-slate-200 bg-white p-3" key={incident.id}>
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="inline-flex rounded-md bg-emerald-400 px-1.5 py-0.5 text-[10px] font-black text-slate-900">
+                                EQ
+                              </span>
+                              <p className="truncate text-sm font-semibold text-slate-900">{incident.title}</p>
+                            </div>
+                            <p className="mt-1 pl-7 text-xs text-slate-500">{incident.time}</p>
+                            <p className="mt-1 pl-7 text-xs text-slate-500">{incident.location}</p>
+                          </div>
+                        </div>
+                        <p className="mt-2 pl-7 text-xs text-slate-600">{incident.description}</p>
+                      </article>
+                    ))}
+                  </div>
+                </>
+              ) : null}
             </div>
           ) : null}
 

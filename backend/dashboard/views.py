@@ -12,6 +12,7 @@ from rest_framework import status
 from rest_framework.response import Response
 
 from accounts.models import OneTimePassword
+from .models import SimulationProgress
 
 
 def _build_unique_username(seed: str) -> str:
@@ -45,8 +46,138 @@ def _serialize_dashboard_user(user: User) -> dict:
     }
 
 
-@api_view(['GET'])
+def _sanitize_course_progress(raw: object) -> dict[str, int]:
+    if raw is None:
+        return {}
+
+    if not isinstance(raw, dict):
+        raise ValidationError('courseProgress must be an object.')
+
+    sanitized: dict[str, int] = {}
+    for key, value in raw.items():
+        if not isinstance(key, str) or not key.strip():
+            continue
+
+        try:
+            numeric_value = int(round(float(value)))
+        except (TypeError, ValueError):
+            continue
+
+        sanitized[key] = max(0, min(100, numeric_value))
+
+    return sanitized
+
+
+def _sanitize_completed_videos(raw: object) -> dict[str, bool]:
+    if raw is None:
+        return {}
+
+    if not isinstance(raw, dict):
+        raise ValidationError('completedLessonVideos must be an object.')
+
+    sanitized: dict[str, bool] = {}
+    for key, value in raw.items():
+        if not isinstance(key, str) or not key.strip():
+            continue
+
+        sanitized[key] = bool(value)
+
+    return sanitized
+
+
+def _sanitize_completed_courses(raw: object) -> dict[str, str]:
+    if raw is None:
+        return {}
+
+    if not isinstance(raw, dict):
+        raise ValidationError('completedCourses must be an object.')
+
+    sanitized: dict[str, str] = {}
+    for key, value in raw.items():
+        if not isinstance(key, str) or not key.strip() or not isinstance(value, str):
+            continue
+
+        timestamp = value.strip()
+        if not timestamp:
+            continue
+
+        try:
+            timezone.datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+        except ValueError:
+            continue
+
+        sanitized[key] = timestamp
+
+    return sanitized
+
+
+def _serialize_simulation_progress(progress: SimulationProgress) -> dict:
+    return {
+        'courseProgress': progress.course_progress,
+        'completedLessonVideos': progress.completed_lesson_videos,
+        'completedCourses': progress.completed_courses,
+        'updatedAt': timezone.localtime(progress.updated_at).isoformat() if progress.updated_at else None,
+    }
+
+
+def _serialize_simulation_admin_metrics() -> dict:
+    metrics: dict[str, dict[str, int]] = {}
+
+    for progress in SimulationProgress.objects.all().iterator():
+        course_progress = progress.course_progress if isinstance(progress.course_progress, dict) else {}
+        completed_courses = progress.completed_courses if isinstance(progress.completed_courses, dict) else {}
+
+        course_ids = {
+            key.strip()
+            for key in [*course_progress.keys(), *completed_courses.keys()]
+            if isinstance(key, str) and key.strip()
+        }
+
+        for course_id in course_ids:
+            course_metrics = metrics.setdefault(course_id, {'trainees': 0, 'completed': 0, 'completionRate': 0})
+            course_metrics['trainees'] += 1
+            if course_id in completed_courses:
+                course_metrics['completed'] += 1
+
+    for course_metrics in metrics.values():
+        trainees = course_metrics['trainees']
+        completed = course_metrics['completed']
+        course_metrics['completionRate'] = round((completed / trainees) * 100) if trainees > 0 else 0
+
+    return {'courses': metrics}
+
+
+@api_view(['GET', 'PUT'])
 @permission_classes([IsAuthenticated])
+def simulation_progress(request):
+    progress, _ = SimulationProgress.objects.get_or_create(user=request.user)
+
+    if request.method == 'GET':
+        return Response(_serialize_simulation_progress(progress), status=status.HTTP_200_OK)
+
+    try:
+        course_progress = _sanitize_course_progress(request.data.get('courseProgress'))
+        completed_lesson_videos = _sanitize_completed_videos(request.data.get('completedLessonVideos'))
+        completed_courses = _sanitize_completed_courses(request.data.get('completedCourses'))
+    except ValidationError as error:
+        return Response({'error': str(error)}, status=status.HTTP_400_BAD_REQUEST)
+
+    progress.course_progress = course_progress
+    progress.completed_lesson_videos = completed_lesson_videos
+    progress.completed_courses = completed_courses
+    progress.save(update_fields=['course_progress', 'completed_lesson_videos', 'completed_courses', 'updated_at'])
+
+    return Response(_serialize_simulation_progress(progress), status=status.HTTP_200_OK)
+
+
+@api_view(['GET'])
+@permission_classes([IsAdminUser])
+def simulation_admin_metrics(request):
+    return Response(_serialize_simulation_admin_metrics(), status=status.HTTP_200_OK)
+
+
+@api_view(['GET'])
+@permission_classes([IsAdminUser])
 def admin_dashboard_summary(request):
     now = timezone.now()
     thirty_days_ago = now - timedelta(days=30)

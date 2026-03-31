@@ -8,6 +8,7 @@ import {
 } from '../../data/adminOperations'
 import type { AdminNavKey } from '../../data/adminNavigation'
 import { getCurrentUserProfile, logoutUser } from '../../services/auth'
+import { fetchQuezonRegionEarthquakes, type EarthquakeEvent } from '../../services/earthquakes'
 import {
   NOTIFICATIONS_CHANGED_EVENT,
   getNotifications,
@@ -16,6 +17,7 @@ import {
 } from '../../services/notifications'
 import notificationIcon from '../../images/notification.png'
 import { InlineModuleSection } from './sections/InlineModuleSection'
+import { AnalyticsSection } from './sections/AnalyticsSection'
 import { MapSection } from './sections/MapSection'
 import { OverviewSection } from './sections/OverviewSection'
 import { ReportsSection } from './sections/ReportsSection'
@@ -34,7 +36,7 @@ type WorkspaceSection =
   | 'users'
   | 'settings'
 
-type MapFilter = 'all' | HazardType
+type MapFilter = HazardType
 
 type MetricCard = {
   label: string
@@ -43,6 +45,79 @@ type MetricCard = {
   delta: string
   accent: string
   valueClass: string
+}
+
+function calculateEarthquakeRiskScore(events: EarthquakeEvent[]): number {
+  if (events.length === 0) return 20
+
+  const now = Date.now()
+  const thirtyDaysAgo = now - 30 * 24 * 60 * 60 * 1000
+  const sixMonthsAgo = now - 180 * 24 * 60 * 60 * 1000
+  const oneYearAgo = now - 365 * 24 * 60 * 60 * 1000
+
+  const recent30 = events.filter((event) => event.rawTimestamp >= thirtyDaysAgo)
+  const significant30 = recent30.filter((event) => event.magnitude >= 4.0)
+  const strong180 = events.filter(
+    (event) => event.rawTimestamp >= sixMonthsAgo && event.magnitude >= 5.0,
+  )
+  const maxMagYear = events
+    .filter((event) => event.rawTimestamp >= oneYearAgo)
+    .reduce((maxMag, event) => Math.max(maxMag, event.magnitude), 0)
+
+  const score =
+    30 +
+    Math.min(recent30.length * 2, 25) +
+    Math.min(significant30.length * 8, 24) +
+    Math.min(strong180.length * 15, 30) +
+    Math.min(maxMagYear * 4, 16)
+
+  return Math.min(100, Math.round(score))
+}
+
+function getSeverityScore(severity: HazardIncident['severity']): number {
+  switch (severity) {
+    case 'Critical':
+      return 100
+    case 'High':
+      return 78
+    case 'Moderate':
+      return 52
+    case 'Low':
+      return 26
+    default:
+      return 0
+  }
+}
+
+function calculateFireRiskScore(incidents: HazardIncident[]): number {
+  if (incidents.length === 0) {
+    return 0
+  }
+
+  const activeIncidents = incidents.filter((incident) => incident.status === 'active')
+  if (activeIncidents.length === 0) {
+    return Math.round(
+      incidents.reduce((total, incident) => total + getSeverityScore(incident.severity), 0) /
+        incidents.length,
+    )
+  }
+
+  const weightedActiveScore =
+    activeIncidents.reduce((total, incident) => total + getSeverityScore(incident.severity), 0) /
+    activeIncidents.length
+  const activityShare = activeIncidents.length / incidents.length
+
+  return Math.min(100, Math.round(weightedActiveScore * (0.7 + activityShare * 0.3)))
+}
+
+function filterLucenaEvents(events: EarthquakeEvent[]): EarthquakeEvent[] {
+  return events.filter(
+    (event) =>
+      event.lat >= 13.78 &&
+      event.lat <= 14.09 &&
+      event.lng >= 121.45 &&
+      event.lng <= 121.77,
+  )
 }
 
 function getWorkspaceSection(sectionParam: string | null): WorkspaceSection {
@@ -108,10 +183,15 @@ export function AdminDashboardPage() {
     getWorkspaceSection(searchParams.get('section')),
   )
   const [reports, setReports] = useState(() => hazardIncidents)
-  const [mapFilter, setMapFilter] = useState<MapFilter>('all')
+  const [mapFilter, setMapFilter] = useState<MapFilter>('EQ')
   const [notifications, setNotifications] = useState<NotificationItem[]>(() => getNotifications())
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false)
   const [isTopProfileMenuOpen, setIsTopProfileMenuOpen] = useState(false)
+  const [liveEarthquakeTotal, setLiveEarthquakeTotal] = useState<number>(0)
+  const [liveEarthquakeRiskScore, setLiveEarthquakeRiskScore] = useState<number>(20)
+  const [liveEarthquakeEvents, setLiveEarthquakeEvents] = useState<EarthquakeEvent[]>([])
+  const [eqLastUpdated, setEqLastUpdated] = useState<Date | null>(null)
+  const [eqCardStatus, setEqCardStatus] = useState<'loading' | 'ready' | 'error'>('loading')
 
   const profile = getCurrentUserProfile()
   const displayName = profile?.fullName?.trim() || 'Administrator'
@@ -127,65 +207,82 @@ export function AdminDashboardPage() {
     [notifications],
   )
 
-  const currentYear = new Date().getFullYear()
-  const previousYear = currentYear - 1
   const fireReports = useMemo(() => reports.filter((incident) => incident.code === 'FR'), [reports])
-  const earthquakeReports = useMemo(
-    () => reports.filter((incident) => incident.code === 'EQ'),
+  const accidentReports = useMemo(
+    () => reports.filter((incident) => incident.code === 'AC'),
     [reports],
   )
-  const fireTotals = useMemo(
-    () => ({ current: fireReports.length * 12 + 14, previous: fireReports.length * 9 + 10 }),
-    [fireReports.length],
-  )
-  const earthquakeTotals = useMemo(
-    () => ({ current: earthquakeReports.length * 8 + 9, previous: earthquakeReports.length * 6 + 8 }),
-    [earthquakeReports.length],
-  )
-  const monitoredBarangays = 33
-  const fireRiskScore = useMemo(
-    () =>
-      Math.min(
-        100,
-        52 +
-          fireReports.length * 7 +
-          fireReports.filter((item) => item.status === 'active').length * 6,
-      ),
-    [fireReports],
-  )
-  const earthquakeRiskScore = useMemo(
-    () =>
-      Math.min(
-        100,
-        44 +
-          earthquakeReports.length * 10 +
-          earthquakeReports.filter((item) => item.severity !== 'Low').length * 7,
-      ),
-    [earthquakeReports],
-  )
+  const fireRiskScore = useMemo(() => calculateFireRiskScore(fireReports), [fireReports])
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadEarthquakeCardData(silent = false): Promise<void> {
+      if (!silent) {
+        setEqCardStatus('loading')
+      }
+
+      try {
+        const events = await fetchQuezonRegionEarthquakes(1825, 1.0)
+        if (cancelled) return
+        const lucenaEvents = filterLucenaEvents(events)
+        setLiveEarthquakeEvents(events)
+        setLiveEarthquakeTotal(events.length)
+        setLiveEarthquakeRiskScore(calculateEarthquakeRiskScore(lucenaEvents))
+        setEqLastUpdated(new Date())
+        setEqCardStatus('ready')
+      } catch {
+        if (cancelled) return
+        setEqCardStatus('error')
+      }
+    }
+
+    void loadEarthquakeCardData()
+    const refreshTimer = window.setInterval(() => {
+      void loadEarthquakeCardData(true)
+    }, 5 * 60 * 1000)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(refreshTimer)
+    }
+  }, [])
 
   const overviewMetricCards: MetricCard[] = [
     {
       label: 'Total fire incidents',
-      value: fireTotals.current,
-      comparison: `${previousYear}: ${fireTotals.previous}`,
-      delta: `+${fireTotals.current - fireTotals.previous} vs ${previousYear}`,
+      value: fireReports.length,
+      comparison: 'Current incident records in dashboard',
+      delta:
+        fireReports.length > 0
+          ? `${fireReports.filter((incident) => incident.status === 'active').length} currently active`
+          : 'No fire incidents recorded yet',
       accent: 'border-t-red-600',
       valueClass: 'text-red-700',
     },
     {
       label: 'Total earthquake occurrences',
-      value: earthquakeTotals.current,
-      comparison: `${previousYear}: ${earthquakeTotals.previous}`,
-      delta: `+${earthquakeTotals.current - earthquakeTotals.previous} vs ${previousYear}`,
+      value: eqCardStatus === 'loading' ? '...' : liveEarthquakeTotal,
+      comparison:
+        eqCardStatus === 'error'
+          ? 'Live seismic API unavailable'
+          : 'USGS live data (Quezon region, last 5 years)',
+      delta:
+        eqCardStatus === 'loading'
+          ? 'Updating from live seismic feed'
+          : eqCardStatus === 'error'
+            ? 'Unable to refresh right now'
+            : 'Auto-refresh every 5 minutes',
       accent: 'border-t-emerald-600',
       valueClass: 'text-emerald-700',
     },
     {
-      label: 'Barangays monitored',
-      value: monitoredBarangays,
-      comparison: 'City-wide active watchlist',
-      delta: 'Full Lucena City coverage',
+      label: 'Total accidents',
+      value: accidentReports.length,
+      comparison: 'Current incident records in dashboard',
+      delta:
+        accidentReports.length > 0
+          ? `${accidentReports.filter((incident) => incident.status === 'pending').length} pending verification`
+          : 'No accident incidents recorded yet',
       accent: 'border-t-blue-700',
       valueClass: 'text-blue-700',
     },
@@ -199,10 +296,19 @@ export function AdminDashboardPage() {
     },
     {
       label: 'Current earthquake risk score',
-      value: `${earthquakeRiskScore}%`,
-      comparison: 'Based on seismic activity',
+      value: eqCardStatus === 'loading' ? '...' : `${liveEarthquakeRiskScore}%`,
+      comparison:
+        eqCardStatus === 'error'
+          ? 'Live seismic API unavailable'
+          : 'Lucena-only seismic recency + magnitude',
       delta:
-        earthquakeRiskScore >= 70 ? 'Heightened seismic watch' : 'Routine monitoring level',
+        eqCardStatus === 'loading'
+          ? 'Updating from live seismic feed'
+          : eqCardStatus === 'error'
+            ? 'Unable to refresh right now'
+            : liveEarthquakeRiskScore >= 70
+              ? 'Heightened seismic watch'
+              : 'Routine monitoring level',
       accent: 'border-t-teal-600',
       valueClass: 'text-teal-700',
     },
@@ -313,7 +419,7 @@ export function AdminDashboardPage() {
 
     setReports((currentReports) => [newIncident, ...currentReports])
     setActiveSection('map')
-    setMapFilter('all')
+    setMapFilter(newIncident.code)
   }
 
   function handleLogout(): void {
@@ -528,11 +634,19 @@ export function AdminDashboardPage() {
 
           {activeSection === 'overview' ? (
             <OverviewSection
+              incidents={reports}
               latestFireIncidents={latestFireIncidents}
               overviewMetricCards={overviewMetricCards}
             />
           ) : null}
-          {activeSection === 'reports' ? <ReportsSection reports={reports} /> : null}
+          {activeSection === 'reports' ? (
+            <ReportsSection
+              earthquakeEvents={liveEarthquakeEvents}
+              earthquakeFeedStatus={eqCardStatus}
+              earthquakeLastUpdated={eqLastUpdated}
+              reports={reports}
+            />
+          ) : null}
           {activeSection === 'map' ? (
             <MapSection
               incidents={reports}
@@ -549,11 +663,7 @@ export function AdminDashboardPage() {
             />
           ) : null}
           {activeSection === 'trends' ? (
-            <InlineModuleSection
-              description="Trend monitoring stays inside the same light admin dashboard instead of routing to a separate page."
-              eyebrow="Admin Operations"
-              title="Predictive Trends"
-            />
+            <AnalyticsSection reports={reports} />
           ) : null}
           {activeSection === 'resources' ? <ResourcesSection /> : null}
           {activeSection === 'users' ? <UsersSection /> : null}

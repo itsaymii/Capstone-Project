@@ -6,6 +6,7 @@ import { RegisterPage } from '../auth/register/RegisterPage'
 import { NavigationBar } from '../../components/NavigationBar'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { isAuthenticated } from '../../services/auth'
+import { hazardIncidents } from '../../data/adminOperations'
 import landingPageImage from '../../images/LandingPage.jpg'
 import earthquakeIcon from '../../images/earthquake.png'
 import alarmIcon from '../../images/alarm.png'
@@ -21,6 +22,12 @@ const mapLegend = [
   { label: 'Fire', color: '#ef4444' },
   { label: 'Accident', color: '#f59e0b' },
 ]
+
+const mapColorByCode = {
+  EQ: '#facc15',
+  FR: '#ef4444',
+  AC: '#f59e0b',
+} as const
 
 const hazardRiskLevels = [
   {
@@ -309,6 +316,55 @@ export function LandingPage() {
       fillOpacity: 0.05,
       dashArray: '6 5',
     }).addTo(map)
+
+    // Plot currently tracked incidents on the home map preview.
+    const incidentBounds = L.latLngBounds(hazardIncidents.map((incident) => incident.coordinates))
+
+    hazardIncidents.forEach((incident) => {
+      const markerColor = mapColorByCode[incident.code]
+
+      L.circleMarker(incident.coordinates, {
+        radius: 16,
+        stroke: false,
+        fillColor: markerColor,
+        fillOpacity: 0.26,
+        interactive: false,
+      }).addTo(map)
+
+      if (incident.status !== 'resolved') {
+        L.circleMarker(incident.coordinates, {
+          radius: 11,
+          color: markerColor,
+          weight: 2,
+          fillColor: markerColor,
+          fillOpacity: 0.16,
+          interactive: false,
+          className: 'hazard-marker-pulse',
+        }).addTo(map)
+      }
+
+      L.circleMarker(incident.coordinates, {
+        radius: 8,
+        color: '#ffffff',
+        weight: 2,
+        fillColor: markerColor,
+        fillOpacity: 0.98,
+      })
+        .addTo(map)
+        .bindTooltip(`${incident.code}`, {
+          permanent: true,
+          direction: 'top',
+          offset: [0, -9],
+          className: 'text-[10px] font-bold',
+        })
+        .bindPopup(
+          `<strong>${incident.title}</strong><br/>${incident.location}<br/><small>${incident.time} · ${incident.status.toUpperCase()}</small>`,
+        )
+    })
+
+    if (incidentBounds.isValid()) {
+      map.fitBounds(incidentBounds.pad(0.25))
+    }
 
     // Ensure tiles render even when section starts off-screen.
     window.setTimeout(() => {
