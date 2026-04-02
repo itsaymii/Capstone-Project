@@ -27,14 +27,16 @@
    - [Types](#57-types)
 6. [Authentication System](#6-authentication-system)
    - [Citizen Registration Flow](#61-citizen-registration-flow)
-   - [Citizen Login Flow](#62-citizen-login-flow)
-   - [Admin Login Flow](#63-admin-login-flow)
-   - [Session Storage Strategy](#64-session-storage-strategy)
+       - [Unified Login & Role Routing](#62-unified-login--role-routing)
+       - [Forgot Password Flow](#63-forgot-password-flow)
+       - [Session Storage Strategy](#64-session-storage-strategy)
 7. [Admin Dashboard](#7-admin-dashboard)
 8. [API Reference](#8-api-reference)
 9. [Database Models](#9-database-models)
 10. [How to Run the Project](#10-how-to-run-the-project)
 11. [Key Concepts Explained Simply](#11-key-concepts-explained-simply)
+12. [Additional System Diagrams](#12-additional-system-diagrams)
+13. [Contributors](#13-contributors)
 
 ---
 
@@ -47,9 +49,12 @@ This is a **web application for Lucena City's Disaster Risk Reduction and Manage
 - View an interactive **disaster map** showing incidents in the area
 - Take **simulation/training courses** to learn disaster preparedness
 - Manage their **profile** (personal info, emergency contacts, etc.)
+- Reset their password using **email OTP verification**
 
-### For Admins (DRRMO Staff)
-- Log in through a **separate admin portal** (`/admin-page`)
+### For Admins and Staff (DRRMO Personnel)
+- Use the same **unified login page** as citizens (`/login`)
+- Be routed automatically to the **admin dashboard** based on account role
+- Bypass login OTP when the account role is `admin` or `staff`
 - Access an **admin dashboard** with multiple management sections:
   - **Overview** – live statistics (total users, active users, pending OTPs)
   - **Users** – create, edit, deactivate, and delete citizen/admin accounts
@@ -78,8 +83,8 @@ Capstone-Project/
 │   │   └── asgi.py                 ← Async server entry point
 │   │
 │   ├── accounts/                   ← User authentication app
-│   │   ├── models.py               ← OneTimePassword model
-│   │   ├── views.py                ← Register/login/OTP endpoints
+│   │   ├── models.py               ← OneTimePassword + AccountProfile models
+│   │   ├── views.py                ← Register/login/password-reset endpoints
 │   │   ├── urls.py                 ← URL patterns for accounts
 │   │   ├── admin.py                ← Django admin configuration
 │   │   └── migrations/             ← Database migration files
@@ -115,9 +120,9 @@ Capstone-Project/
 │       ├── pages/
 │       │   ├── landing/            ← Public home page
 │       │   ├── auth/
-│       │   │   ├── login/          ← Citizen login page
+│       │   │   ├── login/          ← Unified login + forgot-password page
 │       │   │   ├── register/       ← Citizen registration page
-│       │   │   └── admin/          ← Admin login + account creation pages
+│       │   │   └── admin/          ← Legacy admin redirect + account creation pages
 │       │   ├── admin-dashboard/    ← Admin control center
 │       │   │   └── sections/       ← Individual dashboard tab sections
 │       │   ├── disaster-map/       ← Interactive hazard map
@@ -209,7 +214,7 @@ Django routes incoming requests to one of two apps:
 
 ### 4.3 Accounts App
 
-**Purpose**: Handles user registration and login using OTP (One-Time Password) email verification.
+**Purpose**: Handles registration, unified login, role-aware access, and password reset using OTP (One-Time Password) email verification.
 
 #### Model: `OneTimePassword` (`accounts/models.py`)
 
@@ -218,12 +223,28 @@ Stores every OTP request that is generated:
 | Field | Type | Description |
 |---|---|---|
 | `email` | EmailField | Who the OTP was sent to |
-| `purpose` | CharField | `'register'` or `'login'` |
+| `purpose` | CharField | `'register'`, `'login'`, or `'password_reset'` |
 | `code_hash` | CharField | Hashed OTP (never stored as plain text) |
 | `payload` | JSONField | Extra data (e.g., registration info, userId) |
 | `expires_at` | DateTimeField | When OTP expires (3 minutes after creation) |
 | `is_used` | BooleanField | Whether the OTP has already been used |
 | `created_at` | DateTimeField | When the OTP was created |
+
+#### Model: `AccountProfile` (`accounts/models.py`)
+
+Stores the application's canonical account role separate from Django's built-in flags.
+
+| Field | Type | Description |
+|---|---|---|
+| `user` | OneToOneField(User) | Connects one profile to one Django user |
+| `role` | CharField | `'admin'`, `'staff'`, or `'citizen'` |
+| `created_at` | DateTimeField | Profile creation timestamp |
+| `updated_at` | DateTimeField | Last profile update timestamp |
+
+Role rules:
+- `admin` and `staff` have dashboard access
+- `citizen` uses the public side of the application
+- The role in `AccountProfile` is the primary source of truth for routing and UI permissions
 
 #### Views & Endpoints (`accounts/views.py`)
 
@@ -232,7 +253,6 @@ Stores every OTP request that is generated:
 | Function | What it does |
 |---|---|
 | `_coerce_bool(value)` | Converts any value (string "false", integer 0) to a proper Python bool |
-| `_has_admin_access(user)` | Returns True if user is `is_staff` OR `is_superuser` |
 | `_generate_otp_code()` | Returns a random 6-digit number as string |
 | `_send_otp_email(email, code, purpose)` | Sends OTP via configured email backend |
 | `_create_otp(email, purpose, payload)` | Creates and stores a hashed OTP record |
@@ -240,6 +260,9 @@ Stores every OTP request that is generated:
 | `_get_recent_otp_request(email, purpose)` | Checks if an OTP was requested within the last 3 minutes (rate limiting) |
 | `_has_recent_verified_login_otp(email, user_id)` | Checks if user verified a login OTP in the past 5 minutes (bypass window) |
 | `_serialize_user(user)` | Converts a Django User to a safe JSON dict |
+| `get_user_role(user)` | Returns the normalized account role (`admin`, `staff`, or `citizen`) |
+| `user_has_dashboard_access(user)` | Returns true when the role can access dashboard routes |
+| `user_bypasses_login_otp(user)` | Returns true for `admin` and `staff` login attempts |
 
 **Endpoint functions:**
 
@@ -248,8 +271,10 @@ Stores every OTP request that is generated:
 | `test_connection` | GET | `/accounts/test/` | Health check – confirms backend is running |
 | `register_user` | POST | `/accounts/auth/register/` | Step 1 of registration – validates input and sends OTP |
 | `verify_register_otp` | POST | `/accounts/auth/register/verify-otp/` | Step 2 of registration – verifies OTP and creates user account |
-| `login_user` | POST | `/accounts/auth/login/` | Step 1 of login – validates credentials and sends OTP (or bypasses for admins) |
+| `login_user` | POST | `/accounts/auth/login/` | Unified login – validates credentials and either sends OTP or bypasses it based on role |
 | `verify_login_otp` | POST | `/accounts/auth/login/verify-otp/` | Step 2 of login – verifies OTP and establishes Django session |
+| `request_password_reset` | POST | `/accounts/auth/password-reset/` | Sends a password reset OTP to the registered email |
+| `confirm_password_reset` | POST | `/accounts/auth/password-reset/confirm/` | Verifies reset OTP and updates the password |
 
 **Security measures in accounts:**
 - Passwords are **hashed** before storage using Django's `make_password()` / `check_password()`
@@ -257,6 +282,8 @@ Stores every OTP request that is generated:
 - OTPs **expire after 3 minutes**
 - A **180-second cooldown** prevents OTP spam (rate limiting)
 - A **5-minute bypass window** avoids re-sending OTP if user already verified recently
+- `admin` and `staff` accounts bypass login OTP but still require valid credentials
+- Password reset requires both a valid email and an unexpired OTP before password changes are accepted
 
 ### 4.4 Dashboard App
 
@@ -304,8 +331,8 @@ Defines all pages and their URLs:
 | `/` | `LandingPage` | Public |
 | `/login` | `LoginPage` | Public |
 | `/register` | `RegisterPage` | Public |
-| `/admin-page` | `AdminLoginPage` | Public (admin only) |
-| `/admin-dashboard` | `AdminDashboardPage` | **Protected** (must be logged in) |
+| `/admin-page` | Redirect to `/login` | Public legacy route |
+| `/admin-dashboard` | `AdminDashboardPage` | **Protected** (must be logged in and have dashboard access) |
 | `/disaster-map` | `DisasterMapPage` | Public |
 | `/simulation` | `SimulationPage` | Public |
 | `/profile-settings` | `ProfileSettingsPage` | **Protected** |
@@ -314,6 +341,7 @@ Defines all pages and their URLs:
 **`ProtectedRoute` component** (`frontend/src/routes/ProtectedRoute.tsx`):
 - Checks `isAuthenticated()` from `auth.ts`
 - If not authenticated → redirects to the specified `redirectTo` path
+- If `requireDashboardAccess` is enabled and the session role is not `admin` or `staff` → redirects away from dashboard routes
 - If authenticated → renders the requested page
 
 Several admin sub-routes (e.g., `/admin-reports`, `/admin-simulation`) redirect to `/admin-dashboard?section=...` with a query parameter so the dashboard shows the correct tab.
@@ -336,6 +364,8 @@ registerAccount(payload)            → POST /accounts/auth/register/
 verifyRegisterOtp(payload)          → POST /accounts/auth/register/verify-otp/
 loginAccount(payload)               → POST /accounts/auth/login/
 verifyLoginOtp(payload)             → POST /accounts/auth/login/verify-otp/
+requestPasswordReset(payload)      → POST /accounts/auth/password-reset/
+confirmPasswordReset(payload)      → POST /accounts/auth/password-reset/confirm/
 getAdminDashboardSummary()          → GET  /dashboard/admin/summary/
 createDashboardAccount(payload)     → POST /dashboard/admin/accounts/create/
 getDashboardAccounts()              → GET  /dashboard/admin/accounts/
@@ -360,10 +390,13 @@ The brain of the frontend auth system. Key responsibilities:
 |---|---|
 | `requestRegisterOtp(payload)` | Calls `registerAccount()`, handles errors |
 | `verifyRegisterOtpCode(email, otp)` | Calls `verifyRegisterOtp()`, handles errors |
-| `requestLoginOtp(email, password, keepLoggedIn, forceOtp, loginContext)` | Calls `loginAccount()`, handles OTP bypass for admins |
+| `requestLoginOtp(email, password, keepLoggedIn, forceOtp)` | Calls `loginAccount()`, handles role-based OTP bypass |
 | `verifyLoginOtpCode(payload)` | Calls `verifyLoginOtp()`, saves session on success |
+| `requestPasswordResetOtp(email)` | Requests a password reset OTP |
+| `confirmPasswordResetWithOtp(payload)` | Confirms OTP and updates password |
 | `isAuthenticated()` | Returns true if auth key exists in either storage |
 | `getCurrentUserProfile()` | Returns the stored user profile object |
+| `hasDashboardAccess()` | Returns true if current role can open dashboard pages |
 | `getCurrentUserDisplayName()` | Returns first name of logged-in user |
 | `updateCurrentUserProfile(fullName)` | Updates display name in session storage |
 | `updateCurrentUserAvatar(photoUrl)` | Updates profile photo URL in session storage |
@@ -406,14 +439,17 @@ The public home page. Contains:
 #### Login Page (`/login`)
 **File**: `pages/auth/login/LoginPage.tsx`
 
-Two-step login for citizens:
-1. Enter email + password → backend validates and sends OTP email
-2. Enter 6-digit OTP code → session is established
+Unified login for all account types:
+1. Enter email/username + password
+2. Backend checks the account role
+3. `citizen` accounts receive a 6-digit login OTP
+4. `admin` and `staff` accounts bypass login OTP and are redirected to dashboard routes automatically
 
 Features:
 - Cooldown timer shows how long until user can request another OTP
 - "Keep me logged in" checkbox controls localStorage vs sessionStorage
-- Links to registration page
+- Forgot-password modal supports reset OTP requests, resend cooldown, and new password submission
+- Redirects to `/landing` or `/admin-dashboard` automatically based on the current session role
 
 #### Register Page (`/register`)
 **File**: `pages/auth/register/RegisterPage.tsx`
@@ -426,10 +462,9 @@ Three-step registration:
 #### Admin Login Page (`/admin-page`)
 **File**: `pages/auth/admin/AdminLoginPage.tsx`
 
-For DRRMO staff only:
-- Submits credentials with `loginContext: 'admin'` and `forceOtp: false`
-- Bypasses OTP for admin accounts (uses trusted login)
-- Redirects to `/admin-dashboard` on success
+Legacy compatibility route only:
+- Immediately redirects to `/login`
+- Preserved so older links or bookmarks do not break after the unified login change
 
 #### Admin Create Account Page
 **File**: `pages/auth/admin/AdminCreateAccountPage.tsx`
@@ -606,7 +641,7 @@ User enters OTP → POST /accounts/auth/register/verify-otp/
 Frontend saves nothing yet (redirects to login)
 ```
 
-### 6.2 Citizen Login Flow
+### 6.2 Unified Login & Role Routing
 
 ```
 User enters email + password → POST /accounts/auth/login/
@@ -615,11 +650,19 @@ User enters email + password → POST /accounts/auth/login/
                          - Finds user by email OR username
                          - Verifies password
                          - User is active
-                         - loginContext is 'citizen' not admin
+                                ↓
+                         Resolve role from AccountProfile:
+                         - admin
+                         - staff
+                         - citizen
+                                ↓
+                         Is role admin/staff?
+                         YES → bypass OTP, create session, return user
+                         NO → continue citizen OTP flow
                                 ↓
                          Check bypass: has user verified a login
                          OTP in the last 5 minutes?
-                         YES → skip OTP, create session, return user
+                         YES → skip new OTP, create session, return user
                          NO → continue
                                 ↓
                          Rate limit check: OTP requested < 180 sec ago?
@@ -633,29 +676,40 @@ User enters OTP → POST /accounts/auth/login/verify-otp/
             Backend validates OTP (hash match, not expired, not used)
             Marks OTP as used
             Calls Django's login() → creates server session
-            Returns { user: { fullName, email, isAdmin } }
+            Returns { user: { fullName, email, role, isAdmin, isStaff, hasDashboardAccess } }
                    ↓
 Frontend saves to localStorage/sessionStorage:
 - drms-auth = 'true'
-- drms-session-user = { fullName, email }
+- drms-session-user = { fullName, email, role, isAdmin, isStaff, hasDashboardAccess }
 ```
 
-### 6.3 Admin Login Flow
+### 6.3 Forgot Password Flow
 
 ```
-Admin enters credentials → POST /accounts/auth/login/
-                           with { forceOtp: false, loginContext: 'admin' }
-                                ↓
-                         Backend validates credentials
-                         Checks user.is_staff OR is_superuser
-                         If NOT admin → 403 Forbidden
-                                ↓
-                         forceOtp is false → skip OTP entirely
-                         Calls Django's login() immediately
-                         Returns { skipOtp: true, user: { ... } }
-                                ↓
-Frontend detects skipOtp: true + user payload
-Saves session, redirects to /admin-dashboard
+User enters registered email → POST /accounts/auth/password-reset/
+                               ↓
+                        Backend validates:
+                        - Email is present and valid
+                        - A matching account exists
+                        - No password reset OTP was requested in the last 180 seconds
+                               ↓
+                        Create password-reset OTP
+                        Send OTP email
+                        Return { message, otpEmail }
+                               ↓
+User enters OTP + new password → POST /accounts/auth/password-reset/confirm/
+                                  ↓
+                           Backend validates:
+                           - OTP matches hash
+                           - OTP not expired
+                           - OTP not already used
+                           - New password length is valid
+                                  ↓
+                           User password is updated
+                           OTP is marked used
+                           Return success message
+                                  ↓
+Frontend shows success state and user can log in with the new password
 ```
 
 ### 6.4 Session Storage Strategy
@@ -724,19 +778,29 @@ Verifies OTP and creates account.
 **Response (201)**: `{ "message": "Registration successful!", "user": { "fullName": "Juan Dela Cruz", "email": "..." } }`
 
 #### `POST /accounts/auth/login/`
-Validates credentials and sends login OTP (or bypasses for admin).  
+Unified login endpoint. Validates credentials and sends login OTP for citizens, while `admin` and `staff` roles bypass OTP.  
 **Request body**:
 ```json
-{ "email": "juan@example.com", "password": "secret123", "forceOtp": true, "loginContext": "citizen" }
+{ "email": "juan@example.com", "password": "secret123", "forceOtp": true }
 ```
 **Response (200, OTP sent)**: `{ "message": "OTP sent...", "otpEmail": "juan@example.com" }`  
 **Response (200, bypass)**: `{ "message": "Login successful.", "skipOtp": true, "user": { ... } }`  
-**Response (403)**: `{ "error": "Admin accounts must log in through the admin login page." }`
 
 #### `POST /accounts/auth/login/verify-otp/`
 Verifies login OTP and establishes session.  
 **Request body**: `{ "email": "juan@example.com", "otp": "123456" }`  
-**Response (200)**: `{ "message": "Login successful.", "user": { "fullName": "...", "email": "...", "isAdmin": false } }`
+**Response (200)**: `{ "message": "Login successful.", "user": { "fullName": "...", "email": "...", "role": "citizen", "isAdmin": false, "isStaff": false, "hasDashboardAccess": false } }`
+
+#### `POST /accounts/auth/password-reset/`
+Requests a password reset OTP.  
+**Request body**: `{ "email": "juan@example.com" }`  
+**Response (200)**: `{ "message": "Password reset OTP sent to your email.", "otpEmail": "juan@example.com" }`  
+**Response (404)**: `{ "error": "No account was found for that email address." }`
+
+#### `POST /accounts/auth/password-reset/confirm/`
+Verifies reset OTP and updates the password.  
+**Request body**: `{ "email": "juan@example.com", "otp": "123456", "newPassword": "newsecret123" }`  
+**Response (200)**: `{ "message": "Password reset successful. You can now log in with your new password." }`
 
 ### Dashboard Endpoints (Admin only)
 
@@ -758,16 +822,16 @@ All require an active admin session (set via Django session cookie).
 
 #### `GET /dashboard/admin/accounts/`
 Returns all users.  
-**Response**: `{ "users": [ { "id": 1, "fullName": "...", "email": "...", "isAdmin": false, ... } ] }`
+**Response**: `{ "users": [ { "id": 1, "fullName": "...", "email": "...", "role": "citizen", "isAdmin": false, "isStaff": false, ... } ] }`
 
 #### `POST /dashboard/admin/accounts/create/`
 Creates new account.  
-**Request body**: `{ "fullName": "Jane", "email": "jane@example.com", "password": "pass123", "isAdmin": false }`  
+**Request body**: `{ "fullName": "Jane", "email": "jane@example.com", "password": "pass123", "role": "staff" }`  
 **Response (201)**: `{ "message": "Account created successfully.", "user": { ... } }`
 
 #### `PUT /dashboard/admin/accounts/<user_id>/`
 Updates existing account.  
-**Request body**: `{ "fullName": "Jane Updated", "email": "jane@example.com", "username": "jane", "isAdmin": true, "isActive": true }`  
+**Request body**: `{ "fullName": "Jane Updated", "email": "jane@example.com", "username": "jane", "role": "admin", "isActive": true }`  
 **Response (200)**: `{ "message": "Account updated successfully.", "user": { ... } }`
 
 #### `DELETE /dashboard/admin/accounts/<user_id>/`
@@ -793,17 +857,32 @@ Deletes an account.
 | `date_joined` | DateTimeField | Account creation timestamp |
 | `last_login` | DateTimeField | Last successful login timestamp |
 
+Notes:
+- Django `User` remains the authentication model used for passwords and sessions
+- `AccountProfile.role` is the app-level role used by the frontend and dashboard guards
+
 ### `OneTimePassword` model (`accounts` app)
 
 | Field | Description |
 |---|---|
 | `email` | Who the OTP was sent to |
-| `purpose` | `'register'` or `'login'` |
+| `purpose` | `'register'`, `'login'`, or `'password_reset'` |
 | `code_hash` | Hashed OTP code (bcrypt-style via Django) |
 | `payload` | JSON blob (stores registration data or `userId` for login) |
 | `expires_at` | Expiry timestamp (3 minutes from creation) |
 | `is_used` | Prevents OTP reuse |
 | `created_at` | Creation timestamp (used for rate limiting) |
+
+### `AccountProfile` model (`accounts` app)
+
+| Field | Description |
+|---|---|
+| `user` | One-to-one link to Django `User` |
+| `role` | Canonical role: `admin`, `staff`, or `citizen` |
+| `created_at` | Creation timestamp |
+| `updated_at` | Last update timestamp |
+
+This model was added so the app no longer depends only on `is_staff` / `is_superuser` to decide where a user should go after login.
 
 ---
 
@@ -869,7 +948,14 @@ OTP stands for **One-Time Password**. It's a 6-digit number that is:
 - Valid for only 3 minutes
 - Can only be used once
 
-This is used instead of immediately logging in or creating an account, because it proves you actually own the email address you entered.
+This is used during registration, citizen login, and password reset because it proves you actually own the email address you entered.
+
+### What is AccountProfile?
+`AccountProfile` is the role record attached to each Django user. It tells the app whether the user is an `admin`, `staff`, or `citizen`.
+
+- `admin` and `staff` go to the dashboard side
+- `citizen` goes to the public side
+- The unified login page uses this role to decide whether OTP is required and where to redirect after login
 
 ### What is a Django Session?
 When a user successfully logs in, Django creates a **session** – a record on the server that says "this browser/user is authenticated." It assigns a session ID stored as a browser cookie. On every future request, the browser sends that cookie, and Django knows who you are without you having to log in again.
@@ -900,3 +986,103 @@ Both are browser storage areas that save data as key-value pairs:
 ### Frontend vs Backend – What's the difference?
 - **Frontend** (React): What you see in the browser. It downloads as JavaScript files to your device and runs in your browser. It handles UI, interactivity, and calls the backend for data.
 - **Backend** (Django): Runs on a server. It handles the database, business logic, security, and email sending. It never runs in the user's browser.
+
+---
+
+## 12. Additional System Diagrams
+
+These diagrams give a broader system view beyond the authentication-only flow.
+
+### 12.1 High-Level Architecture
+
+```mermaid
+flowchart LR
+       A[Browser User Interface\nReact + TypeScript + Vite] --> B[Frontend Service Layer\nauth.ts, api.ts, notifications.ts]
+       B --> C[Django REST Endpoints\naccounts app + dashboard app]
+       C --> D[(SQLite Database)]
+       C --> E[Email Backend\nSMTP or Console Backend]
+       B --> F[Browser Storage\nlocalStorage / sessionStorage]
+```
+
+### 12.2 Unified Role-Based Access Flow
+
+```mermaid
+flowchart TD
+       A[User signs in at /login] --> B[Django validates credentials]
+       B --> C[Resolve AccountProfile role]
+       C --> D{Role}
+       D -- admin --> E[Dashboard session]
+       D -- staff --> E
+       D -- citizen --> F[Citizen session]
+       E --> G[ProtectedRoute requireDashboardAccess]
+       G --> H[/admin-dashboard]
+       F --> I[/landing, /profile-settings, /simulation, /disaster-map]
+```
+
+### 12.3 Admin User Management Flow
+
+```mermaid
+sequenceDiagram
+       participant Admin as Admin or Staff
+       participant UI as React Admin Dashboard
+       participant API as Django Dashboard API
+       participant DB as SQLite
+
+       Admin->>UI: Open Users section
+       UI->>API: GET /dashboard/admin/accounts/
+       API->>DB: Read users + roles
+       DB-->>API: User records
+       API-->>UI: JSON response
+       Admin->>UI: Create or update account
+       UI->>API: POST/PUT account payload with role
+       API->>DB: Save User + AccountProfile
+       DB-->>API: Persisted record
+       API-->>UI: Success message + updated user
+```
+
+### 12.4 OTP Lifecycle
+
+```mermaid
+stateDiagram-v2
+       [*] --> Created
+       Created --> Sent: Email backend dispatches code
+       Sent --> Verified: Correct OTP entered before expiry
+       Sent --> Expired: Time limit reached
+       Verified --> Used
+       Expired --> [*]
+       Used --> [*]
+```
+
+### 12.5 Runtime Request Path
+
+```mermaid
+flowchart LR
+       A[User Action in Browser] --> B[React Page or Component]
+       B --> C[Service Function]
+       C --> D[Axios Request]
+       D --> E[Django View]
+       E --> F[Model Helper or ORM Query]
+       F --> G[(SQLite)]
+       G --> F
+       F --> E
+       E --> H[JSON Response]
+       H --> B
+       B --> I[UI Update + Notification + Session Storage]
+```
+
+---
+
+## 13. Contributors
+
+The following contributor identities were found in the repository git history:
+
+| Contributor | Git Identity | Notes |
+|---|---|---|
+| itsaymii | `aimeeballatan22@gmail.com` | Primary contributor name used in most commits |
+| Aimee Rose | `120724621+itsaymii@users.noreply.github.com` | GitHub noreply identity also present in commit history |
+
+Contributor summary from git history:
+- `itsaymii <aimeeballatan22@gmail.com>`
+- `Aimee Rose <120724621+itsaymii@users.noreply.github.com>`
+
+If you want one canonical public contributor name in the docs, it would be better to standardize the local git config so future commits use a single identity.
