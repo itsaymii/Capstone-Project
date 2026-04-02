@@ -1,5 +1,5 @@
 import axios from 'axios'
-import { loginAccount, registerAccount, verifyLoginOtp, verifyRegisterOtp } from './api'
+import { confirmPasswordReset, loginAccount, registerAccount, requestPasswordReset, verifyLoginOtp, verifyRegisterOtp } from './api'
 import { addNotification } from './notifications'
 import type { UserRole } from '../types/api'
 
@@ -332,6 +332,60 @@ export async function verifyLoginOtpCode(payload: {
     }
   } catch (error) {
     const parsedError = parseApiError(error, 'Unable to verify OTP.')
+    return {
+      success: false,
+      error: parsedError.message,
+    }
+  }
+}
+
+export async function requestPasswordResetOtp(email: string): Promise<AuthResult> {
+  const normalizedEmail = normalizeEmail(email)
+
+  if (!normalizedEmail) {
+    return { success: false, error: 'Please enter your registered email address.' }
+  }
+
+  try {
+    const response = await requestPasswordReset({ email: normalizedEmail })
+    addNotification('Password reset OTP sent successfully.')
+    return {
+      success: true,
+      message: response.message,
+      otpEmail: response.otpEmail,
+    }
+  } catch (error) {
+    const parsedError = parseApiError(error, 'Unable to send password reset OTP right now.')
+    return {
+      success: false,
+      error: parsedError.message,
+      retryAfterSeconds: parsedError.retryAfterSeconds,
+    }
+  }
+}
+
+export async function confirmPasswordResetWithOtp(payload: {
+  email: string
+  otp: string
+  newPassword: string
+}): Promise<AuthResult> {
+  const normalizedEmail = normalizeEmail(payload.email)
+  const trimmedOtp = payload.otp.trim()
+  const newPassword = payload.newPassword
+
+  if (!normalizedEmail || !trimmedOtp || !newPassword) {
+    return { success: false, error: 'Email, OTP, and new password are required.' }
+  }
+
+  try {
+    const response = await confirmPasswordReset({ email: normalizedEmail, otp: trimmedOtp, newPassword })
+    addNotification('Password reset successful.')
+    return {
+      success: true,
+      message: response.message,
+    }
+  } catch (error) {
+    const parsedError = parseApiError(error, 'Unable to reset password right now.')
     return {
       success: false,
       error: parsedError.message,

@@ -8,10 +8,12 @@ from django.dispatch import receiver
 class OneTimePassword(models.Model):
 	PURPOSE_REGISTER = 'register'
 	PURPOSE_LOGIN = 'login'
+	PURPOSE_PASSWORD_RESET = 'password_reset'
 
 	PURPOSE_CHOICES = [
 		(PURPOSE_REGISTER, 'Register'),
 		(PURPOSE_LOGIN, 'Login'),
+		(PURPOSE_PASSWORD_RESET, 'Password Reset'),
 	]
 
 	email = models.EmailField(db_index=True)

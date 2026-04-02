@@ -12,6 +12,8 @@ import type {
   SimulationProgressResponse,
   AuthApiResponse,
   LoginApiPayload,
+  PasswordResetConfirmPayload,
+  PasswordResetRequestPayload,
   RegisterApiPayload,
   TestApiResponse,
   VerifyOtpPayload,
@@ -82,6 +84,16 @@ export async function loginAccount(payload: LoginApiPayload): Promise<AuthApiRes
 
 export async function verifyLoginOtp(payload: VerifyOtpPayload): Promise<AuthApiResponse> {
   const { data } = await api.post<AuthApiResponse>('/accounts/auth/login/verify-otp/', payload)
+  return data
+}
+
+export async function requestPasswordReset(payload: PasswordResetRequestPayload): Promise<AuthApiResponse> {
+  const { data } = await api.post<AuthApiResponse>('/accounts/auth/password-reset/', payload)
+  return data
+}
+
+export async function confirmPasswordReset(payload: PasswordResetConfirmPayload): Promise<AuthApiResponse> {
+  const { data } = await api.post<AuthApiResponse>('/accounts/auth/password-reset/confirm/', payload)
   return data
 }
 

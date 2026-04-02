@@ -64,7 +64,13 @@ def _generate_otp_code() -> str:
 
 
 def _send_otp_email(email: str, code: str, purpose: str) -> None:
-	action_label = 'registration' if purpose == OneTimePassword.PURPOSE_REGISTER else 'login'
+	action_label = (
+		'registration'
+		if purpose == OneTimePassword.PURPOSE_REGISTER
+		else 'password reset'
+		if purpose == OneTimePassword.PURPOSE_PASSWORD_RESET
+		else 'login'
+	)
 	subject = getattr(settings, 'OTP_EMAIL_SUBJECT', 'Your DRMS OTP Code')
 	body_template = getattr(
 		settings,
@@ -393,4 +399,87 @@ def verify_login_otp(request):
 			'user': _serialize_user(user=user, fallback_identifier=email),
 		}
 	)
+
+
+@api_view(['POST'])
+@csrf_exempt
+@authentication_classes([])
+@permission_classes([AllowAny])
+def request_password_reset(request):
+	email = (request.data.get('email') or '').strip().lower()
+
+	if not email:
+		return Response({'error': 'Email is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+	try:
+		validate_email(email)
+	except ValidationError:
+		return Response({'error': 'Please provide a valid email address.'}, status=status.HTTP_400_BAD_REQUEST)
+
+	account = User.objects.filter(email__iexact=email).first()
+	if not account:
+		return Response({'error': 'No account was found for that email address.'}, status=status.HTTP_404_NOT_FOUND)
+
+	recent_otp = _get_recent_otp_request(email=email, purpose=OneTimePassword.PURPOSE_PASSWORD_RESET)
+	if recent_otp:
+		retry_after_seconds = _get_retry_after_seconds(recent_otp)
+		return Response(
+			{
+				'error': f'Please wait {retry_after_seconds} seconds before requesting a new OTP.',
+				'retryAfterSeconds': retry_after_seconds,
+			},
+			status=status.HTTP_429_TOO_MANY_REQUESTS,
+		)
+
+	otp_code = _create_otp(
+		email=email,
+		purpose=OneTimePassword.PURPOSE_PASSWORD_RESET,
+		payload={'userId': account.id},
+	)
+
+	try:
+		_send_otp_email(email=email, code=otp_code, purpose=OneTimePassword.PURPOSE_PASSWORD_RESET)
+	except RuntimeError as exc:
+		return Response({'error': str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+	return Response(
+		{
+			'message': 'Password reset OTP sent to your email.',
+			'otpEmail': email,
+		},
+		status=status.HTTP_200_OK,
+	)
+
+
+@api_view(['POST'])
+@csrf_exempt
+@authentication_classes([])
+@permission_classes([AllowAny])
+def confirm_password_reset(request):
+	email = (request.data.get('email') or '').strip().lower()
+	otp = (request.data.get('otp') or '').strip()
+	new_password = request.data.get('newPassword') or ''
+
+	if not email or not otp or not new_password:
+		return Response({'error': 'Email, OTP, and new password are required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+	if len(new_password) < 6:
+		return Response({'error': 'Password must be at least 6 characters.'}, status=status.HTTP_400_BAD_REQUEST)
+
+	otp_record = _get_valid_otp(email=email, purpose=OneTimePassword.PURPOSE_PASSWORD_RESET)
+	if not otp_record or not check_password(otp, otp_record.code_hash):
+		return Response({'error': 'Invalid or expired OTP.'}, status=status.HTTP_400_BAD_REQUEST)
+
+	user_id = otp_record.payload.get('userId')
+	user = User.objects.filter(id=user_id).first() if user_id else User.objects.filter(email__iexact=email).first()
+	if not user:
+		return Response({'error': 'User account not found.'}, status=status.HTTP_400_BAD_REQUEST)
+
+	user.set_password(new_password)
+	user.save(update_fields=['password'])
+
+	otp_record.is_used = True
+	otp_record.save(update_fields=['is_used'])
+
+	return Response({'message': 'Password reset successful. You can now log in with your new password.'}, status=status.HTTP_200_OK)
 

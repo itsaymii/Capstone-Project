@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { ClipboardEvent, FormEvent, KeyboardEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { getCurrentUserProfile, requestLoginOtp, verifyLoginOtpCode } from '../../../services/auth'
+import { confirmPasswordResetWithOtp, getCurrentUserProfile, requestLoginOtp, requestPasswordResetOtp, verifyLoginOtpCode } from '../../../services/auth'
 
 interface LoginPageProps {
   onRequestRegister?: () => void
@@ -14,6 +14,7 @@ interface LoginPageProps {
 
 const OTP_LENGTH = 6
 const LOGIN_COOLDOWN_KEY_PREFIX = 'drms-login-otp-cooldown-until'
+const FORGOT_PASSWORD_COOLDOWN_KEY_PREFIX = 'drms-password-reset-otp-cooldown-until'
 const OTP_COOLDOWN_SECONDS = 180
 
 export function LoginPage({ onRequestRegister, onRequestAdminLogin: _onRequestAdminLogin, onAuthenticated, modalMode = false }: LoginPageProps) {
@@ -35,7 +36,14 @@ export function LoginPage({ onRequestRegister, onRequestAdminLogin: _onRequestAd
   const [showWelcomeCard, setShowWelcomeCard] = useState(false)
   const [showForgotPasswordModal, setShowForgotPasswordModal] = useState(false)
   const [forgotPasswordEmail, setForgotPasswordEmail] = useState('')
+  const [forgotPasswordOtp, setForgotPasswordOtp] = useState('')
+  const [forgotPasswordNewPassword, setForgotPasswordNewPassword] = useState('')
+  const [forgotPasswordConfirmPassword, setForgotPasswordConfirmPassword] = useState('')
   const [forgotPasswordMessage, setForgotPasswordMessage] = useState('')
+  const [forgotPasswordError, setForgotPasswordError] = useState('')
+  const [forgotPasswordOtpStep, setForgotPasswordOtpStep] = useState(false)
+  const [forgotPasswordCooldownRemaining, setForgotPasswordCooldownRemaining] = useState(0)
+  const [isForgotPasswordSubmitting, setIsForgotPasswordSubmitting] = useState(false)
   const [otpShakeActive, setOtpShakeActive] = useState(false)
 
   useEffect(() => {
@@ -100,6 +108,29 @@ export function LoginPage({ onRequestRegister, onRequestAdminLogin: _onRequestAd
   function clearCooldown(): void {
     setCooldownRemaining(0)
     sessionStorage.removeItem(getCooldownStorageKey())
+  }
+
+  function getForgotPasswordCooldownStorageKey(): string {
+    const normalizedEmail = forgotPasswordEmail.trim().toLowerCase() || 'unknown'
+    return `${FORGOT_PASSWORD_COOLDOWN_KEY_PREFIX}:${normalizedEmail}`
+  }
+
+  function applyForgotPasswordCooldown(seconds: number): void {
+    const clampedSeconds = Math.max(0, seconds)
+    setForgotPasswordCooldownRemaining(clampedSeconds)
+
+    if (clampedSeconds === 0) {
+      sessionStorage.removeItem(getForgotPasswordCooldownStorageKey())
+      return
+    }
+
+    const cooldownUntil = Date.now() + clampedSeconds * 1000
+    sessionStorage.setItem(getForgotPasswordCooldownStorageKey(), String(cooldownUntil))
+  }
+
+  function clearForgotPasswordCooldown(): void {
+    setForgotPasswordCooldownRemaining(0)
+    sessionStorage.removeItem(getForgotPasswordCooldownStorageKey())
   }
 
   function setOtpAtIndex(index: number, value: string): void {
@@ -206,6 +237,47 @@ export function LoginPage({ onRequestRegister, onRequestAdminLogin: _onRequestAd
       window.clearInterval(timerId)
     }
   }, [cooldownRemaining])
+
+  useEffect(() => {
+    if (!showForgotPasswordModal) {
+      return
+    }
+
+    const storedCooldownUntil = Number(sessionStorage.getItem(getForgotPasswordCooldownStorageKey()) || '0')
+    if (!storedCooldownUntil) {
+      return
+    }
+
+    const secondsRemaining = Math.ceil((storedCooldownUntil - Date.now()) / 1000)
+    if (secondsRemaining > 0) {
+      setForgotPasswordCooldownRemaining(secondsRemaining)
+    } else {
+      clearForgotPasswordCooldown()
+    }
+  }, [showForgotPasswordModal, forgotPasswordEmail])
+
+  useEffect(() => {
+    if (forgotPasswordCooldownRemaining <= 0) {
+      if (showForgotPasswordModal) {
+        clearForgotPasswordCooldown()
+      }
+      return
+    }
+
+    const timerId = window.setInterval(() => {
+      setForgotPasswordCooldownRemaining((previous) => {
+        if (previous <= 1) {
+          window.clearInterval(timerId)
+          return 0
+        }
+        return previous - 1
+      })
+    }, 1000)
+
+    return () => {
+      window.clearInterval(timerId)
+    }
+  }, [forgotPasswordCooldownRemaining, showForgotPasswordModal])
 
   async function handleCredentialSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -320,24 +392,103 @@ export function LoginPage({ onRequestRegister, onRequestAdminLogin: _onRequestAd
 
   function openForgotPasswordModal(): void {
     setForgotPasswordEmail(email)
+    setForgotPasswordOtp('')
+    setForgotPasswordNewPassword('')
+    setForgotPasswordConfirmPassword('')
     setForgotPasswordMessage('')
+    setForgotPasswordError('')
+    setForgotPasswordOtpStep(false)
     setShowForgotPasswordModal(true)
   }
 
   function closeForgotPasswordModal(): void {
+    clearForgotPasswordCooldown()
     setShowForgotPasswordModal(false)
   }
 
-  function handleForgotPasswordSubmit(event: FormEvent<HTMLFormElement>): void {
-    event.preventDefault()
+  async function sendForgotPasswordOtpRequest(): Promise<boolean> {
+    setIsForgotPasswordSubmitting(true)
+    const result = await requestPasswordResetOtp(forgotPasswordEmail)
+    setIsForgotPasswordSubmitting(false)
 
-    if (!forgotPasswordEmail.trim()) {
-      setForgotPasswordMessage('Please enter your registered email address.')
+    if (!result.success) {
+      setForgotPasswordError(result.error ?? 'Unable to send reset instructions right now.')
+      if (result.retryAfterSeconds) {
+        applyForgotPasswordCooldown(result.retryAfterSeconds)
+      }
+      return false
+    }
+
+    if (result.otpEmail) {
+      setForgotPasswordEmail(result.otpEmail)
+    }
+
+    setForgotPasswordOtpStep(true)
+    setForgotPasswordMessage(result.message ?? 'Password reset OTP sent to your email.')
+    applyForgotPasswordCooldown(OTP_COOLDOWN_SECONDS)
+    return true
+  }
+
+  async function handleForgotPasswordResendOtp(): Promise<void> {
+    if (forgotPasswordCooldownRemaining > 0) {
       return
     }
 
-    // Placeholder until backend reset-password endpoint is available.
-    setForgotPasswordMessage('If the email exists in our records, reset instructions will be sent shortly.')
+    setForgotPasswordMessage('')
+    setForgotPasswordError('')
+    await sendForgotPasswordOtpRequest()
+  }
+
+  async function handleForgotPasswordSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault()
+    setForgotPasswordMessage('')
+    setForgotPasswordError('')
+
+    if (!forgotPasswordEmail.trim()) {
+      setForgotPasswordError('Please enter your registered email address.')
+      return
+    }
+
+    if (!forgotPasswordOtpStep) {
+      await sendForgotPasswordOtpRequest()
+      return
+    }
+
+    if (!forgotPasswordOtp.trim()) {
+      setForgotPasswordError('Please enter the OTP sent to your email.')
+      return
+    }
+
+    if (forgotPasswordNewPassword.length < 6) {
+      setForgotPasswordError('Password must be at least 6 characters.')
+      return
+    }
+
+    if (forgotPasswordNewPassword !== forgotPasswordConfirmPassword) {
+      setForgotPasswordError('New password and confirm password must match.')
+      return
+    }
+
+    setIsForgotPasswordSubmitting(true)
+    const result = await confirmPasswordResetWithOtp({
+      email: forgotPasswordEmail,
+      otp: forgotPasswordOtp,
+      newPassword: forgotPasswordNewPassword,
+    })
+    setIsForgotPasswordSubmitting(false)
+
+    if (!result.success) {
+      setForgotPasswordError(result.error ?? 'Unable to reset password right now.')
+      return
+    }
+
+    setForgotPasswordMessage(result.message ?? 'Password reset successful. You can now log in with your new password.')
+    setForgotPasswordOtp('')
+    setForgotPasswordNewPassword('')
+    setForgotPasswordConfirmPassword('')
+    setForgotPasswordOtpStep(false)
+    clearForgotPasswordCooldown()
+    setPassword('')
   }
 
   return (
@@ -602,7 +753,9 @@ export function LoginPage({ onRequestRegister, onRequestAdminLogin: _onRequestAd
               </div>
 
               <p className="mt-4 text-sm leading-relaxed text-slate-600">
-                Enter your registered email address. We will send password reset instructions if your account exists in our records.
+                {forgotPasswordOtpStep
+                  ? 'Enter the OTP from your email and choose a new password.'
+                  : 'Enter your registered email address and we will send a password reset OTP.'}
               </p>
 
               <form className="mt-4 space-y-3" onSubmit={handleForgotPasswordSubmit}>
@@ -614,19 +767,98 @@ export function LoginPage({ onRequestRegister, onRequestAdminLogin: _onRequestAd
                     placeholder="you@example.com"
                     type="email"
                     value={forgotPasswordEmail}
+                    disabled={forgotPasswordOtpStep || isForgotPasswordSubmitting}
                   />
                 </label>
+
+                {forgotPasswordOtpStep ? (
+                  <>
+                    <label className="block">
+                      <span className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">OTP Code</span>
+                      <input
+                        className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-base text-slate-800 outline-none placeholder:text-slate-400 focus:border-[#0b2a57]"
+                        onChange={(event) => setForgotPasswordOtp(event.target.value.replace(/\D/g, '').slice(0, 6))}
+                        placeholder="6-digit OTP"
+                        type="text"
+                        inputMode="numeric"
+                        value={forgotPasswordOtp}
+                      />
+                    </label>
+
+                    <label className="block">
+                      <span className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">New Password</span>
+                      <input
+                        className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-base text-slate-800 outline-none placeholder:text-slate-400 focus:border-[#0b2a57]"
+                        onChange={(event) => setForgotPasswordNewPassword(event.target.value)}
+                        placeholder="Enter new password"
+                        type="password"
+                        value={forgotPasswordNewPassword}
+                      />
+                    </label>
+
+                    <label className="block">
+                      <span className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">Confirm New Password</span>
+                      <input
+                        className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-base text-slate-800 outline-none placeholder:text-slate-400 focus:border-[#0b2a57]"
+                        onChange={(event) => setForgotPasswordConfirmPassword(event.target.value)}
+                        placeholder="Confirm new password"
+                        type="password"
+                        value={forgotPasswordConfirmPassword}
+                      />
+                    </label>
+                  </>
+                ) : null}
 
                 <button
                   className="w-full rounded-lg bg-[#0b2a57] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#123a73]"
                   type="submit"
+                  disabled={isForgotPasswordSubmitting}
                 >
-                  Send Reset Instructions
+                  {isForgotPasswordSubmitting
+                    ? 'Processing...'
+                    : forgotPasswordOtpStep
+                      ? 'Reset Password'
+                      : 'Send Reset OTP'}
                 </button>
+
+                {forgotPasswordOtpStep ? (
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <button
+                      className="w-full rounded-lg border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-400"
+                      onClick={handleForgotPasswordResendOtp}
+                      type="button"
+                      disabled={forgotPasswordCooldownRemaining > 0 || isForgotPasswordSubmitting}
+                    >
+                      {forgotPasswordCooldownRemaining > 0
+                        ? `Resend OTP in ${forgotPasswordCooldownRemaining}s`
+                        : 'Resend OTP'}
+                    </button>
+
+                    <button
+                      className="w-full rounded-lg border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                      onClick={() => {
+                        setForgotPasswordOtpStep(false)
+                        setForgotPasswordOtp('')
+                        setForgotPasswordNewPassword('')
+                        setForgotPasswordConfirmPassword('')
+                        setForgotPasswordMessage('')
+                        setForgotPasswordError('')
+                        clearForgotPasswordCooldown()
+                      }}
+                      type="button"
+                    >
+                      Use Different Email
+                    </button>
+                  </div>
+                ) : null}
               </form>
 
               {forgotPasswordMessage ? (
                 <p className="mt-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">{forgotPasswordMessage}</p>
+              ) : null}
+
+              {forgotPasswordError ? (
+                <p className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{forgotPasswordError}</p>
               ) : null}
             </section>
           </div>

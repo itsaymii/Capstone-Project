@@ -43,6 +43,16 @@ export interface VerifyOtpPayload {
   otp: string
 }
 
+export interface PasswordResetRequestPayload {
+  email: string
+}
+
+export interface PasswordResetConfirmPayload {
+  email: string
+  otp: string
+  newPassword: string
+}
+
 export interface AdminDashboardSummary {
   totalUsers: number
   totalAdminUsers: number
