@@ -3,6 +3,7 @@ import type { ChangeEvent } from 'react'
 import { getSimulationAdminMetrics } from '../services/api'
 import {
   SIMULATION_COURSES_CHANGED_EVENT,
+  createEmptyExamQuestion,
   createEmptyLearningMaterial,
   createEmptyLesson,
   createEmptySimulationCourse,
@@ -12,6 +13,7 @@ import {
   type LearningMaterialType,
   type SimulationCourse,
   type SimulationCourseDifficulty,
+  type SimulationLessonType,
 } from '../services/simulationCourses'
 import type { SimulationAdminCourseMetrics } from '../types/api'
 
@@ -24,6 +26,11 @@ type AdminSimulationManagerProps = {
 
 const difficultyOptions: SimulationCourseDifficulty[] = ['Beginner', 'Intermediate', 'Advanced']
 const materialTypeOptions: LearningMaterialType[] = ['PDF', 'Guide', 'Checklist', 'Worksheet', 'External Link']
+const lessonTypeOptions: Array<{ value: SimulationLessonType; label: string }> = [
+  { value: 'video', label: 'Video Lesson' },
+  { value: 'lesson', label: 'Text Lesson' },
+  { value: 'exam', label: 'Exam' },
+]
 
 function getMaterialTypeFromFile(file: File): LearningMaterialType {
   if (file.type === 'application/pdf') {
@@ -60,6 +67,7 @@ export function AdminSimulationManager({ embedded = false }: AdminSimulationMana
       courses.map((course) => ({
         ...course,
         trainees: courseMetrics[course.id]?.trainees ?? 0,
+        completed: courseMetrics[course.id]?.completed ?? 0,
         completionRate: courseMetrics[course.id]?.completionRate ?? 0,
       }) satisfies CourseWithMetrics),
     [courseMetrics, courses],
@@ -102,7 +110,7 @@ export function AdminSimulationManager({ embedded = false }: AdminSimulationMana
     return () => window.removeEventListener(SIMULATION_COURSES_CHANGED_EVENT, syncCourses)
   }, [])
 
-  const totalLessons = useMemo(() => courses.reduce((total, course) => total + course.lessonOutline.length, 0), [courses])
+  const totalModules = useMemo(() => courses.reduce((total, course) => total + course.lessonOutline.length, 0), [courses])
   const totalMaterials = useMemo(() => courses.reduce((total, course) => total + course.learningMaterials.length, 0), [courses])
   const containerClass = embedded ? 'flex flex-col gap-6' : 'mx-auto flex w-full max-w-7xl flex-col gap-6 px-6 py-8 sm:px-10'
   const sectionClass = embedded
@@ -223,7 +231,11 @@ export function AdminSimulationManager({ embedded = false }: AdminSimulationMana
     }))
   }
 
-  function updateLessonField(index: number, field: 'title' | 'duration' | 'videoUrl' | 'summary' | 'videoFileName', value: string): void {
+  function updateLessonField(
+    index: number,
+    field: 'title' | 'duration' | 'videoUrl' | 'summary' | 'videoFileName' | 'content',
+    value: string,
+  ): void {
     updateDraftCourse((current) => ({
       ...current,
       lessonOutline: current.lessonOutline.map((lesson, lessonIndex) =>
@@ -231,6 +243,38 @@ export function AdminSimulationManager({ embedded = false }: AdminSimulationMana
           ? {
               ...lesson,
               [field]: value,
+            }
+          : lesson,
+      ),
+    }))
+  }
+
+  function updateLessonType(index: number, lessonType: SimulationLessonType): void {
+    updateDraftCourse((current) => ({
+      ...current,
+      lessonOutline: current.lessonOutline.map((lesson, lessonIndex) => {
+        if (lessonIndex !== index) {
+          return lesson
+        }
+
+        return {
+          ...lesson,
+          lessonType,
+          examQuestions: lessonType === 'exam' ? (lesson.examQuestions.length > 0 ? lesson.examQuestions : [createEmptyExamQuestion()]) : [],
+        }
+      }),
+    }))
+  }
+
+  function updateLessonPassingScore(index: number, value: string): void {
+    const parsed = Number.parseInt(value, 10)
+    updateDraftCourse((current) => ({
+      ...current,
+      lessonOutline: current.lessonOutline.map((lesson, lessonIndex) =>
+        lessonIndex === index
+          ? {
+              ...lesson,
+              passingScore: Number.isNaN(parsed) ? 70 : Math.min(Math.max(parsed, 1), 100),
             }
           : lesson,
       ),
@@ -346,6 +390,115 @@ export function AdminSimulationManager({ embedded = false }: AdminSimulationMana
     })
   }
 
+  function addExamQuestion(lessonIndex: number): void {
+    updateDraftCourse((current) => ({
+      ...current,
+      lessonOutline: current.lessonOutline.map((lesson, currentLessonIndex) =>
+        currentLessonIndex === lessonIndex
+          ? {
+              ...lesson,
+              examQuestions: [...lesson.examQuestions, createEmptyExamQuestion()],
+            }
+          : lesson,
+      ),
+    }))
+  }
+
+  function removeExamQuestion(lessonIndex: number, questionIndex: number): void {
+    updateDraftCourse((current) => ({
+      ...current,
+      lessonOutline: current.lessonOutline.map((lesson, currentLessonIndex) => {
+        if (currentLessonIndex !== lessonIndex) {
+          return lesson
+        }
+
+        if (lesson.examQuestions.length <= 1) {
+          return lesson
+        }
+
+        return {
+          ...lesson,
+          examQuestions: lesson.examQuestions.filter((_, currentQuestionIndex) => currentQuestionIndex !== questionIndex),
+        }
+      }),
+    }))
+  }
+
+  function updateExamQuestionField(
+    lessonIndex: number,
+    questionIndex: number,
+    field: 'prompt' | 'explanation',
+    value: string,
+  ): void {
+    updateDraftCourse((current) => ({
+      ...current,
+      lessonOutline: current.lessonOutline.map((lesson, currentLessonIndex) =>
+        currentLessonIndex === lessonIndex
+          ? {
+              ...lesson,
+              examQuestions: lesson.examQuestions.map((question, currentQuestionIndex) =>
+                currentQuestionIndex === questionIndex
+                  ? {
+                      ...question,
+                      [field]: value,
+                    }
+                  : question,
+              ),
+            }
+          : lesson,
+      ),
+    }))
+  }
+
+  function updateExamQuestionOptions(lessonIndex: number, questionIndex: number, value: string): void {
+    const options = value
+      .split('\n')
+      .map((option) => option.trim())
+      .filter(Boolean)
+
+    updateDraftCourse((current) => ({
+      ...current,
+      lessonOutline: current.lessonOutline.map((lesson, currentLessonIndex) =>
+        currentLessonIndex === lessonIndex
+          ? {
+              ...lesson,
+              examQuestions: lesson.examQuestions.map((question, currentQuestionIndex) =>
+                currentQuestionIndex === questionIndex
+                  ? {
+                      ...question,
+                      options,
+                      correctOptionIndex: Math.min(question.correctOptionIndex, Math.max(options.length - 1, 0)),
+                    }
+                  : question,
+              ),
+            }
+          : lesson,
+      ),
+    }))
+  }
+
+  function updateExamQuestionCorrectAnswer(lessonIndex: number, questionIndex: number, value: string): void {
+    const correctOptionIndex = Number.parseInt(value, 10)
+    updateDraftCourse((current) => ({
+      ...current,
+      lessonOutline: current.lessonOutline.map((lesson, currentLessonIndex) =>
+        currentLessonIndex === lessonIndex
+          ? {
+              ...lesson,
+              examQuestions: lesson.examQuestions.map((question, currentQuestionIndex) =>
+                currentQuestionIndex === questionIndex
+                  ? {
+                      ...question,
+                      correctOptionIndex: Number.isNaN(correctOptionIndex) ? 0 : correctOptionIndex,
+                    }
+                  : question,
+              ),
+            }
+          : lesson,
+      ),
+    }))
+  }
+
   function updateMaterialField(
     index: number,
     field: 'title' | 'type' | 'url' | 'description' | 'fileName' | 'mimeType',
@@ -457,12 +610,26 @@ export function AdminSimulationManager({ embedded = false }: AdminSimulationMana
       prerequisites: draftCourse.prerequisites.filter(Boolean),
       lessonOutline: draftCourse.lessonOutline.map((lesson, index) => ({
         ...lesson,
+        lessonType: lesson.lessonType,
         title: lesson.title.trim() || `Lesson ${index + 1}`,
         duration: lesson.duration.trim() || '10 min',
         videoUrl: lesson.videoUrl.trim(),
         videoFileName: lesson.videoFileName?.trim() || '',
         summary: lesson.summary.trim(),
         points: lesson.points.filter(Boolean),
+        content: lesson.content.trim(),
+        examQuestions: lesson.examQuestions.map((question, questionIndex) => {
+          const options = question.options.map((option) => option.trim()).filter(Boolean)
+          const normalizedOptions = options.length >= 2 ? options : ['Option 1', 'Option 2']
+          return {
+            ...question,
+            prompt: question.prompt.trim() || `Question ${questionIndex + 1}`,
+            options: normalizedOptions,
+            correctOptionIndex: Math.min(question.correctOptionIndex, normalizedOptions.length - 1),
+            explanation: question.explanation.trim(),
+          }
+        }),
+        passingScore: Math.min(Math.max(Math.round(lesson.passingScore || 70), 1), 100),
       })),
       learningMaterials: draftCourse.learningMaterials
         .map((material) => ({
@@ -498,8 +665,8 @@ export function AdminSimulationManager({ embedded = false }: AdminSimulationMana
             <div>
               <p className={`text-xs font-bold uppercase tracking-[0.18em] ${mutedTextClass}`}>Simulation Editor</p>
               <p className={`mt-2 max-w-3xl text-sm leading-relaxed ${bodyTextClass}`}>
-                Add and manage the full citizen-facing simulation course content, including title, audience, objectives, lessons,
-                uploaded videos, hero images, and downloadable learning materials.
+                Add and manage the full citizen-facing simulation course content, including video lessons, text lessons, exams,
+                hero images, and downloadable learning materials.
               </p>
             </div>
             <button
@@ -517,8 +684,8 @@ export function AdminSimulationManager({ embedded = false }: AdminSimulationMana
               <p className={`mt-2 text-2xl font-black ${headingTextClass}`}>{courses.length}</p>
             </article>
             <article className={`${subPanelClass} px-4 py-3`}>
-              <p className={`text-xs uppercase tracking-[0.14em] ${mutedTextClass}`}>Lessons</p>
-              <p className={`mt-2 text-2xl font-black ${headingTextClass}`}>{totalLessons}</p>
+              <p className={`text-xs uppercase tracking-[0.14em] ${mutedTextClass}`}>Modules</p>
+              <p className={`mt-2 text-2xl font-black ${headingTextClass}`}>{totalModules}</p>
             </article>
             <article className={`${subPanelClass} px-4 py-3`}>
               <p className={`text-xs uppercase tracking-[0.14em] ${mutedTextClass}`}>Learning Materials</p>
@@ -558,7 +725,7 @@ export function AdminSimulationManager({ embedded = false }: AdminSimulationMana
 
               <div className={`mt-4 flex flex-wrap gap-2 text-[11px] ${embedded ? 'text-blue-900' : 'text-slate-300'}`}>
                 <span className={`rounded-full border px-3 py-1 ${embedded ? 'border-blue-300 bg-blue-100' : 'border-slate-600 bg-[#1d2230]'}`}>{course.difficulty}</span>
-                <span className={`rounded-full border px-3 py-1 ${embedded ? 'border-sky-300 bg-sky-100 text-sky-900' : 'border-slate-600 bg-[#1d2230]'}`}>{course.lessonOutline.length} lessons</span>
+                <span className={`rounded-full border px-3 py-1 ${embedded ? 'border-sky-300 bg-sky-100 text-sky-900' : 'border-slate-600 bg-[#1d2230]'}`}>{course.lessonOutline.length} modules</span>
                 <span className={`rounded-full border px-3 py-1 ${embedded ? 'border-emerald-300 bg-emerald-100 text-emerald-900' : 'border-slate-600 bg-[#1d2230]'}`}>{course.learningMaterials.length} materials</span>
               </div>
 
@@ -700,11 +867,11 @@ export function AdminSimulationManager({ embedded = false }: AdminSimulationMana
                 <section className={`${subPanelClass} p-4`}>
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <p className={`text-xs font-bold uppercase tracking-[0.16em] ${mutedTextClass}`}>Lessons and Videos</p>
-                      <p className={`mt-1 text-sm ${bodyTextClass}`}>Each lesson can have its own title, summary, key points, embed URL, or uploaded video file.</p>
+                      <p className={`text-xs font-bold uppercase tracking-[0.16em] ${mutedTextClass}`}>Modules, Lessons, and Exams</p>
+                      <p className={`mt-1 text-sm ${bodyTextClass}`}>Each module can be a video lesson, a text lesson, or an exam with multiple-choice questions.</p>
                     </div>
                     <button className={ghostButtonClass} onClick={addLesson} type="button">
-                      Add Lesson
+                      Add Module
                     </button>
                   </div>
 
@@ -712,7 +879,7 @@ export function AdminSimulationManager({ embedded = false }: AdminSimulationMana
                     {draftCourse.lessonOutline.map((lesson, index) => (
                       <article className={nestedCardClass} key={lesson.id}>
                         <div className="flex items-center justify-between gap-3">
-                          <p className={`text-sm font-semibold ${headingTextClass}`}>Lesson {index + 1}</p>
+                          <p className={`text-sm font-semibold ${headingTextClass}`}>Module {index + 1}</p>
                           <button className={`text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${embedded ? 'text-red-700 hover:text-red-800' : 'text-red-200 hover:text-red-100'}`} disabled={draftCourse.lessonOutline.length <= 1} onClick={() => removeLesson(index)} type="button">
                             Remove
                           </button>
@@ -720,35 +887,116 @@ export function AdminSimulationManager({ embedded = false }: AdminSimulationMana
 
                         <div className="mt-4 grid gap-4 sm:grid-cols-2">
                           <label className="block">
-                            <span className={`mb-2 block text-xs font-semibold uppercase tracking-wide ${mutedTextClass}`}>Lesson Title</span>
+                            <span className={`mb-2 block text-xs font-semibold uppercase tracking-wide ${mutedTextClass}`}>Module Type</span>
+                            <select className={inputClass} onChange={(event) => updateLessonType(index, event.target.value as SimulationLessonType)} value={lesson.lessonType}>
+                              {lessonTypeOptions.map((option) => (
+                                <option key={option.value} value={option.value}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label className="block">
+                            <span className={`mb-2 block text-xs font-semibold uppercase tracking-wide ${mutedTextClass}`}>Module Title</span>
                             <input className={inputClass} onChange={(event) => updateLessonField(index, 'title', event.target.value)} type="text" value={lesson.title} />
                           </label>
                           <label className="block">
-                            <span className={`mb-2 block text-xs font-semibold uppercase tracking-wide ${mutedTextClass}`}>Lesson Duration</span>
+                            <span className={`mb-2 block text-xs font-semibold uppercase tracking-wide ${mutedTextClass}`}>Module Duration</span>
                             <input className={inputClass} onChange={(event) => updateLessonField(index, 'duration', event.target.value)} type="text" value={lesson.duration} />
                           </label>
                           <label className="block sm:col-span-2">
-                            <span className={`mb-2 block text-xs font-semibold uppercase tracking-wide ${mutedTextClass}`}>Video URL / Embed URL</span>
-                            <input className={inputClass} onChange={(event) => updateLessonField(index, 'videoUrl', event.target.value)} type="url" value={lesson.videoUrl} />
-                          </label>
-                          <div className="block sm:col-span-2">
-                            <span className={`mb-2 block text-xs font-semibold uppercase tracking-wide ${mutedTextClass}`}>Upload Video File</span>
-                            <div className={`${subPanelClass} p-4`}>
-                              <input accept="video/*" className={fileInputClass} onChange={(event) => void handleLessonVideoUpload(index, event)} type="file" />
-                              {lesson.videoFileName ? <p className={`mt-2 text-xs ${mutedTextClass}`}>Stored video: {lesson.videoFileName}</p> : null}
-                              <button className={`mt-3 ${tertiaryButtonClass}`} onClick={() => clearLessonVideo(index)} type="button">
-                                Clear Video
-                              </button>
-                            </div>
-                          </div>
-                          <label className="block sm:col-span-2">
-                            <span className={`mb-2 block text-xs font-semibold uppercase tracking-wide ${mutedTextClass}`}>Lesson Summary</span>
+                            <span className={`mb-2 block text-xs font-semibold uppercase tracking-wide ${mutedTextClass}`}>Summary</span>
                             <textarea className={textareaClass} onChange={(event) => updateLessonField(index, 'summary', event.target.value)} value={lesson.summary} />
                           </label>
                           <label className="block sm:col-span-2">
                             <span className={`mb-2 block text-xs font-semibold uppercase tracking-wide ${mutedTextClass}`}>Key Points</span>
                             <textarea className={largeTextareaClass} onChange={(event) => updateLessonPoints(index, event.target.value)} placeholder="One point per line" value={lesson.points.join('\n')} />
                           </label>
+
+                          {lesson.lessonType === 'video' ? (
+                            <>
+                              <label className="block sm:col-span-2">
+                                <span className={`mb-2 block text-xs font-semibold uppercase tracking-wide ${mutedTextClass}`}>Video URL / Embed URL</span>
+                                <input className={inputClass} onChange={(event) => updateLessonField(index, 'videoUrl', event.target.value)} type="url" value={lesson.videoUrl} />
+                              </label>
+                              <div className="block sm:col-span-2">
+                                <span className={`mb-2 block text-xs font-semibold uppercase tracking-wide ${mutedTextClass}`}>Upload Video File</span>
+                                <div className={`${subPanelClass} p-4`}>
+                                  <input accept="video/*" className={fileInputClass} onChange={(event) => void handleLessonVideoUpload(index, event)} type="file" />
+                                  {lesson.videoFileName ? <p className={`mt-2 text-xs ${mutedTextClass}`}>Stored video: {lesson.videoFileName}</p> : null}
+                                  <button className={`mt-3 ${tertiaryButtonClass}`} onClick={() => clearLessonVideo(index)} type="button">
+                                    Clear Video
+                                  </button>
+                                </div>
+                              </div>
+                            </>
+                          ) : null}
+
+                          {lesson.lessonType === 'lesson' ? (
+                            <label className="block sm:col-span-2">
+                              <span className={`mb-2 block text-xs font-semibold uppercase tracking-wide ${mutedTextClass}`}>Lesson Content</span>
+                              <textarea className={largeTextareaClass} onChange={(event) => updateLessonField(index, 'content', event.target.value)} placeholder="Write the lesson body, instructions, or notes here." value={lesson.content} />
+                            </label>
+                          ) : null}
+
+                          {lesson.lessonType === 'exam' ? (
+                            <>
+                              <label className="block">
+                                <span className={`mb-2 block text-xs font-semibold uppercase tracking-wide ${mutedTextClass}`}>Passing Score (%)</span>
+                                <input className={inputClass} max={100} min={1} onChange={(event) => updateLessonPassingScore(index, event.target.value)} type="number" value={lesson.passingScore} />
+                              </label>
+                              <div className="block sm:col-span-2">
+                                <div className="flex items-center justify-between gap-3">
+                                  <span className={`mb-2 block text-xs font-semibold uppercase tracking-wide ${mutedTextClass}`}>Exam Questions</span>
+                                  <button className={tertiaryButtonClass} onClick={() => addExamQuestion(index)} type="button">
+                                    Add Question
+                                  </button>
+                                </div>
+
+                                <div className="space-y-3">
+                                  {lesson.examQuestions.map((question, questionIndex) => (
+                                    <div className={nestedCardClass} key={question.id}>
+                                      <div className="flex items-center justify-between gap-3">
+                                        <p className={`text-sm font-semibold ${headingTextClass}`}>Question {questionIndex + 1}</p>
+                                        <button className={`text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${embedded ? 'text-red-700 hover:text-red-800' : 'text-red-200 hover:text-red-100'}`} disabled={lesson.examQuestions.length <= 1} onClick={() => removeExamQuestion(index, questionIndex)} type="button">
+                                          Remove
+                                        </button>
+                                      </div>
+
+                                      <div className="mt-3 grid gap-4 sm:grid-cols-2">
+                                        <label className="block sm:col-span-2">
+                                          <span className={`mb-2 block text-xs font-semibold uppercase tracking-wide ${mutedTextClass}`}>Question</span>
+                                          <textarea className={textareaClass} onChange={(event) => updateExamQuestionField(index, questionIndex, 'prompt', event.target.value)} value={question.prompt} />
+                                        </label>
+                                        <label className="block sm:col-span-2">
+                                          <span className={`mb-2 block text-xs font-semibold uppercase tracking-wide ${mutedTextClass}`}>Choices</span>
+                                          <textarea className={largeTextareaClass} onChange={(event) => updateExamQuestionOptions(index, questionIndex, event.target.value)} placeholder="One choice per line" value={question.options.join('\n')} />
+                                        </label>
+                                        <label className="block">
+                                          <span className={`mb-2 block text-xs font-semibold uppercase tracking-wide ${mutedTextClass}`}>Correct Answer</span>
+                                          <select className={inputClass} onChange={(event) => updateExamQuestionCorrectAnswer(index, questionIndex, event.target.value)} value={question.correctOptionIndex}>
+                                            {question.options.length > 0 ? (
+                                              question.options.map((option, optionIndex) => (
+                                                <option key={`${question.id}-${optionIndex}`} value={optionIndex}>
+                                                  {`Choice ${optionIndex + 1}: ${option || 'Untitled option'}`}
+                                                </option>
+                                              ))
+                                            ) : (
+                                              <option value={0}>Add choices first</option>
+                                            )}
+                                          </select>
+                                        </label>
+                                        <label className="block sm:col-span-2">
+                                          <span className={`mb-2 block text-xs font-semibold uppercase tracking-wide ${mutedTextClass}`}>Explanation</span>
+                                          <textarea className={textareaClass} onChange={(event) => updateExamQuestionField(index, questionIndex, 'explanation', event.target.value)} placeholder="Optional feedback after the learner answers." value={question.explanation} />
+                                        </label>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            </>
+                          ) : null}
                         </div>
                       </article>
                     ))}

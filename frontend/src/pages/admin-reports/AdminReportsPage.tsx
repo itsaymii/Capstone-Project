@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { jsPDF } from 'jspdf'
 import { AdminSidebar } from '../../components/AdminSidebar'
 import {
   hazardIncidents,
@@ -13,6 +14,11 @@ import {
 } from '../../services/earthquakes'
 
 type ReportFilter = 'all' | IncidentStatus
+type PdfAction = 'save' | 'print'
+
+function sanitizeFilenamePart(value: string): string {
+  return value.replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '').toLowerCase() || 'all'
+}
 
 function getEarthquakeSeverity(magnitude: number): HazardIncident['severity'] {
   if (magnitude >= 5) return 'Critical'
@@ -112,10 +118,142 @@ export function AdminReportsPage() {
     return combinedReports.filter((report) => report.status === selectedFilter)
   }, [combinedReports, selectedFilter])
 
+  const reportStatusSummary = useMemo(
+    () => ({
+      active: filteredReports.filter((report) => report.status === 'active').length,
+      pending: filteredReports.filter((report) => report.status === 'pending').length,
+      resolved: filteredReports.filter((report) => report.status === 'resolved').length,
+    }),
+    [filteredReports],
+  )
+
   function updateReportStatus(reportId: string, nextStatus: IncidentStatus): void {
     setReports((currentReports) =>
       currentReports.map((report) => (report.id === reportId ? { ...report, status: nextStatus } : report)),
     )
+  }
+
+  function buildReportPdf(): jsPDF {
+    const document = new jsPDF({ unit: 'mm', format: 'a4' })
+    const pageWidth = document.internal.pageSize.getWidth()
+    const pageHeight = document.internal.pageSize.getHeight()
+    const marginX = 14
+    const topMargin = 18
+    const usableWidth = pageWidth - marginX * 2
+    let cursorY = topMargin
+
+    const ensureSpace = (requiredHeight: number): void => {
+      if (cursorY + requiredHeight <= pageHeight - 16) {
+        return
+      }
+
+      document.addPage()
+      cursorY = topMargin
+    }
+
+    const drawWrappedText = (text: string, fontSize: number, color: [number, number, number], indent = 0): void => {
+      document.setFont('helvetica', 'normal')
+      document.setFontSize(fontSize)
+      document.setTextColor(...color)
+
+      const lines = document.splitTextToSize(text, usableWidth - indent)
+      const lineHeight = fontSize * 0.42 + 1.4
+      ensureSpace(lines.length * lineHeight + 2)
+      document.text(lines, marginX + indent, cursorY)
+      cursorY += lines.length * lineHeight + 2
+    }
+
+    const generatedAt = new Date().toLocaleString('en-PH', {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+    })
+
+    document.setFillColor(24, 28, 35)
+    document.roundedRect(marginX, cursorY, usableWidth, 24, 4, 4, 'F')
+    document.setFont('helvetica', 'bold')
+    document.setFontSize(18)
+    document.setTextColor(255, 255, 255)
+    document.text('Hazard Reports Desk', marginX + 6, cursorY + 9)
+    document.setFont('helvetica', 'normal')
+    document.setFontSize(10)
+    document.setTextColor(186, 196, 214)
+    document.text(`Filter: ${selectedFilter.toUpperCase()} | Generated: ${generatedAt}`, marginX + 6, cursorY + 17)
+    cursorY += 32
+
+    document.setFont('helvetica', 'bold')
+    document.setFontSize(11)
+    document.setTextColor(36, 41, 51)
+    document.text(`Visible reports: ${filteredReports.length}`, marginX, cursorY)
+    cursorY += 7
+    drawWrappedText(
+      `Active: ${reportStatusSummary.active} | Pending: ${reportStatusSummary.pending} | Resolved: ${reportStatusSummary.resolved}`,
+      10,
+      [82, 93, 116],
+    )
+
+    if (filteredReports.length === 0) {
+      drawWrappedText('No reports match the selected filter at the time this PDF was generated.', 10, [82, 93, 116])
+      return document
+    }
+
+    filteredReports.forEach((report, index) => {
+      ensureSpace(28)
+
+      document.setDrawColor(203, 213, 225)
+      document.line(marginX, cursorY, pageWidth - marginX, cursorY)
+      cursorY += 6
+
+      document.setFont('helvetica', 'bold')
+      document.setFontSize(12)
+      document.setTextColor(15, 23, 42)
+      drawWrappedText(`${index + 1}. ${report.title}`, 12, [15, 23, 42])
+
+      document.setFont('helvetica', 'normal')
+      document.setFontSize(10)
+      document.setTextColor(51, 65, 85)
+      drawWrappedText(
+        `Type: ${hazardMeta[report.code].label} | Status: ${report.status.toUpperCase()} | Severity: ${report.severity}`,
+        10,
+        [51, 65, 85],
+      )
+      drawWrappedText(`Location: ${report.location}`, 10, [51, 65, 85])
+      drawWrappedText(`Time: ${report.time}`, 10, [51, 65, 85])
+      drawWrappedText(`Response Team: ${report.responseTeam}`, 10, [51, 65, 85])
+      drawWrappedText(`Description: ${report.description}`, 10, [71, 85, 105])
+
+      if (report.code === 'EQ') {
+        drawWrappedText('Source: Live earthquake API feed. Status is calculated from recency and magnitude.', 9, [5, 150, 105])
+      }
+
+      cursorY += 2
+    })
+
+    return document
+  }
+
+  function handlePdfAction(action: PdfAction): void {
+    const pdf = buildReportPdf()
+    const filename = `hazard-reports-${sanitizeFilenamePart(selectedFilter)}-${new Date().toISOString().slice(0, 10)}.pdf`
+
+    if (action === 'save') {
+      pdf.save(filename)
+      return
+    }
+
+    pdf.autoPrint()
+    const blob = pdf.output('blob')
+    const blobUrl = URL.createObjectURL(blob)
+    const printWindow = window.open(blobUrl, '_blank', 'noopener,noreferrer')
+
+    if (!printWindow) {
+      pdf.save(filename)
+      URL.revokeObjectURL(blobUrl)
+      return
+    }
+
+    window.setTimeout(() => {
+      URL.revokeObjectURL(blobUrl)
+    }, 60_000)
   }
 
   return (
@@ -166,6 +304,25 @@ export function AdminReportsPage() {
                   {filter}
                 </button>
               ))}
+            </div>
+            <div className="mt-4 flex flex-wrap gap-3">
+              <button
+                className="rounded-xl border border-sky-500/30 bg-sky-500/10 px-4 py-2 text-sm font-semibold text-sky-200 transition hover:border-sky-400"
+                onClick={() => handlePdfAction('save')}
+                type="button"
+              >
+                Save PDF
+              </button>
+              <button
+                className="rounded-xl border border-violet-500/30 bg-violet-500/10 px-4 py-2 text-sm font-semibold text-violet-200 transition hover:border-violet-400"
+                onClick={() => handlePdfAction('print')}
+                type="button"
+              >
+                Print PDF
+              </button>
+              <p className="self-center text-xs text-slate-400">
+                The exported PDF includes only the reports visible under the current filter.
+              </p>
             </div>
           </section>
 

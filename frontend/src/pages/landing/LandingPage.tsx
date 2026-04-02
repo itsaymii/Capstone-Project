@@ -5,7 +5,7 @@ import { LoginPage } from '../auth/login/LoginPage'
 import { RegisterPage } from '../auth/register/RegisterPage'
 import { NavigationBar } from '../../components/NavigationBar'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { isAuthenticated } from '../../services/auth'
+import { getCurrentUserProfile, isAuthenticated } from '../../services/auth'
 import { hazardIncidents } from '../../data/adminOperations'
 import landingPageImage from '../../images/LandingPage.jpg'
 import earthquakeIcon from '../../images/earthquake.png'
@@ -198,6 +198,21 @@ export function LandingPage() {
 
   function handleAuthenticatedFromModal() {
     setActiveModal(null)
+
+    const currentUser = getCurrentUserProfile()
+    const hasDashboardSession = Boolean(
+      currentUser?.hasDashboardAccess || currentUser?.role === 'admin' || currentUser?.role === 'staff',
+    )
+
+    if (hasDashboardSession) {
+      setPendingProtectedPath(null)
+      navigate('/admin-dashboard', {
+        state: {
+          loginSuccessMessage: 'Login successful. Welcome back to Lucena City DRRMO.',
+        },
+      })
+      return
+    }
 
     if (pendingProtectedPath) {
       const targetPath = pendingProtectedPath

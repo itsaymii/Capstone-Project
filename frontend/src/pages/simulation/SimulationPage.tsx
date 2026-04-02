@@ -13,6 +13,14 @@ import {
 
 type CourseStatus = 'Not Started' | 'In Progress' | 'Completed'
 
+type ExamAttemptResult = {
+  moduleKey: string
+  score: number
+  total: number
+  passed: boolean
+  unanswered: number
+}
+
 type StoredSimulationProgress = {
   courseProgress: Record<string, number>
   completedLessonVideos: Record<string, boolean>
@@ -115,7 +123,7 @@ function renderLessonVideo(videoUrl: string, title: string) {
   if (!videoUrl) {
     return (
       <div className="mb-2 rounded-lg border border-dashed border-slate-300 bg-white px-4 py-6 text-center text-xs font-medium text-slate-500">
-        No lesson video has been added yet.
+        No video has been added for this module yet.
       </div>
     )
   }
@@ -168,6 +176,8 @@ export function SimulationPage() {
   const [completedCourses, setCompletedCourses] = useState<Record<string, string>>(
     () => readStoredSimulationProgress(getSimulationProgressStorageKey()).completedCourses,
   )
+  const [examSelections, setExamSelections] = useState<Record<string, Record<string, number>>>({})
+  const [examAttemptResult, setExamAttemptResult] = useState<ExamAttemptResult | null>(null)
   const [hasLoadedProgress, setHasLoadedProgress] = useState(false)
   const [completedCourseTitle, setCompletedCourseTitle] = useState<string | null>(null)
   const [certificateCourseId, setCertificateCourseId] = useState<string | null>(null)
@@ -275,10 +285,23 @@ export function SimulationPage() {
   }, [completedCourses, completedLessonVideos, courseProgress, hasLoadedProgress, progressStorageKey])
 
   const activeCourse = activeCourseId ? courses.find((course) => course.id === activeCourseId) ?? null : null
+  const activeLesson = activeCourse ? activeCourse.lessonOutline[activeLessonIndex] ?? null : null
   const certificateCourse = certificateCourseId ? courses.find((course) => course.id === certificateCourseId) ?? null : null
   const currentUserName = getCurrentUserProfile()?.fullName?.trim() || 'Citizen Learner'
-  const currentLessonVideoKey = activeCourse ? `${activeCourse.id}:${activeLessonIndex}` : null
-  const isCurrentLessonVideoCompleted = currentLessonVideoKey ? Boolean(completedLessonVideos[currentLessonVideoKey]) : false
+  const currentLessonProgressKey = activeCourse && activeLesson ? getLessonProgressKey(activeCourse.id, activeLesson.id, activeLessonIndex) : null
+  const legacyLessonProgressKey = activeCourse ? `${activeCourse.id}:${activeLessonIndex}` : null
+  const isCurrentLessonCompleted = currentLessonProgressKey
+    ? Boolean(completedLessonVideos[currentLessonProgressKey] || (legacyLessonProgressKey ? completedLessonVideos[legacyLessonProgressKey] : false))
+    : false
+
+  useEffect(() => {
+    if (!currentLessonProgressKey) {
+      setExamAttemptResult(null)
+      return
+    }
+
+    setExamAttemptResult((previous) => (previous?.moduleKey === currentLessonProgressKey ? previous : null))
+  }, [currentLessonProgressKey])
 
   function getCourseProgressValue(courseId: string): number {
     return courseProgress[courseId] ?? 0
@@ -313,15 +336,69 @@ export function SimulationPage() {
     })
   }
 
-  function handleMarkLessonVideoComplete() {
-    if (!currentLessonVideoKey) {
+  function handleMarkCurrentModuleComplete() {
+    if (!currentLessonProgressKey) {
       return
     }
 
     setCompletedLessonVideos((previous) => ({
       ...previous,
-      [currentLessonVideoKey]: true,
+      [currentLessonProgressKey]: true,
     }))
+
+  }
+
+  function handleSelectExamOption(questionId: string, optionIndex: number) {
+    if (!currentLessonProgressKey) {
+      return
+    }
+
+    setExamSelections((previous) => ({
+      ...previous,
+      [currentLessonProgressKey]: {
+        ...(previous[currentLessonProgressKey] ?? {}),
+        [questionId]: optionIndex,
+      },
+    }))
+  }
+
+  function handleSubmitExam() {
+    if (!activeLesson || activeLesson.lessonType !== 'exam' || !currentLessonProgressKey) {
+      return
+    }
+
+    const selectedAnswers = examSelections[currentLessonProgressKey] ?? {}
+    const totalQuestions = activeLesson.examQuestions.length
+    const unanswered = activeLesson.examQuestions.filter((question) => selectedAnswers[question.id] === undefined).length
+
+    if (totalQuestions === 0) {
+      setExamAttemptResult({
+        moduleKey: currentLessonProgressKey,
+        score: 0,
+        total: 0,
+        passed: false,
+        unanswered: 0,
+      })
+      return
+    }
+
+    const correctAnswers = activeLesson.examQuestions.reduce((total, question) => {
+      return total + (selectedAnswers[question.id] === question.correctOptionIndex ? 1 : 0)
+    }, 0)
+    const score = Math.round((correctAnswers / totalQuestions) * 100)
+    const passed = unanswered === 0 && score >= activeLesson.passingScore
+
+    setExamAttemptResult({
+      moduleKey: currentLessonProgressKey,
+      score,
+      total: totalQuestions,
+      passed,
+      unanswered,
+    })
+
+    if (passed) {
+      handleMarkCurrentModuleComplete()
+    }
   }
 
   function updateCourseProgress(courseId: string, lessonIndex: number, markCompleted = false) {
@@ -361,7 +438,7 @@ export function SimulationPage() {
       return
     }
 
-    if (!isCurrentLessonVideoCompleted) {
+    if (!isCurrentLessonCompleted) {
       return
     }
 
@@ -387,7 +464,7 @@ export function SimulationPage() {
       return
     }
 
-    if (!isCurrentLessonVideoCompleted) {
+    if (!isCurrentLessonCompleted) {
       return
     }
 
@@ -404,6 +481,7 @@ export function SimulationPage() {
   function handleExitCourse() {
     setActiveCourseId(null)
     setActiveLessonIndex(0)
+    setExamAttemptResult(null)
   }
 
   function handleDownloadCertificatePdf(course: SimulationCourse) {
@@ -483,7 +561,7 @@ export function SimulationPage() {
                 Hands-on Disaster Readiness Courses
               </h1>
               <p className="mt-4 max-w-2xl text-sm leading-relaxed text-slate-600 sm:text-base">
-                Train with real-world style scenarios, review learning materials, and complete every lesson at your own pace. You can explore freely, then sign in when you are ready to start.
+                Train with real-world style scenarios, review learning materials, and complete every module at your own pace. You can explore freely, then sign in when you are ready to start.
               </p>
             </div>
           </div>
@@ -524,7 +602,7 @@ export function SimulationPage() {
 
               <div className="mt-5 grid grid-cols-3 gap-2 text-center">
                 <div className="rounded-xl border border-slate-200 bg-slate-50 px-2 py-2">
-                  <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">Lessons</p>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">Modules</p>
                   <p className="mt-1 text-base font-black text-slate-900">{course.lessonOutline.length}</p>
                 </div>
                 <div className="rounded-xl border border-slate-200 bg-slate-50 px-2 py-2">
@@ -588,7 +666,7 @@ export function SimulationPage() {
 
                 <div className="mt-4 flex flex-wrap gap-2 text-xs">
                   <span className="rounded-full border border-slate-200 bg-slate-100 px-2.5 py-1 font-semibold text-slate-700">
-                    {previewCourse.lessonOutline.length} Lessons
+                    {previewCourse.lessonOutline.length} Modules
                   </span>
                   <span className="rounded-full border border-slate-200 bg-slate-100 px-2.5 py-1 font-semibold text-slate-700">
                     {previewCourse.duration}
@@ -617,13 +695,29 @@ export function SimulationPage() {
                 ) : null}
 
                 <div className="mt-5 space-y-3 rounded-2xl border border-slate-200 bg-slate-50/90 p-4">
-                  <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-600">Course Lessons</p>
+                  <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-600">Course Modules</p>
                   {previewCourse.lessonOutline.map((lesson) => (
                     <div key={lesson.title}>
-                      {renderLessonVideo(lesson.videoUrl, lesson.title)}
+                      <div className="mb-2 flex flex-wrap items-center gap-2">
+                        <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-600">
+                          {getLessonTypeLabel(lesson.lessonType)}
+                        </span>
+                        <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+                          {lesson.duration}
+                        </span>
+                      </div>
+                      {lesson.lessonType === 'video' ? renderLessonVideo(lesson.videoUrl, lesson.title) : null}
                       <p className="text-sm font-semibold text-slate-800">{lesson.title}</p>
                       {lesson.videoFileName ? <p className="mt-1 text-[11px] text-slate-400">Stored file: {lesson.videoFileName}</p> : null}
                       {lesson.summary ? <p className="mt-1 text-xs text-slate-500 sm:text-sm">{lesson.summary}</p> : null}
+                      {lesson.lessonType === 'lesson' && lesson.content ? (
+                        <p className="mt-2 whitespace-pre-line text-xs text-slate-600 sm:text-sm">{lesson.content}</p>
+                      ) : null}
+                      {lesson.lessonType === 'exam' ? (
+                        <p className="mt-2 text-xs text-slate-600 sm:text-sm">
+                          {lesson.examQuestions.length} questions • Passing score {lesson.passingScore}%
+                        </p>
+                      ) : null}
                       <ul className="mt-1 list-disc space-y-1 pl-5 text-xs text-slate-600 sm:text-sm">
                         {lesson.points.map((point) => (
                           <li key={point}>{point}</li>
@@ -688,7 +782,7 @@ export function SimulationPage() {
                 <p className="text-xs font-extrabold uppercase tracking-[0.18em] text-[#0b2a57]">Simulation Session</p>
                 <h3 className="mt-1 text-2xl font-black text-slate-900">{activeCourse.title}</h3>
                 <p className="mt-1 text-xs text-slate-500 sm:text-sm">
-                  Lesson {activeLessonIndex + 1} of {activeCourse.lessonOutline.length}
+                  Module {activeLessonIndex + 1} of {activeCourse.lessonOutline.length}
                 </p>
 
                 <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-slate-200">
@@ -700,22 +794,111 @@ export function SimulationPage() {
               </div>
 
               <div className="space-y-4 px-5 py-5 sm:px-6 sm:py-6">
-                {renderLessonVideo(activeCourse.lessonOutline[activeLessonIndex].videoUrl, activeCourse.lessonOutline[activeLessonIndex].title)}
+                {activeLesson ? (
+                  <>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.14em] text-slate-600">
+                        {getLessonTypeLabel(activeLesson.lessonType)}
+                      </span>
+                      <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+                        {activeLesson.duration}
+                      </span>
+                    </div>
 
-                <div className="rounded-2xl border border-slate-200 bg-slate-50/90 p-4">
-                  <p className="text-sm font-semibold text-slate-900">{activeCourse.lessonOutline[activeLessonIndex].title}</p>
-                  {activeCourse.lessonOutline[activeLessonIndex].videoFileName ? (
-                    <p className="mt-1 text-xs text-slate-400">Stored file: {activeCourse.lessonOutline[activeLessonIndex].videoFileName}</p>
-                  ) : null}
-                  {activeCourse.lessonOutline[activeLessonIndex].summary ? (
-                    <p className="mt-1 text-sm text-slate-500">{activeCourse.lessonOutline[activeLessonIndex].summary}</p>
-                  ) : null}
-                  <ul className="mt-2 list-disc space-y-1.5 pl-5 text-sm leading-relaxed text-slate-600">
-                    {activeCourse.lessonOutline[activeLessonIndex].points.map((point) => (
-                      <li key={point}>{point}</li>
-                    ))}
-                  </ul>
-                </div>
+                    {activeLesson.lessonType === 'video' ? renderLessonVideo(activeLesson.videoUrl, activeLesson.title) : null}
+
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50/90 p-4">
+                      <p className="text-sm font-semibold text-slate-900">{activeLesson.title}</p>
+                      {activeLesson.videoFileName ? <p className="mt-1 text-xs text-slate-400">Stored file: {activeLesson.videoFileName}</p> : null}
+                      {activeLesson.summary ? <p className="mt-1 text-sm text-slate-500">{activeLesson.summary}</p> : null}
+                      {activeLesson.points.length > 0 ? (
+                        <ul className="mt-2 list-disc space-y-1.5 pl-5 text-sm leading-relaxed text-slate-600">
+                          {activeLesson.points.map((point) => (
+                            <li key={point}>{point}</li>
+                          ))}
+                        </ul>
+                      ) : null}
+                      {activeLesson.lessonType === 'lesson' && activeLesson.content ? (
+                        <div className="mt-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm leading-relaxed text-slate-700">
+                          <p className="whitespace-pre-line">{activeLesson.content}</p>
+                        </div>
+                      ) : null}
+                    </div>
+
+                    {activeLesson.lessonType === 'exam' ? (
+                      <div className="rounded-2xl border border-slate-200 bg-slate-50/90 p-4">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-semibold text-slate-900">Module Exam</p>
+                            <p className="mt-1 text-xs text-slate-500">
+                              {activeLesson.examQuestions.length} questions • Passing score {activeLesson.passingScore}%
+                            </p>
+                          </div>
+                          <button
+                            className="rounded-xl bg-[linear-gradient(135deg,#0b2a57,#1a4a8c)] px-4 py-2 text-xs font-bold uppercase tracking-[0.08em] text-white transition hover:brightness-110"
+                            onClick={handleSubmitExam}
+                            type="button"
+                          >
+                            Submit Exam
+                          </button>
+                        </div>
+
+                        {activeLesson.examQuestions.length > 0 ? (
+                          <div className="mt-4 space-y-4">
+                            {activeLesson.examQuestions.map((question, questionIndex) => {
+                              const selectedAnswer = currentLessonProgressKey ? examSelections[currentLessonProgressKey]?.[question.id] : undefined
+                              const showExplanation = Boolean(examAttemptResult)
+                              const isCorrect = selectedAnswer === question.correctOptionIndex
+
+                              return (
+                                <article className="rounded-xl border border-slate-200 bg-white p-4" key={question.id}>
+                                  <p className="text-sm font-semibold text-slate-900">Question {questionIndex + 1}</p>
+                                  <p className="mt-1 text-sm text-slate-700">{question.prompt}</p>
+
+                                  <div className="mt-3 space-y-2">
+                                    {question.options.map((option, optionIndex) => (
+                                      <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-700 transition hover:border-slate-300 hover:bg-slate-50" key={`${question.id}-${optionIndex}`}>
+                                        <input
+                                          checked={selectedAnswer === optionIndex}
+                                          className="mt-0.5 h-4 w-4"
+                                          name={question.id}
+                                          onChange={() => handleSelectExamOption(question.id, optionIndex)}
+                                          type="radio"
+                                        />
+                                        <span>{option}</span>
+                                      </label>
+                                    ))}
+                                  </div>
+
+                                  {showExplanation && selectedAnswer !== undefined ? (
+                                    <div className={`mt-3 rounded-xl border px-3 py-2 text-xs ${isCorrect ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-red-200 bg-red-50 text-red-800'}`}>
+                                      <p className="font-semibold">{isCorrect ? 'Correct' : 'Incorrect'}</p>
+                                      {question.explanation ? <p className="mt-1">{question.explanation}</p> : null}
+                                    </div>
+                                  ) : null}
+                                </article>
+                              )
+                            })}
+                          </div>
+                        ) : (
+                          <p className="mt-3 text-sm text-slate-500">No exam questions have been added for this module yet.</p>
+                        )}
+
+                        {examAttemptResult ? (
+                          <div className={`mt-4 rounded-xl border px-4 py-3 text-sm ${examAttemptResult.passed ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-amber-200 bg-amber-50 text-amber-800'}`}>
+                            <p className="font-semibold">
+                              {examAttemptResult.passed
+                                ? `Passed with ${examAttemptResult.score}%`
+                                : examAttemptResult.unanswered > 0
+                                  ? `Answer all questions first. ${examAttemptResult.unanswered} remaining.`
+                                  : `Score: ${examAttemptResult.score}% of ${activeLesson.passingScore}% required.`}
+                            </p>
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </>
+                ) : null}
 
                 <div className="rounded-2xl border border-slate-200 bg-slate-50/90 p-4">
                   <div className="flex items-center justify-between gap-3">
@@ -746,16 +929,26 @@ export function SimulationPage() {
                 </div>
 
                 <div className="flex flex-wrap gap-2">
-                  {!isCurrentLessonVideoCompleted ? (
+                  {!isCurrentLessonCompleted && activeLesson?.lessonType !== 'exam' ? (
                     <div className="w-full rounded-xl border border-amber-200 bg-amber-50 p-2.5">
-                      <p className="text-xs font-semibold text-amber-700">Finish watching the video, then confirm to unlock next lesson.</p>
+                      <p className="text-xs font-semibold text-amber-700">
+                        {activeLesson?.lessonType === 'lesson'
+                          ? 'Review the lesson content, then confirm to unlock the next module.'
+                          : 'Finish watching the video, then confirm to unlock the next module.'}
+                      </p>
                       <button
                         className="mt-2 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-bold uppercase tracking-[0.08em] text-amber-800 transition hover:bg-amber-100"
-                        onClick={handleMarkLessonVideoComplete}
+                        onClick={handleMarkCurrentModuleComplete}
                         type="button"
                       >
-                        I finished this lesson video
+                        {activeLesson?.lessonType === 'lesson' ? 'I finished reading this lesson' : 'I finished this lesson video'}
                       </button>
+                    </div>
+                  ) : null}
+
+                  {!isCurrentLessonCompleted && activeLesson?.lessonType === 'exam' ? (
+                    <div className="w-full rounded-xl border border-amber-200 bg-amber-50 p-2.5 text-xs font-semibold text-amber-700">
+                      Pass the exam to unlock the next module.
                     </div>
                   ) : null}
 
@@ -771,16 +964,16 @@ export function SimulationPage() {
                   {activeLessonIndex < activeCourse.lessonOutline.length - 1 ? (
                     <button
                       className="rounded-xl bg-[linear-gradient(135deg,#0b2a57,#1a4a8c)] px-4 py-2 text-sm font-bold uppercase tracking-[0.08em] text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:brightness-90"
-                      disabled={!isCurrentLessonVideoCompleted}
+                      disabled={!isCurrentLessonCompleted}
                       onClick={handleNextLesson}
                       type="button"
                     >
-                      Next Lesson
+                      Next Module
                     </button>
                   ) : (
                     <button
                       className="rounded-xl bg-[linear-gradient(135deg,#059669,#10b981)] px-4 py-2 text-sm font-bold uppercase tracking-[0.08em] text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:brightness-90"
-                      disabled={!isCurrentLessonVideoCompleted}
+                      disabled={!isCurrentLessonCompleted}
                       onClick={handleCompleteCourse}
                       type="button"
                     >
@@ -863,4 +1056,20 @@ export function SimulationPage() {
       ) : null}
     </main>
   )
+}
+
+function getLessonProgressKey(courseId: string, lessonId: string, lessonIndex: number): string {
+  return lessonId ? `${courseId}:${lessonId}` : `${courseId}:${lessonIndex}`
+}
+
+function getLessonTypeLabel(lessonType: 'video' | 'lesson' | 'exam'): string {
+  if (lessonType === 'lesson') {
+    return 'Text Lesson'
+  }
+
+  if (lessonType === 'exam') {
+    return 'Exam'
+  }
+
+  return 'Video Lesson'
 }

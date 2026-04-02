@@ -1,13 +1,27 @@
 export type SimulationCourseDifficulty = 'Beginner' | 'Intermediate' | 'Advanced'
 
+export type SimulationLessonType = 'video' | 'lesson' | 'exam'
+
+export type SimulationExamQuestion = {
+  id: string
+  prompt: string
+  options: string[]
+  correctOptionIndex: number
+  explanation: string
+}
+
 export type SimulationLesson = {
   id: string
+  lessonType: SimulationLessonType
   title: string
   duration: string
   videoUrl: string
   videoFileName?: string
   summary: string
   points: string[]
+  content: string
+  examQuestions: SimulationExamQuestion[]
+  passingScore: number
 }
 
 export type LearningMaterialType = 'PDF' | 'Guide' | 'Checklist' | 'Worksheet' | 'External Link'
@@ -48,15 +62,29 @@ function buildId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
 
+export function createEmptyExamQuestion(): SimulationExamQuestion {
+  return {
+    id: buildId('question'),
+    prompt: 'New Question',
+    options: ['Option 1', 'Option 2', 'Option 3', 'Option 4'],
+    correctOptionIndex: 0,
+    explanation: '',
+  }
+}
+
 export function createEmptyLesson(): SimulationLesson {
   return {
     id: buildId('lesson'),
+    lessonType: 'video',
     title: 'New Lesson',
     duration: '10 min',
     videoUrl: '',
     videoFileName: '',
     summary: '',
     points: [''],
+    content: '',
+    examQuestions: [],
+    passingScore: 70,
   }
 }
 
@@ -138,6 +166,7 @@ const defaultSimulationCourses: SimulationCourse[] = [
     lessonOutline: [
       {
         id: 'earthquake-lesson-1',
+        lessonType: 'video',
         title: 'Lesson 1 - Before an Earthquake',
         duration: '11 min',
         videoUrl: 'https://www.youtube.com/embed/BLEPakj1YTY',
@@ -148,24 +177,35 @@ const defaultSimulationCourses: SimulationCourse[] = [
           'Identify sturdy furniture and safe zones in each room.',
           'Agree on a family communication and meet-up plan.',
         ],
+        content: '',
+        examQuestions: [],
+        passingScore: 70,
       },
       {
         id: 'earthquake-lesson-2',
+        lessonType: 'video',
         title: 'Lesson 2 - During an Earthquake',
         duration: '12 min',
         videoUrl: 'https://www.youtube.com/embed/4WfA7xri9Kk',
         videoFileName: '',
         summary: 'Focus on safe protective actions while the shaking is ongoing.',
         points: ['Perform Drop, Cover, and Hold.', 'Stay away from windows, shelves, and unsecured furniture.'],
+        content: '',
+        examQuestions: [],
+        passingScore: 70,
       },
       {
         id: 'earthquake-lesson-3',
+        lessonType: 'video',
         title: 'Lesson 3 - After an Earthquake',
         duration: '12 min',
         videoUrl: 'https://www.youtube.com/embed/Cz4N6A8x5q8',
         videoFileName: '',
         summary: 'Learn how to assess injuries, avoid hazards, and report incidents safely.',
         points: ['Check for injuries and damaged utilities.', 'Evacuate calmly and proceed to the evacuation area.'],
+        content: '',
+        examQuestions: [],
+        passingScore: 70,
       },
     ],
     learningMaterials: [
@@ -209,30 +249,42 @@ const defaultSimulationCourses: SimulationCourse[] = [
     lessonOutline: [
       {
         id: 'fire-lesson-1',
+        lessonType: 'video',
         title: 'Lesson 1 - Preventing Fire',
         duration: '12 min',
         videoUrl: 'https://www.youtube.com/embed/woLrY8J6f4g',
         videoFileName: '',
         summary: 'Reduce fire risk through regular inspections and safe appliance practices.',
         points: ['Check wiring and appliances regularly.', 'Do not leave cooking unattended.'],
+        content: '',
+        examQuestions: [],
+        passingScore: 70,
       },
       {
         id: 'fire-lesson-2',
+        lessonType: 'video',
         title: 'Lesson 2 - During a Fire',
         duration: '14 min',
         videoUrl: 'https://www.youtube.com/embed/7nL10C7FSbE',
         videoFileName: '',
         summary: 'Make safe evacuation decisions while avoiding smoke exposure.',
         points: ['Evacuate immediately using the nearest exit.', 'Crawl low when smoke is thick.'],
+        content: '',
+        examQuestions: [],
+        passingScore: 70,
       },
       {
         id: 'fire-lesson-3',
+        lessonType: 'video',
         title: 'Lesson 3 - Call for Help',
         duration: '14 min',
         videoUrl: 'https://www.youtube.com/embed/gxAA3gS8qzY',
         videoFileName: '',
         summary: 'Report fire incidents clearly and support responder coordination.',
         points: ['Call the fire department.', 'Provide the exact location of the fire and trapped occupants if any.'],
+        content: '',
+        examQuestions: [],
+        passingScore: 70,
       },
     ],
     learningMaterials: [
@@ -276,30 +328,42 @@ const defaultSimulationCourses: SimulationCourse[] = [
     lessonOutline: [
       {
         id: 'accidents-lesson-1',
+        lessonType: 'video',
         title: 'Lesson 1 - Stay Safe',
         duration: '10 min',
         videoUrl: 'https://www.youtube.com/embed/qxVYg6R3x9I',
         videoFileName: '',
         summary: 'Establish a safe perimeter and avoid creating more casualties.',
         points: ['Move away from traffic immediately.', 'Turn on hazard lights if you are the driver.'],
+        content: '',
+        examQuestions: [],
+        passingScore: 70,
       },
       {
         id: 'accidents-lesson-2',
+        lessonType: 'video',
         title: 'Lesson 2 - Help the Injured',
         duration: '10 min',
         videoUrl: 'https://www.youtube.com/embed/5V2Vx4HjK8s',
         videoFileName: '',
         summary: 'Perform only safe, basic first-response support while waiting for professionals.',
         points: ['Check if the victim is conscious.', 'Control bleeding if it is safe and possible.'],
+        content: '',
+        examQuestions: [],
+        passingScore: 70,
       },
       {
         id: 'accidents-lesson-3',
+        lessonType: 'video',
         title: 'Lesson 3 - Report the Incident',
         duration: '10 min',
         videoUrl: 'https://www.youtube.com/embed/9j7M6vN2wL0',
         videoFileName: '',
         summary: 'Communicate accurate location and casualty details to emergency responders.',
         points: ['Call an ambulance or police.', 'Report clear details of the incident location.'],
+        content: '',
+        examQuestions: [],
+        passingScore: 70,
       },
     ],
     learningMaterials: [
@@ -333,8 +397,15 @@ function cloneCourses(courses: SimulationCourse[]): SimulationCourse[] {
     prerequisites: [...course.prerequisites],
     lessonOutline: course.lessonOutline.map((lesson) => ({
       ...lesson,
+      lessonType: lesson.lessonType ?? 'video',
       videoFileName: lesson.videoFileName ?? '',
       points: [...lesson.points],
+      content: lesson.content ?? '',
+      examQuestions: lesson.examQuestions.map((question) => ({
+        ...question,
+        options: [...question.options],
+      })),
+      passingScore: typeof lesson.passingScore === 'number' ? lesson.passingScore : 70,
     })),
     learningMaterials: course.learningMaterials.map((material) => ({
       ...material,
@@ -350,6 +421,10 @@ function isDifficulty(value: unknown): value is SimulationCourseDifficulty {
 
 function isMaterialType(value: unknown): value is LearningMaterialType {
   return value === 'PDF' || value === 'Guide' || value === 'Checklist' || value === 'Worksheet' || value === 'External Link'
+}
+
+function isLessonType(value: unknown): value is SimulationLessonType {
+  return value === 'video' || value === 'lesson' || value === 'exam'
 }
 
 function hasLegacyStoredMetrics(input: unknown): boolean {
@@ -378,6 +453,7 @@ function normalizeCourses(input: unknown): SimulationCourse[] | null {
             .filter((lesson): lesson is Record<string, unknown> => Boolean(lesson) && typeof lesson === 'object')
             .map((lesson, index) => ({
               id: typeof lesson.id === 'string' && lesson.id ? lesson.id : buildId(`lesson-${index + 1}`),
+              lessonType: isLessonType(lesson.lessonType) ? lesson.lessonType : 'video',
               title: typeof lesson.title === 'string' ? lesson.title : `Lesson ${index + 1}`,
               duration: typeof lesson.duration === 'string' ? lesson.duration : '10 min',
               videoUrl: typeof lesson.videoUrl === 'string' ? lesson.videoUrl : '',
@@ -386,6 +462,27 @@ function normalizeCourses(input: unknown): SimulationCourse[] | null {
               points: Array.isArray(lesson.points)
                 ? lesson.points.filter((point): point is string => typeof point === 'string')
                 : [],
+              content: typeof lesson.content === 'string' ? lesson.content : '',
+              examQuestions: Array.isArray(lesson.examQuestions)
+                ? lesson.examQuestions
+                    .filter((question): question is Record<string, unknown> => Boolean(question) && typeof question === 'object')
+                    .map((question, questionIndex) => ({
+                      id: typeof question.id === 'string' && question.id ? question.id : buildId(`question-${questionIndex + 1}`),
+                      prompt: typeof question.prompt === 'string' ? question.prompt : `Question ${questionIndex + 1}`,
+                      options: Array.isArray(question.options)
+                        ? question.options.filter((option): option is string => typeof option === 'string').slice(0, 6)
+                        : [],
+                      correctOptionIndex:
+                        typeof question.correctOptionIndex === 'number' && question.correctOptionIndex >= 0
+                          ? question.correctOptionIndex
+                          : 0,
+                      explanation: typeof question.explanation === 'string' ? question.explanation : '',
+                    }))
+                : [],
+              passingScore:
+                typeof lesson.passingScore === 'number' && Number.isFinite(lesson.passingScore)
+                  ? Math.min(Math.max(Math.round(lesson.passingScore), 1), 100)
+                  : 70,
             }))
         : []
 

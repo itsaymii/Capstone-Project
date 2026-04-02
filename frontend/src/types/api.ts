@@ -1,3 +1,5 @@
+export type UserRole = 'admin' | 'staff' | 'citizen'
+
 export interface TestApiResponse {
   message: string
 }
@@ -7,7 +9,10 @@ export interface AuthUser {
   fullName: string
   email: string
   username?: string
+  role?: UserRole
   isAdmin?: boolean
+  isStaff?: boolean
+  hasDashboardAccess?: boolean
   isActive?: boolean
   dateJoined?: string | null
   lastLogin?: string | null
@@ -31,7 +36,6 @@ export interface LoginApiPayload {
   email: string
   password: string
   forceOtp?: boolean
-  loginContext?: 'admin' | 'citizen'
 }
 
 export interface VerifyOtpPayload {
@@ -56,7 +60,7 @@ export interface DashboardCreateAccountPayload {
   email: string
   username?: string
   password: string
-  isAdmin: boolean
+  role: UserRole
 }
 
 export interface DashboardCreateAccountResponse {
@@ -73,7 +77,7 @@ export interface DashboardUpdateAccountPayload {
   email: string
   username: string
   password?: string
-  isAdmin: boolean
+  role: UserRole
   isActive: boolean
 }
 

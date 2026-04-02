@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { ClipboardEvent, FormEvent, KeyboardEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { requestLoginOtp, verifyLoginOtpCode } from '../../../services/auth'
+import { getCurrentUserProfile, requestLoginOtp, verifyLoginOtpCode } from '../../../services/auth'
 
 interface LoginPageProps {
   onRequestRegister?: () => void
@@ -48,6 +48,36 @@ export function LoginPage({ onRequestRegister, onRequestAdminLogin: _onRequestAd
   }, [location.pathname, location.state, navigate])
 
   const otpInputRefs = useRef<Array<HTMLInputElement | null>>([])
+
+  function getPostLoginPath(): string {
+    const redirectPath = (location.state as { from?: string } | null)?.from
+    const profile = getCurrentUserProfile()
+    const hasDashboardSession = Boolean(profile?.hasDashboardAccess || profile?.role === 'admin' || profile?.role === 'staff')
+
+    if (hasDashboardSession) {
+      if (redirectPath?.startsWith('/admin')) {
+        return redirectPath
+      }
+
+      return '/admin-dashboard'
+    }
+
+    if (redirectPath && !redirectPath.startsWith('/admin')) {
+      return redirectPath
+    }
+
+    return '/landing'
+  }
+
+  function getSkipOtpMessage(): string {
+    const profile = getCurrentUserProfile()
+
+    if (profile?.hasDashboardAccess || profile?.role === 'admin' || profile?.role === 'staff') {
+      return 'Staff and admin accounts sign in without OTP.'
+    }
+
+    return 'Trusted login detected. OTP skipped because your previous verified login is within 5 minutes.'
+  }
 
   function getCooldownStorageKey(): string {
     const normalizedEmail = (otpEmail || email).trim().toLowerCase() || 'unknown'
@@ -180,7 +210,7 @@ export function LoginPage({ onRequestRegister, onRequestAdminLogin: _onRequestAd
   async function handleCredentialSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setIsSubmitting(true)
-    const result = await requestLoginOtp(email, password, keepLoggedIn, true, 'citizen')
+    const result = await requestLoginOtp(email, password, keepLoggedIn, true)
     setIsSubmitting(false)
 
     if (!result.success) {
@@ -201,7 +231,7 @@ export function LoginPage({ onRequestRegister, onRequestAdminLogin: _onRequestAd
       setErrorMessage('')
       setShowWelcomeCard(false)
       setSuccessMessage(result.message ?? 'Login successful.')
-      setSkipOtpNotice('Trusted login detected. OTP skipped because your previous verified login is within 5 minutes.')
+      setSkipOtpNotice(getSkipOtpMessage())
       setIsRedirectingAfterLogin(true)
 
       window.setTimeout(() => {
@@ -210,8 +240,7 @@ export function LoginPage({ onRequestRegister, onRequestAdminLogin: _onRequestAd
           return
         }
 
-        const redirectPath = (location.state as { from?: string } | null)?.from
-        navigate(redirectPath ?? '/landing', {
+        navigate(getPostLoginPath(), {
           state: {
             loginSuccessMessage: result.message ?? 'Welcome back to Lucena City DRRMO.',
           },
@@ -255,8 +284,7 @@ export function LoginPage({ onRequestRegister, onRequestAdminLogin: _onRequestAd
         return
       }
 
-      const redirectPath = (location.state as { from?: string } | null)?.from
-      navigate(redirectPath ?? '/landing', {
+      navigate(getPostLoginPath(), {
         state: {
           loginSuccessMessage: result.message ?? 'Welcome back to Lucena City DRRMO.',
         },
@@ -270,7 +298,7 @@ export function LoginPage({ onRequestRegister, onRequestAdminLogin: _onRequestAd
     }
 
     setIsSubmitting(true)
-    const result = await requestLoginOtp(email, password, false, true, 'citizen')
+    const result = await requestLoginOtp(email, password, false, true)
     setIsSubmitting(false)
 
     if (!result.success) {
@@ -337,14 +365,15 @@ export function LoginPage({ onRequestRegister, onRequestAdminLogin: _onRequestAd
             <div className="pointer-events-none absolute -bottom-24 -left-16 h-64 w-64 rounded-full bg-cyan-200/20 blur-2xl" />
 
             <div>
-              <p className="text-3xl font-semibold text-white">Citizen Access</p>
-              <p className="mt-2 text-sm text-blue-100">Secure entry for citizens using the response portal</p>
+              <p className="text-3xl font-semibold text-white">Unified Access</p>
+              <p className="mt-2 text-sm text-blue-100">One sign-in for citizens, staff, and admin responders</p>
             </div>
             <div className="space-y-2 py-6 text-sm text-blue-100">
-              <p className="inline-flex rounded-full border border-white/30 bg-white/10 px-3 py-1">Citizen Access</p>
-              <p className="inline-flex rounded-full border border-white/30 bg-white/10 px-3 py-1">Community Reports</p>
+              <p className="inline-flex rounded-full border border-white/30 bg-white/10 px-3 py-1">Citizen Services</p>
+              <p className="inline-flex rounded-full border border-white/30 bg-white/10 px-3 py-1">Staff Operations</p>
+              <p className="inline-flex rounded-full border border-white/30 bg-white/10 px-3 py-1">Admin Dashboard</p>
             </div>
-            <p className="text-sm text-blue-100">Secure and monitored access for citizen responders.</p>
+            <p className="text-sm text-blue-100">Your destination is decided automatically after login based on account role.</p>
           </motion.section>
 
           <motion.section
@@ -355,7 +384,7 @@ export function LoginPage({ onRequestRegister, onRequestAdminLogin: _onRequestAd
           >
             <h1 className="text-4xl font-bold tracking-tight text-slate-900">Welcome Back</h1>
             <p className="mt-2 text-sm text-slate-500">
-              {otpStep ? 'Enter the OTP sent to your email' : 'Citizen portal access'}
+              {otpStep ? 'Enter the OTP sent to your email' : 'Use your account to continue'}
             </p>
 
             <div className="mt-6 flex items-center gap-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
@@ -469,7 +498,7 @@ export function LoginPage({ onRequestRegister, onRequestAdminLogin: _onRequestAd
                 type="submit"
                 disabled={isSubmitting || isRedirectingAfterLogin}
               >
-                {otpStep ? (isRedirectingAfterLogin ? 'Login successful. Redirecting...' : 'Verify Code and Log In') : 'Send Verification Code'}
+                {otpStep ? (isRedirectingAfterLogin ? 'Login successful. Redirecting...' : 'Verify Code and Log In') : 'Continue Login'}
               </button>
 
               {!otpStep ? (

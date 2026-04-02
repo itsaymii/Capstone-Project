@@ -188,6 +188,7 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
         .map((event) => ({
           title: `Earthquake Event - ${event.place}`,
           time: event.time,
+          status: 'resolved' as const,
           color: hazardColors.EQ,
           code: 'EQ' as const,
           location: event.place,

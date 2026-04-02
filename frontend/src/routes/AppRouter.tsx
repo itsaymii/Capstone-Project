@@ -1,5 +1,4 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
-import { AdminLoginPage } from '../pages/auth/admin/AdminLoginPage'
 import { LoginPage } from '../pages/auth/login/LoginPage'
 import { RegisterPage } from '../pages/auth/register/RegisterPage'
 import { AdminDashboardPage } from '../pages/admin-dashboard/AdminDashboardPage'
@@ -14,44 +13,44 @@ export function AppRouter() {
     <Routes>
       <Route path="/" element={<LandingPage />} />
       <Route path="/login" element={<LoginPage />} />
-      <Route path="/admin-page" element={<AdminLoginPage />} />
-      <Route path="/admin-dashboard" element={<ProtectedRoute element={<AdminDashboardPage />} redirectTo="/admin-page" />} />
-      <Route path="/admin-hazard-database" element={<ProtectedRoute element={<Navigate replace to="/admin-dashboard" />} redirectTo="/admin-page" />} />
-      <Route path="/admin-reports" element={<ProtectedRoute element={<Navigate replace to="/admin-dashboard?section=reports" />} redirectTo="/admin-page" />} />
+      <Route path="/admin-page" element={<Navigate replace to="/login" />} />
+      <Route path="/admin-dashboard" element={<ProtectedRoute element={<AdminDashboardPage />} requireDashboardAccess redirectTo="/login" />} />
+      <Route path="/admin-hazard-database" element={<ProtectedRoute element={<Navigate replace to="/admin-dashboard" />} requireDashboardAccess redirectTo="/login" />} />
+      <Route path="/admin-reports" element={<ProtectedRoute element={<Navigate replace to="/admin-dashboard?section=reports" />} requireDashboardAccess redirectTo="/login" />} />
       <Route
         path="/admin-disaster-map"
-        element={<ProtectedRoute element={<Navigate replace to="/admin-dashboard?section=map" />} redirectTo="/admin-page" />}
+        element={<ProtectedRoute element={<Navigate replace to="/admin-dashboard?section=map" />} requireDashboardAccess redirectTo="/login" />}
       />
       <Route
         path="/admin-risk-scoring"
-        element={<ProtectedRoute element={<Navigate replace to="/admin-dashboard?section=scoring" />} redirectTo="/admin-page" />}
+        element={<ProtectedRoute element={<Navigate replace to="/admin-dashboard?section=scoring" />} requireDashboardAccess redirectTo="/login" />}
       />
       <Route
         path="/admin-predictive-trends"
-        element={<ProtectedRoute element={<Navigate replace to="/admin-dashboard?section=trends" />} redirectTo="/admin-page" />}
+        element={<ProtectedRoute element={<Navigate replace to="/admin-dashboard?section=trends" />} requireDashboardAccess redirectTo="/login" />}
       />
       <Route
         path="/admin-evacuation-resources"
-        element={<ProtectedRoute element={<Navigate replace to="/admin-dashboard?section=resources" />} redirectTo="/admin-page" />}
+        element={<ProtectedRoute element={<Navigate replace to="/admin-dashboard?section=resources" />} requireDashboardAccess redirectTo="/login" />}
       />
       <Route
         path="/admin-community-portal"
-        element={<ProtectedRoute element={<Navigate replace to="/admin-dashboard?section=users" />} redirectTo="/admin-page" />}
+        element={<ProtectedRoute element={<Navigate replace to="/admin-dashboard?section=users" />} requireDashboardAccess redirectTo="/login" />}
       />
       <Route
         path="/admin-simulation"
-        element={<ProtectedRoute element={<Navigate replace to="/admin-dashboard?section=simulation" />} redirectTo="/admin-page" />}
+        element={<ProtectedRoute element={<Navigate replace to="/admin-dashboard?section=simulation" />} requireDashboardAccess redirectTo="/login" />}
       />
       <Route path="/landing" element={<LandingPage />} />
       <Route path="/disaster-map" element={<DisasterMapPage />} />
       <Route path="/simulation" element={<SimulationPage />} />
       <Route
         path="/admin-profile-settings"
-        element={<ProtectedRoute element={<Navigate replace to="/admin-dashboard?section=settings" />} redirectTo="/admin-page" />}
+        element={<ProtectedRoute element={<Navigate replace to="/admin-dashboard?section=settings" />} requireDashboardAccess redirectTo="/login" />}
       />
       <Route
         path="/profile-settings"
-        element={<ProtectedRoute element={<ProfileSettingsPage />} redirectTo="/admin-page" />}
+        element={<ProtectedRoute element={<ProfileSettingsPage />} redirectTo="/login" />}
       />
       <Route path="/register" element={<RegisterPage />} />
       <Route path="*" element={<Navigate to="/" replace />} />

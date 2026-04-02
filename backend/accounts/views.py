@@ -16,7 +16,7 @@ from rest_framework.decorators import api_view, authentication_classes, permissi
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
-from .models import OneTimePassword
+from .models import AccountProfile, OneTimePassword, ensure_account_profile, get_user_role, user_bypasses_login_otp, user_has_dashboard_access
 
 
 OTP_EXPIRY_MINUTES = 3
@@ -41,21 +41,21 @@ def _coerce_bool(value, default: bool = False) -> bool:
 	return bool(value)
 
 
-def _has_admin_access(user: User) -> bool:
-	return bool(user.is_staff or user.is_superuser)
-
-
 def _get_user_full_name(user: User) -> str:
 	full_name = f"{user.first_name} {user.last_name}".strip()
 	return full_name or user.username
 
 
 def _serialize_user(user: User, fallback_identifier: str = '') -> dict:
+	role = get_user_role(user)
 	contact_value = (user.email or '').strip() or fallback_identifier or user.username
 	return {
 		'fullName': _get_user_full_name(user),
 		'email': contact_value,
-		'isAdmin': _has_admin_access(user),
+		'role': role,
+		'isAdmin': role == AccountProfile.ROLE_ADMIN,
+		'isStaff': role == AccountProfile.ROLE_STAFF,
+		'hasDashboardAccess': user_has_dashboard_access(user),
 	}
 
 
@@ -255,6 +255,7 @@ def verify_register_otp(request):
 	user.first_name = full_name
 	user.password = password_hash
 	user.save()
+	ensure_account_profile(user, default_role=AccountProfile.ROLE_CITIZEN)
 
 	otp_record.is_used = True
 	otp_record.save(update_fields=['is_used'])
@@ -279,7 +280,6 @@ def login_user(request):
 	identifier = (request.data.get('email') or request.data.get('identifier') or '').strip().lower()
 	password = request.data.get('password') or ''
 	force_otp = _coerce_bool(request.data.get('forceOtp'), default=True)
-	login_context = (request.data.get('loginContext') or '').strip().lower()
 
 	if not identifier or not password:
 		return Response({'error': 'Please enter your email/username and password.'}, status=status.HTTP_400_BAD_REQUEST)
@@ -301,16 +301,7 @@ def login_user(request):
 	if not user.is_active:
 		return Response({'error': 'This account is inactive.'}, status=status.HTTP_403_FORBIDDEN)
 
-	if login_context == 'admin' and not _has_admin_access(user):
-		return Response({'error': 'This account does not have admin dashboard access.'}, status=status.HTTP_403_FORBIDDEN)
-
-	if login_context == 'citizen' and _has_admin_access(user):
-		return Response({'error': 'Admin accounts must log in through the admin login page.'}, status=status.HTTP_403_FORBIDDEN)
-
-	if not force_otp:
-		if not _has_admin_access(user):
-			return Response({'error': 'This account does not have admin dashboard access.'}, status=status.HTTP_403_FORBIDDEN)
-
+	if user_bypasses_login_otp(user):
 		login(request, user)
 		return Response(
 			{
@@ -320,6 +311,9 @@ def login_user(request):
 			},
 			status=status.HTTP_200_OK,
 		)
+
+	if not force_otp:
+		return Response({'error': 'OTP bypass is only allowed for staff and admin accounts.'}, status=status.HTTP_403_FORBIDDEN)
 
 	if _has_recent_verified_login_otp(email=account.email, user_id=user.id):
 		login(request, user)

@@ -11,7 +11,7 @@ from rest_framework.permissions import IsAdminUser, IsAuthenticated
 from rest_framework import status
 from rest_framework.response import Response
 
-from accounts.models import OneTimePassword
+from accounts.models import AccountProfile, OneTimePassword, ensure_account_profile, get_user_role, user_has_dashboard_access
 from .models import SimulationProgress
 
 
@@ -34,16 +34,53 @@ def _get_user_full_name(user: User) -> str:
 
 
 def _serialize_dashboard_user(user: User) -> dict:
+    role = get_user_role(user)
     return {
         'id': user.id,
         'fullName': _get_user_full_name(user),
         'email': user.email,
         'username': user.username,
-        'isAdmin': bool(user.is_staff or user.is_superuser),
+        'role': role,
+        'isAdmin': role == AccountProfile.ROLE_ADMIN,
+        'isStaff': role == AccountProfile.ROLE_STAFF,
+        'hasDashboardAccess': user_has_dashboard_access(user),
         'isActive': user.is_active,
         'dateJoined': timezone.localtime(user.date_joined).isoformat() if user.date_joined else None,
         'lastLogin': timezone.localtime(user.last_login).isoformat() if user.last_login else None,
     }
+
+
+def _coerce_bool(value, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+
+    if value is None:
+        return default
+
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {'true', '1', 'yes', 'y', 'on'}:
+            return True
+        if normalized in {'false', '0', 'no', 'n', 'off', ''}:
+            return False
+
+    return bool(value)
+
+
+def _normalize_account_role(raw_role: object, legacy_is_admin: object = None) -> str:
+    if isinstance(raw_role, str):
+        normalized_role = raw_role.strip().lower()
+        if normalized_role in {AccountProfile.ROLE_ADMIN, AccountProfile.ROLE_STAFF, AccountProfile.ROLE_CITIZEN}:
+            return normalized_role
+
+    if _coerce_bool(legacy_is_admin):
+        return AccountProfile.ROLE_ADMIN
+
+    return AccountProfile.ROLE_CITIZEN
+
+
+def _role_has_dashboard_access(role: str) -> bool:
+    return role in AccountProfile.DASHBOARD_ROLES
 
 
 def _sanitize_course_progress(raw: object) -> dict[str, int]:
@@ -204,7 +241,7 @@ def create_dashboard_account(request):
     full_name = (request.data.get('fullName') or '').strip()
     email = (request.data.get('email') or '').strip().lower()
     password = request.data.get('password') or ''
-    is_admin = bool(request.data.get('isAdmin'))
+    role = _normalize_account_role(request.data.get('role'), request.data.get('isAdmin'))
 
     if not full_name or not email or not password:
         return Response({'error': 'Full name, email, and password are required.'}, status=status.HTTP_400_BAD_REQUEST)
@@ -228,9 +265,13 @@ def create_dashboard_account(request):
         email=email,
         password=password,
         first_name=full_name,
-        is_staff=is_admin,
+        is_staff=_role_has_dashboard_access(role),
         is_superuser=False,
     )
+    profile = ensure_account_profile(user, default_role=role)
+    if profile.role != role:
+        profile.role = role
+        profile.save(update_fields=['role', 'updated_at'])
 
     return Response(
         {
@@ -284,20 +325,24 @@ def dashboard_account_detail(request, user_id: int):
     if User.objects.filter(username__iexact=username).exclude(id=user.id).exists():
         return Response({'error': 'This username is already in use.'}, status=status.HTTP_400_BAD_REQUEST)
 
-    is_admin = bool(request.data.get('isAdmin'))
-    is_active = bool(request.data.get('isActive', True))
+    role = _normalize_account_role(request.data.get('role'), request.data.get('isAdmin'))
+    is_active = _coerce_bool(request.data.get('isActive', True), default=True)
 
-    if request.user.id == user.id and not is_admin:
-        return Response({'error': 'You cannot remove your own admin access.'}, status=status.HTTP_400_BAD_REQUEST)
+    if request.user.id == user.id and not _role_has_dashboard_access(role):
+        return Response({'error': 'You cannot remove your own dashboard access.'}, status=status.HTTP_400_BAD_REQUEST)
 
     user.first_name = full_name
     user.email = email
     user.username = username
-    user.is_staff = is_admin
+    user.is_staff = _role_has_dashboard_access(role)
     user.is_active = is_active
     if password:
         user.set_password(password)
     user.save()
+    profile = ensure_account_profile(user, default_role=role)
+    if profile.role != role:
+        profile.role = role
+        profile.save(update_fields=['role', 'updated_at'])
 
     return Response(
         {

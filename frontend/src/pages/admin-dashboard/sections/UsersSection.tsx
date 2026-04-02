@@ -1,7 +1,7 @@
 import axios from 'axios'
 import { useState } from 'react'
 import { createDashboardAccount, deleteDashboardAccount, getDashboardAccounts, updateDashboardAccount } from '../../../services/api'
-import type { AuthUser } from '../../../types/api'
+import type { AuthUser, UserRole } from '../../../types/api'
 import { glassPanelClass, glassPanelSoftClass } from './constants'
 
 type DashboardUserFormState = {
@@ -9,7 +9,7 @@ type DashboardUserFormState = {
   email: string
   username: string
   password: string
-  isAdmin: boolean
+  role: UserRole
   isActive: boolean
 }
 
@@ -18,8 +18,50 @@ const defaultDashboardUserFormState: DashboardUserFormState = {
   email: '',
   username: '',
   password: '',
-  isAdmin: false,
+  role: 'citizen',
   isActive: true,
+}
+
+const roleOptions: Array<{ value: UserRole; label: string }> = [
+  { value: 'citizen', label: 'Citizen' },
+  { value: 'staff', label: 'Staff' },
+  { value: 'admin', label: 'Admin' },
+]
+
+function getUserRole(user: AuthUser): UserRole {
+  if (user.role === 'admin' || user.role === 'staff' || user.role === 'citizen') {
+    return user.role
+  }
+
+  if (user.isAdmin) {
+    return 'admin'
+  }
+
+  return 'citizen'
+}
+
+function getRoleBadgeClass(role: UserRole): string {
+  if (role === 'admin') {
+    return 'border-blue-200 bg-blue-50 text-blue-700'
+  }
+
+  if (role === 'staff') {
+    return 'border-cyan-200 bg-cyan-50 text-cyan-700'
+  }
+
+  return 'border-slate-200 bg-slate-50 text-slate-700'
+}
+
+function getRoleLabel(role: UserRole): string {
+  if (role === 'admin') {
+    return 'Admin'
+  }
+
+  if (role === 'staff') {
+    return 'Staff'
+  }
+
+  return 'Citizen'
 }
 
 function formatUserDateTime(value?: string | null): string {
@@ -65,8 +107,9 @@ export function UsersSection() {
 
   const userAccountStats = {
     total: dashboardUsers.length,
-    admin: dashboardUsers.filter((user) => Boolean(user.isAdmin)).length,
-    citizen: dashboardUsers.filter((user) => !user.isAdmin).length,
+    admin: dashboardUsers.filter((user) => getUserRole(user) === 'admin').length,
+    staff: dashboardUsers.filter((user) => getUserRole(user) === 'staff').length,
+    citizen: dashboardUsers.filter((user) => getUserRole(user) === 'citizen').length,
   }
 
   async function loadDashboardUsers(): Promise<void> {
@@ -113,7 +156,7 @@ export function UsersSection() {
       email: user.email,
       username: user.username ?? '',
       password: '',
-      isAdmin: Boolean(user.isAdmin),
+      role: getUserRole(user),
       isActive: user.isActive ?? true,
     })
     setUsersMessage('')
@@ -145,7 +188,7 @@ export function UsersSection() {
           email: userFormState.email,
           username: userFormState.username,
           password: userFormState.password || undefined,
-          isAdmin: userFormState.isAdmin,
+          role: userFormState.role,
           isActive: userFormState.isActive,
         })
         setDashboardUsers((currentUsers) =>
@@ -158,7 +201,7 @@ export function UsersSection() {
           email: userFormState.email,
           username: userFormState.username || undefined,
           password: userFormState.password,
-          isAdmin: userFormState.isAdmin,
+          role: userFormState.role,
         })
         setDashboardUsers((currentUsers) => [response.user, ...currentUsers])
         setUsersMessage(response.message)
@@ -266,7 +309,7 @@ export function UsersSection() {
             renderLoadingSkeleton()
           ) : (
             <>
-              <div className="grid gap-3 sm:grid-cols-3">
+              <div className="grid gap-3 sm:grid-cols-4">
                 <div className={`${glassPanelSoftClass} p-4`}>
                   <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Total accounts</p>
                   <p className="mt-2 text-2xl font-bold text-slate-900">{userAccountStats.total}</p>
@@ -276,13 +319,17 @@ export function UsersSection() {
                   <p className="mt-2 text-2xl font-bold text-slate-900">{userAccountStats.citizen}</p>
                 </div>
                 <div className={`${glassPanelSoftClass} p-4`}>
+                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Staff accounts</p>
+                  <p className="mt-2 text-2xl font-bold text-slate-900">{userAccountStats.staff}</p>
+                </div>
+                <div className={`${glassPanelSoftClass} p-4`}>
                   <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Admin accounts</p>
                   <p className="mt-2 text-2xl font-bold text-slate-900">{userAccountStats.admin}</p>
                 </div>
               </div>
 
               {!usersError && dashboardUsers.length === 0 ? (
-                <p className="text-sm text-slate-500">No citizen or admin accounts found.</p>
+                <p className="text-sm text-slate-500">No citizen, staff, or admin accounts found.</p>
               ) : null}
 
               {dashboardUsers.length > 0 ? (
@@ -321,8 +368,8 @@ export function UsersSection() {
                             <td className="px-4 py-4 align-top text-slate-600">{user.email}</td>
                             <td className="px-4 py-4 align-top text-slate-600">{user.username || 'Not set'}</td>
                             <td className="px-4 py-4 align-top">
-                              <span className={`rounded-full border px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.14em] ${user.isAdmin ? 'border-blue-200 bg-blue-50 text-blue-700' : 'border-slate-200 bg-slate-50 text-slate-700'}`}>
-                                {user.isAdmin ? 'Admin' : 'Citizen'}
+                              <span className={`rounded-full border px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.14em] ${getRoleBadgeClass(getUserRole(user))}`}>
+                                {getRoleLabel(getUserRole(user))}
                               </span>
                             </td>
                             <td className="px-4 py-4 align-top">
@@ -430,16 +477,22 @@ export function UsersSection() {
                 </div>
 
                 <div className="grid gap-3 md:grid-cols-2">
-                  <label className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-700">
+                  <label className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-700">
                     <div>
-                      <p className="font-semibold text-slate-900">Admin access</p>
-                      <p className="mt-1 text-xs text-slate-500">Allow this account to access the admin dashboard.</p>
+                      <p className="font-semibold text-slate-900">Account role</p>
+                      <p className="mt-1 text-xs text-slate-500">Choose whether the account is citizen, staff, or admin.</p>
                     </div>
-                    <input
-                      checked={userFormState.isAdmin}
-                      onChange={(event) => handleUserFieldChange('isAdmin', event.target.checked)}
-                      type="checkbox"
-                    />
+                    <select
+                      className="mt-3 w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm text-slate-900 outline-none transition focus:border-blue-700 focus:ring-2 focus:ring-blue-100"
+                      onChange={(event) => handleUserFieldChange('role', event.target.value as UserRole)}
+                      value={userFormState.role}
+                    >
+                      {roleOptions.map((roleOption) => (
+                        <option key={roleOption.value} value={roleOption.value}>
+                          {roleOption.label}
+                        </option>
+                      ))}
+                    </select>
                   </label>
                   <label className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-700">
                     <div>

@@ -76,7 +76,7 @@ export function AdminSidebar({ activeKey, actionOverrides }: AdminSidebarProps) 
 
   function handleLogout(): void {
     logoutUser()
-    navigate('/admin-page', {
+    navigate('/login', {
       replace: true,
       state: {
         logoutSuccessMessage: 'You have been logged out successfully.',

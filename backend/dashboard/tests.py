@@ -2,6 +2,8 @@ from django.test import TestCase
 from django.contrib.auth.models import User
 from django.urls import reverse
 
+from accounts.models import AccountProfile
+
 from .models import SimulationProgress
 
 
@@ -47,6 +49,8 @@ class DashboardViewsTests(TestCase):
 
     def test_simulation_metrics_return_aggregated_course_stats(self):
         admin_user = User.objects.create_user(username='admin-user', password='secret123', is_staff=True)
+        admin_user.account_profile.role = AccountProfile.ROLE_ADMIN
+        admin_user.account_profile.save(update_fields=['role', 'updated_at'])
         user_one = User.objects.create_user(username='learner-one', password='secret123')
         user_two = User.objects.create_user(username='learner-two', password='secret123')
         user_three = User.objects.create_user(username='learner-three', password='secret123')
@@ -79,3 +83,44 @@ class DashboardViewsTests(TestCase):
         self.assertEqual(payload['courses']['fire']['trainees'], 2)
         self.assertEqual(payload['courses']['fire']['completed'], 1)
         self.assertEqual(payload['courses']['fire']['completionRate'], 50)
+
+    def test_create_dashboard_account_accepts_staff_role(self):
+        admin_user = User.objects.create_user(username='admin-user', password='secret123', is_staff=True)
+        admin_user.account_profile.role = AccountProfile.ROLE_ADMIN
+        admin_user.account_profile.save(update_fields=['role', 'updated_at'])
+        self.client.force_login(admin_user)
+
+        response = self.client.post(
+            reverse('admin-dashboard-create-account'),
+            data={
+                'fullName': 'Staff Responder',
+                'email': 'staff@example.com',
+                'password': 'secret123',
+                'role': 'staff',
+            },
+        )
+
+        self.assertEqual(response.status_code, 201)
+        payload = response.json()
+        self.assertEqual(payload['user']['role'], AccountProfile.ROLE_STAFF)
+        self.assertTrue(payload['user']['hasDashboardAccess'])
+
+    def test_list_dashboard_accounts_returns_explicit_roles(self):
+        admin_user = User.objects.create_user(username='admin-user', password='secret123', is_staff=True)
+        admin_user.account_profile.role = AccountProfile.ROLE_ADMIN
+        admin_user.account_profile.save(update_fields=['role', 'updated_at'])
+
+        staff_user = User.objects.create_user(username='staff-user', password='secret123', is_staff=True)
+        staff_user.account_profile.role = AccountProfile.ROLE_STAFF
+        staff_user.account_profile.save(update_fields=['role', 'updated_at'])
+
+        citizen = User.objects.create_user(username='citizen-user', password='secret123')
+
+        self.client.force_login(admin_user)
+        response = self.client.get(reverse('admin-dashboard-accounts'))
+
+        self.assertEqual(response.status_code, 200)
+        roles_by_username = {user['username']: user['role'] for user in response.json()['users']}
+        self.assertEqual(roles_by_username['admin-user'], AccountProfile.ROLE_ADMIN)
+        self.assertEqual(roles_by_username['staff-user'], AccountProfile.ROLE_STAFF)
+        self.assertEqual(roles_by_username['citizen-user'], AccountProfile.ROLE_CITIZEN)

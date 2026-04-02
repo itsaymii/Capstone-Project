@@ -4,6 +4,7 @@ import { useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { createDashboardAccount } from '../../../services/api'
+import type { UserRole } from '../../../types/api'
 
 export function AdminCreateAccountPage() {
   const [createFullName, setCreateFullName] = useState('')
@@ -11,7 +12,7 @@ export function AdminCreateAccountPage() {
   const [createUsername, setCreateUsername] = useState('')
   const [createPassword, setCreatePassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
-  const [createIsAdmin, setCreateIsAdmin] = useState(false)
+  const [createRole, setCreateRole] = useState<UserRole>('citizen')
   const [isCreatingAccount, setIsCreatingAccount] = useState(false)
   const [createAccountMessage, setCreateAccountMessage] = useState('')
   const [createAccountError, setCreateAccountError] = useState('')
@@ -40,7 +41,7 @@ export function AdminCreateAccountPage() {
         email: createEmail,
         username: createUsername,
         password: createPassword,
-        isAdmin: createIsAdmin,
+        role: createRole,
       })
 
       setCreateAccountMessage(response.message)
@@ -48,7 +49,7 @@ export function AdminCreateAccountPage() {
       setCreateEmail('')
       setCreateUsername('')
       setCreatePassword('')
-      setCreateIsAdmin(false)
+      setCreateRole('citizen')
     } catch (error) {
       if (axios.isAxiosError(error)) {
         if (error.response?.status === 401 || error.response?.status === 403) {
@@ -135,14 +136,17 @@ export function AdminCreateAccountPage() {
                 </div>
               </label>
 
-              <label className="inline-flex items-center gap-2 text-sm text-slate-700">
-                <input
-                  checked={createIsAdmin}
-                  className="h-4 w-4"
-                  onChange={(event) => setCreateIsAdmin(event.target.checked)}
-                  type="checkbox"
-                />
-                Create as admin account
+              <label className="block text-sm text-slate-700">
+                <span className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">Account Role</span>
+                <select
+                  className="w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-base outline-none placeholder:text-slate-400 transition focus:border-[#0b2a57] focus:ring-2 focus:ring-[#0b2a57]/10"
+                  onChange={(event) => setCreateRole(event.target.value as UserRole)}
+                  value={createRole}
+                >
+                  <option value="citizen">Citizen</option>
+                  <option value="staff">Staff</option>
+                  <option value="admin">Admin</option>
+                </select>
               </label>
 
               <button
@@ -156,7 +160,7 @@ export function AdminCreateAccountPage() {
               <div>
                 <Link
                   className="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 font-semibold text-[#0b2a57] text-base transition hover:border-[#0b2a57] hover:bg-[#f5faff] disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-400 inline-flex items-center justify-center"
-                  to="/admin-page"
+                  to="/login"
                 >
                   Sign in page
                 </Link>

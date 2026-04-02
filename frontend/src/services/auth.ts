@@ -1,6 +1,7 @@
 import axios from 'axios'
 import { loginAccount, registerAccount, verifyLoginOtp, verifyRegisterOtp } from './api'
 import { addNotification } from './notifications'
+import type { UserRole } from '../types/api'
 
 type RegisterPayload = {
   fullName: string
@@ -15,11 +16,13 @@ type LoginPayload = {
   keepLoggedIn: boolean
 }
 
-type LoginContext = 'admin' | 'citizen'
-
 type SessionUser = {
   fullName: string
   email: string
+  role?: UserRole
+  isAdmin?: boolean
+  isStaff?: boolean
+  hasDashboardAccess?: boolean
   photoUrl?: string
   phoneNumber?: string
   birthDate?: string
@@ -114,6 +117,10 @@ function persistAuthenticatedSession(user: SessionUser, keepLoggedIn: boolean): 
   writeSessionUser(sessionStore, {
     fullName: user.fullName,
     email: user.email,
+    role: user.role,
+    isAdmin: user.isAdmin,
+    isStaff: user.isStaff,
+    hasDashboardAccess: user.hasDashboardAccess,
   })
 
   oppositeStore.removeItem(AUTH_KEY)
@@ -227,7 +234,6 @@ export async function requestLoginOtp(
   password: string,
   keepLoggedIn = false,
   forceOtp = true,
-  loginContext: LoginContext = 'citizen',
 ): Promise<AuthResult> {
   const normalizedEmail = normalizeEmail(email)
 
@@ -236,20 +242,24 @@ export async function requestLoginOtp(
   }
 
   try {
-    const response = await loginAccount({ email: normalizedEmail, password, forceOtp, loginContext })
+    const response = await loginAccount({ email: normalizedEmail, password, forceOtp })
 
     const hasUserPayload = Boolean(response.user)
-    const shouldBypassOtp = forceOtp === false && (response.skipOtp || hasUserPayload)
+    const shouldBypassOtp = Boolean(response.skipOtp || hasUserPayload)
 
     if (shouldBypassOtp && response.user) {
       persistAuthenticatedSession(
         {
           fullName: response.user.fullName,
           email: response.user.email,
+          role: response.user.role,
+          isAdmin: response.user.isAdmin,
+          isStaff: response.user.isStaff,
+          hasDashboardAccess: response.user.hasDashboardAccess,
         },
         keepLoggedIn,
       )
-      addNotification(`Welcome back, ${response.user.fullName}. Trusted login was used.`)
+      addNotification(`Welcome back, ${response.user.fullName}.`)
 
       return {
         success: true,
@@ -307,6 +317,10 @@ export async function verifyLoginOtpCode(payload: {
       {
         fullName: response.user.fullName,
         email: response.user.email,
+        role: response.user.role,
+        isAdmin: response.user.isAdmin,
+        isStaff: response.user.isStaff,
+        hasDashboardAccess: response.user.hasDashboardAccess,
       },
       payload.keepLoggedIn,
     )
@@ -359,6 +373,19 @@ export function getCurrentUserProfile(): SessionUser | null {
   } catch {
     return null
   }
+}
+
+export function hasDashboardAccess(): boolean {
+  const profile = getCurrentUserProfile()
+  if (!profile) {
+    return false
+  }
+
+  if (typeof profile.hasDashboardAccess === 'boolean') {
+    return profile.hasDashboardAccess
+  }
+
+  return profile.role === 'admin' || profile.role === 'staff' || Boolean(profile.isAdmin || profile.isStaff)
 }
 
 export function updateCurrentUserProfile(fullName: string): boolean {
