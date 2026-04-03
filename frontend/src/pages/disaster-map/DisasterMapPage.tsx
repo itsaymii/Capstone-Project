@@ -8,7 +8,9 @@ import { useNavigate } from 'react-router-dom'
 import { isAuthenticated } from '../../services/auth'
 import {
   type EarthquakeEvent,
+  type FaultLineFeatureCollection,
   type HeatPoint,
+  fetchQuezonFaultLines,
   fetchQuezonRegionEarthquakes,
   toHeatPoints,
 } from '../../services/earthquakes'
@@ -29,13 +31,30 @@ const quezonRegionBounds: LatLngBoundsExpression = [
   [14.12, 121.92],
 ]
 
+const lucenaCityCenter: [number, number] = [13.94, 121.62]
+const nearestFaultLinesLimit = 5
+
 const hazardColors = {
   EQ: '#4ade80',
   FR: '#fb923c',
   AC: '#facc15',
 } as const
 
-const incidents = [
+type IncidentItem = {
+  title: string
+  time: string
+  status: 'active' | 'resolved' | 'pending'
+  color: string
+  code: 'EQ' | 'FR' | 'AC'
+  location: string
+  severity: 'Low' | 'Moderate' | 'High' | 'Critical'
+  responseTeam: string
+  description: string
+  coordinates: [number, number]
+  magnitude?: number
+}
+
+const incidents: IncidentItem[] = [
   {
     title: 'Minor Earthquake - East Zone',
     time: '10:00 PM',
@@ -134,7 +153,6 @@ const incidents = [
   },
 ]
 
-type IncidentItem = (typeof incidents)[number]
 type IncidentTypeFilter = 'EQ' | 'FR' | 'AC'
 
 const incidentTypeMeta: Record<IncidentTypeFilter, { label: string; color: string }> = {
@@ -166,6 +184,61 @@ function getEarthquakeDescription(event: EarthquakeEvent): string {
   return `Minor-to-light seismic activity near ${event.place}. Depth ${event.depth.toFixed(1)} km. Monitoring remains active.`
 }
 
+function getFaultLineDistanceScore(geometry: GeoJSON.Geometry | null | undefined): number {
+  if (!geometry) return Number.POSITIVE_INFINITY
+
+  const targetPoint = L.CRS.EPSG3857.project(L.latLng(lucenaCityCenter[0], lucenaCityCenter[1]))
+  let nearestDistance = Number.POSITIVE_INFINITY
+
+  const getPointDistanceToSegment = (startCoordinate: number[], endCoordinate: number[]) => {
+    const startPoint = L.CRS.EPSG3857.project(L.latLng(startCoordinate[1], startCoordinate[0]))
+    const endPoint = L.CRS.EPSG3857.project(L.latLng(endCoordinate[1], endCoordinate[0]))
+
+    const deltaX = endPoint.x - startPoint.x
+    const deltaY = endPoint.y - startPoint.y
+    const segmentLengthSquared = deltaX ** 2 + deltaY ** 2
+
+    if (segmentLengthSquared === 0) {
+      return Math.hypot(targetPoint.x - startPoint.x, targetPoint.y - startPoint.y)
+    }
+
+    const projectionRatio = Math.max(
+      0,
+      Math.min(
+        1,
+        ((targetPoint.x - startPoint.x) * deltaX + (targetPoint.y - startPoint.y) * deltaY) / segmentLengthSquared,
+      ),
+    )
+
+    const projectedPointX = startPoint.x + projectionRatio * deltaX
+    const projectedPointY = startPoint.y + projectionRatio * deltaY
+
+    return Math.hypot(targetPoint.x - projectedPointX, targetPoint.y - projectedPointY)
+  }
+
+  const inspectLine = (coordinates: number[][]) => {
+    if (coordinates.length === 1) {
+      const singlePoint = L.CRS.EPSG3857.project(L.latLng(coordinates[0][1], coordinates[0][0]))
+      nearestDistance = Math.min(nearestDistance, Math.hypot(targetPoint.x - singlePoint.x, targetPoint.y - singlePoint.y))
+      return
+    }
+
+    for (let index = 0; index < coordinates.length - 1; index += 1) {
+      nearestDistance = Math.min(nearestDistance, getPointDistanceToSegment(coordinates[index], coordinates[index + 1]))
+    }
+  }
+
+  if (geometry.type === 'LineString') {
+    inspectLine(geometry.coordinates)
+  }
+
+  if (geometry.type === 'MultiLineString') {
+    geometry.coordinates.forEach((segment) => inspectLine(segment))
+  }
+
+  return nearestDistance
+}
+
 export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | 'admin' }) {
   const navigate = useNavigate()
   const isAdminVariant = variant === 'admin'
@@ -174,9 +247,12 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
   const [selectedIncident, setSelectedIncident] = useState<IncidentItem | null>(null)
   const [selectedType, setSelectedType] = useState<IncidentTypeFilter>('EQ')
   const [earthquakeEvents, setEarthquakeEvents] = useState<EarthquakeEvent[]>([])
+  const [faultLines, setFaultLines] = useState<FaultLineFeatureCollection | null>(null)
   const [eqHeatPoints, setEqHeatPoints] = useState<HeatPoint[]>([])
   const [eqFetchStatus, setEqFetchStatus] = useState<'idle' | 'loading' | 'error'>('idle')
+  const [faultLineStatus, setFaultLineStatus] = useState<'idle' | 'loading' | 'error'>('idle')
   const [showHeatmap, setShowHeatmap] = useState(true)
+  const [showFaultLines, setShowFaultLines] = useState(true)
   const [eqLastRefreshed, setEqLastRefreshed] = useState<Date | null>(null)
   const [eqIsRefreshing, setEqIsRefreshing] = useState(false)
   const [eqSearchQuery, setEqSearchQuery] = useState('')
@@ -196,6 +272,7 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
           responseTeam: 'Seismic Assessment Unit',
           description: getEarthquakeDescription(event),
           coordinates: [event.lat, event.lng] as [number, number],
+          magnitude: event.magnitude,
         })),
     [earthquakeEvents],
   )
@@ -210,6 +287,35 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
         incident.description.toLowerCase().includes(normalizedQuery),
     )
   }, [earthquakeIncidentCards, eqSearchQuery])
+  const nearestFaultLineFeatures = useMemo(() => {
+    if (!faultLines) return []
+
+    return faultLines.features
+      .map((feature, index) => ({ feature, index, distanceScore: getFaultLineDistanceScore(feature.geometry) }))
+      .filter((item) => Number.isFinite(item.distanceScore))
+      .sort((left, right) => left.distanceScore - right.distanceScore)
+      .slice(0, nearestFaultLinesLimit)
+  }, [faultLines])
+  const nearestFaultLineIndexes = useMemo(
+    () => new Set(nearestFaultLineFeatures.map((item) => item.index)),
+    [nearestFaultLineFeatures],
+  )
+  const nonHighlightedFaultLineCollection = useMemo(() => {
+    if (!faultLines) return null
+
+    return {
+      ...faultLines,
+      features: faultLines.features.filter((_, index) => !nearestFaultLineIndexes.has(index)),
+    }
+  }, [faultLines, nearestFaultLineIndexes])
+  const highlightedFaultLineCollection = useMemo(() => {
+    if (!faultLines) return null
+
+    return {
+      ...faultLines,
+      features: nearestFaultLineFeatures.map((item) => item.feature),
+    }
+  }, [faultLines, nearestFaultLineFeatures])
 
   function handleIncidentClick(incident: IncidentItem) {
     if (!isAdminVariant && !isAuthenticated()) {
@@ -243,6 +349,30 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
       void loadEarthquakes()
     }
   }, [selectedType, earthquakeEvents.length, eqFetchStatus, loadEarthquakes])
+
+  useEffect(() => {
+    if (selectedType !== 'EQ' || faultLines) return
+
+    let isCancelled = false
+    setFaultLineStatus('loading')
+
+    void fetchQuezonFaultLines()
+      .then((data) => {
+        if (!isCancelled) {
+          setFaultLines(data)
+          setFaultLineStatus('idle')
+        }
+      })
+      .catch(() => {
+        if (!isCancelled) {
+          setFaultLineStatus('error')
+        }
+      })
+
+    return () => {
+      isCancelled = true
+    }
+  }, [selectedType, faultLines])
 
   // Auto-refresh every 5 minutes while the earthquake view is active
   useEffect(() => {
@@ -281,16 +411,16 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
 
     map.fitBounds(isEqView ? quezonRegionBounds : lucenaBounds)
 
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
       attribution: '&copy; OpenStreetMap &copy; CARTO',
     }).addTo(map)
 
     // Always draw Lucena City reference boundary
     L.rectangle(lucenaBounds, {
-      color: '#4f81bd',
+      color: '#0f766e',
       weight: 2,
-      fillColor: '#2f5f93',
-      fillOpacity: 0.06,
+      fillColor: '#14b8a6',
+      fillOpacity: 0.1,
       dashArray: '6 5',
     }).addTo(map)
 
@@ -302,26 +432,92 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
           radius: 28,
           blur: 22,
           max: 1.0,
-          gradient: { 0.2: '#3b82f6', 0.45: '#06b6d4', 0.65: '#22c55e', 0.8: '#facc15', 1.0: '#ef4444' },
+          gradient: {
+            0.14: '#38bdf8',
+            0.4: '#22c55e',
+            0.6: '#facc15',
+            0.8: '#f97316',
+            1.0: '#dc2626',
+          },
         }).addTo(map)
       }
 
-      // Individual earthquake markers (magnitude ≥ 3.5 shown as circle markers)
-      const significantEvents = earthquakeEvents.filter((e) => e.magnitude >= 3.5)
-      significantEvents.forEach((event) => {
-        const radiusPx = Math.max(4, (event.magnitude - 1) * 3)
-        L.circleMarker([event.lat, event.lng], {
-          radius: radiusPx,
-          color: '#ffffff',
-          weight: 1,
-          fillColor: hazardColors.EQ,
-          fillOpacity: 0.85,
+      if (showFaultLines && nonHighlightedFaultLineCollection) {
+        const faultPane = map.createPane('fault-lines-pane')
+        faultPane.style.zIndex = '420'
+
+        L.geoJSON(nonHighlightedFaultLineCollection, {
+          pane: 'fault-lines-pane',
+          style: (feature) => {
+            const lineType = feature?.properties?.LINE_TYPE?.toLowerCase() ?? ''
+            const traceType = feature?.properties?.TRACE_TYPE?.toLowerCase() ?? ''
+            const isApproximate = lineType.includes('approx') || traceType.includes('approx')
+            const isConcealed = lineType.includes('concealed') || traceType.includes('concealed')
+
+            return {
+              color: isConcealed ? '#7c3aed' : '#ef4444',
+              weight: isApproximate ? 2.2 : 2.8,
+              opacity: 0.78,
+              dashArray: isConcealed ? '4 8' : isApproximate ? '8 6' : undefined,
+            }
+          },
+          onEachFeature: (feature, layer) => {
+            const faultName = feature.properties?.FAULT_NAME ?? 'Unnamed fault'
+            const segmentName = feature.properties?.SEG_NAME ?? 'Segment not specified'
+            const traceType = feature.properties?.TRACE_TYPE ?? 'Trace type not specified'
+            const lineType = feature.properties?.LINE_TYPE ?? 'Line type not specified'
+            const faultCategory = feature.properties?.FAULT_CAT ?? 'Category not specified'
+            const mappedYear = feature.properties?.YR_MAPPED ?? 'N/A'
+
+            layer.bindPopup(
+              `<strong>${faultName}</strong><br/>Segment: ${segmentName}<br/>Trace: ${traceType}<br/>Line Type: ${lineType}<br/>Category: ${faultCategory}<br/>Mapped: ${mappedYear}`,
+            )
+          },
+        }).addTo(map)
+
+        const highlightPane = map.createPane('fault-highlights-pane')
+        highlightPane.style.zIndex = '430'
+
+        if (highlightedFaultLineCollection && highlightedFaultLineCollection.features.length > 0) {
+          L.geoJSON(highlightedFaultLineCollection, {
+            pane: 'fault-highlights-pane',
+            style: {
+              color: '#f59e0b',
+              weight: 5,
+              opacity: 0.98,
+            },
+            onEachFeature: (feature, layer) => {
+              const faultName = feature.properties?.FAULT_NAME ?? 'Unnamed fault'
+              const segmentName = feature.properties?.SEG_NAME ?? 'Segment not specified'
+              const traceType = feature.properties?.TRACE_TYPE ?? 'Trace type not specified'
+              const faultCategory = feature.properties?.FAULT_CAT ?? 'Category not specified'
+
+              layer.bindPopup(
+                `<strong>${faultName}</strong><br/>Nearest Lucena fault segment: ${segmentName}<br/>Trace: ${traceType}<br/>Category: ${faultCategory}`,
+              )
+            },
+          }).addTo(map)
+        }
+      }
+
+      if (showHeatmap) {
+        // Individual earthquake markers follow the heatmap visibility state.
+        const significantEvents = earthquakeEvents.filter((e) => e.magnitude >= 3.5)
+        significantEvents.forEach((event) => {
+          const radiusPx = Math.max(4, (event.magnitude - 1) * 3)
+          L.circleMarker([event.lat, event.lng], {
+            radius: radiusPx,
+            color: '#ffffff',
+            weight: 1,
+            fillColor: hazardColors.EQ,
+            fillOpacity: 0.85,
+          })
+            .addTo(map)
+            .bindPopup(
+              `<strong>M${event.magnitude.toFixed(1)}</strong><br/>${event.place}<br/><small>${event.time}</small><br/><small>Depth: ${event.depth.toFixed(1)} km</small>`,
+            )
         })
-          .addTo(map)
-          .bindPopup(
-            `<strong>M${event.magnitude.toFixed(1)}</strong><br/>${event.place}<br/><small>${event.time}</small><br/><small>Depth: ${event.depth.toFixed(1)} km</small>`,
-          )
-      })
+      }
 
       if (eqFetchStatus === 'loading') {
         L.popup({ closeButton: false })
@@ -374,7 +570,7 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
       map.remove()
       mapInstanceRef.current = null
     }
-  }, [filteredIncidents, selectedType, eqHeatPoints, earthquakeEvents, eqFetchStatus, showHeatmap])
+  }, [filteredIncidents, selectedType, eqHeatPoints, earthquakeEvents, eqFetchStatus, showHeatmap, showFaultLines, nonHighlightedFaultLineCollection, highlightedFaultLineCollection])
 
   return (
     <div className={isAdminVariant ? 'min-h-screen bg-[radial-gradient(circle_at_top,_#2a3144_0%,_#181c23_48%,_#11161f_100%)] text-slate-100 md:flex' : 'min-h-screen bg-[radial-gradient(circle_at_top,_#e7f1fc_0%,_#f4f8fd_34%,_#eef3f8_100%)] text-slate-800'}>
@@ -444,39 +640,76 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
                   )}
                 </div>
                 {selectedType === 'EQ' ? (
-                  <button
-                    className={`rounded-full border px-3 py-1.5 text-[11px] font-semibold transition ${
-                      showHeatmap
-                        ? 'border-emerald-400 bg-emerald-50 text-emerald-800'
-                        : 'border-slate-300 bg-white text-slate-600 hover:bg-slate-50'
-                    }`}
-                    onClick={() => setShowHeatmap((v) => !v)}
-                    type="button"
-                  >
-                    {showHeatmap ? '🌡 Heatmap ON' : '🌡 Heatmap OFF'}
-                  </button>
+                  <div className="flex flex-wrap items-center justify-end gap-2">
+                    <button
+                      className={`rounded-full border px-3 py-1.5 text-[11px] font-semibold transition ${
+                        showHeatmap
+                          ? 'border-emerald-400 bg-emerald-50 text-emerald-800'
+                          : 'border-slate-300 bg-white text-slate-600 hover:bg-slate-50'
+                      }`}
+                      onClick={() => setShowHeatmap((value) => !value)}
+                      type="button"
+                    >
+                      {showHeatmap ? 'Heatmap ON' : 'Heatmap OFF'}
+                    </button>
+                    <button
+                      className={`rounded-full border px-3 py-1.5 text-[11px] font-semibold transition ${
+                        showFaultLines
+                          ? 'border-rose-300 bg-rose-50 text-rose-700'
+                          : 'border-slate-300 bg-white text-slate-600 hover:bg-slate-50'
+                      }`}
+                      onClick={() => setShowFaultLines((value) => !value)}
+                      type="button"
+                    >
+                      {showFaultLines ? 'Fault Lines ON' : 'Fault Lines OFF'}
+                    </button>
+                  </div>
                 ) : null}
               </div>
 
-              {selectedType === 'EQ' ? (
+              {selectedType === 'EQ' && (showHeatmap || showFaultLines || eqFetchStatus !== 'idle' || eqIsRefreshing || faultLineStatus !== 'idle') ? (
                 <div className="flex flex-wrap items-center gap-3 border-b border-slate-200 bg-slate-50 px-4 py-2 text-[11px]">
-                  <span className="font-semibold uppercase tracking-[0.12em] text-slate-500">Heatmap gradient</span>
-                  <div className="flex items-center gap-1.5">
-                    <span className="inline-block h-2.5 w-2.5 rounded-full bg-[#3b82f6]" />
-                    <span className="text-slate-600">Low activity</span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="inline-block h-2.5 w-2.5 rounded-full bg-[#22c55e]" />
-                    <span className="text-slate-600">Moderate</span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="inline-block h-2.5 w-2.5 rounded-full bg-[#facc15]" />
-                    <span className="text-slate-600">High</span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="inline-block h-2.5 w-2.5 rounded-full bg-[#ef4444]" />
-                    <span className="text-slate-600">Critical seismic zone</span>
-                  </div>
+                  <span className="font-semibold uppercase tracking-[0.12em] text-slate-500">Legend</span>
+                  {showHeatmap ? (
+                    <>
+                      <div className="flex items-center gap-1.5">
+                        <span className="inline-block h-2.5 w-2.5 rounded-full bg-[#38bdf8]" />
+                        <span className="text-slate-600">M1.0-M1.9</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="inline-block h-2.5 w-2.5 rounded-full bg-[#22c55e]" />
+                        <span className="text-slate-600">M2.0-M2.9</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="inline-block h-2.5 w-2.5 rounded-full bg-[#facc15]" />
+                        <span className="text-slate-600">M3.0-M3.9</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="inline-block h-2.5 w-2.5 rounded-full bg-[#f97316]" />
+                        <span className="text-slate-600">M4.0-M4.9</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="inline-block h-2.5 w-2.5 rounded-full bg-[#dc2626]" />
+                        <span className="text-slate-600">M5.0+</span>
+                      </div>
+                    </>
+                  ) : null}
+                  {showFaultLines ? (
+                    <>
+                      <div className="flex items-center gap-1.5">
+                        <span className="inline-block h-[3px] w-8 rounded-full bg-[#ef4444]" />
+                        <span className="text-slate-600">Fault trace</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="inline-block h-[3px] w-8 rounded-full bg-[#7c3aed]" style={{ backgroundImage: 'repeating-linear-gradient(90deg,#7c3aed 0 8px, transparent 8px 14px)' }} />
+                        <span className="text-slate-600">Concealed fault</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="inline-block h-[4px] w-8 rounded-full bg-[#f59e0b]" />
+                        <span className="text-slate-600">Nearest to Lucena</span>
+                      </div>
+                    </>
+                  ) : null}
                   <div className="ml-auto flex items-center gap-2">
                     {eqFetchStatus === 'loading' ? (
                       <span className="animate-pulse font-semibold text-blue-600">Fetching data…</span>
@@ -490,6 +723,15 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
                         Live · 5 min
                       </span>
                     )}
+                    {faultLineStatus === 'loading' ? (
+                      <span className="font-semibold text-rose-600">Loading faults…</span>
+                    ) : faultLineStatus === 'error' ? (
+                      <span className="font-semibold text-rose-600">Fault lines unavailable</span>
+                    ) : showFaultLines && faultLines ? (
+                      <span className="rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.1em] text-rose-700">
+                        {faultLines.features.length} fault traces
+                      </span>
+                    ) : null}
                   </div>
                 </div>
               ) : (
@@ -600,9 +842,13 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
                                 <p className="mt-1 pl-7 text-xs text-slate-500">{incident.time}</p>
                                 <p className="mt-1 pl-7 text-xs text-slate-500">{incident.location}</p>
                               </div>
+                              <span className="rounded-full bg-[#e8f2fc] px-2 py-1 text-[10px] font-bold uppercase text-[#245785]">
+                                {incident.severity}
+                              </span>
                             </div>
-                            <p className="mt-2 pl-7 text-xs text-slate-600">{incident.description}</p>
-                            <div className="mt-3 pl-7">
+                            <p className="mt-2 pl-7 text-[11px] text-slate-400">Full incident details are available in View Info.</p>
+                            <div className="mt-3 flex items-center justify-between gap-3 pl-7">
+                              <span className="text-[11px] font-medium text-slate-500">Open the full earthquake report.</span>
                               <button
                                 className="rounded-md border border-[#234d77]/30 bg-white px-2.5 py-1.5 text-xs font-semibold text-[#234d77] transition hover:border-[#234d77]/50 hover:bg-[#edf3fa]"
                                 onClick={() => handleIncidentClick(incident)}
@@ -618,9 +864,6 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
                   )}
                   </div>
 
-                  <p className="mt-3 border-t border-slate-200/70 pt-3 text-[11px] text-slate-400">
-                    Data: USGS FDSN (same events monitored by PHIVOLCS). Auto-refreshes every 5 min.
-                  </p>
                 </div>
               ) : (
                 // ── Standard incident sidebar ──
@@ -711,6 +954,11 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
                 <p className="text-slate-600">
                   <span className="font-semibold text-slate-800">Time:</span> {selectedIncident.time}
                 </p>
+                {selectedIncident.magnitude !== undefined ? (
+                  <p className="text-slate-600">
+                    <span className="font-semibold text-slate-800">Magnitude:</span> {selectedIncident.magnitude.toFixed(1)}
+                  </p>
+                ) : null}
                 <p className="text-slate-600">
                   <span className="font-semibold text-slate-800">Severity:</span> {selectedIncident.severity}
                 </p>

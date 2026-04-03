@@ -7,9 +7,11 @@ from django.core.mail import send_mail
 from django.core.validators import validate_email
 from django.conf import settings
 from django.db.models import Q
+from django.middleware.csrf import get_token
 from django.utils.html import strip_tags
 from django.utils import timezone
 from django.contrib.auth.hashers import check_password, identify_hasher, make_password
+from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.csrf import csrf_exempt
 from rest_framework import status
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
@@ -57,6 +59,17 @@ def _serialize_user(user: User, fallback_identifier: str = '') -> dict:
 		'isStaff': role == AccountProfile.ROLE_STAFF,
 		'hasDashboardAccess': user_has_dashboard_access(user),
 	}
+
+
+def _build_login_success_response(request, user: User, fallback_identifier: str) -> Response:
+	response = Response(
+		{
+			'message': 'Login successful.',
+			'user': _serialize_user(user=user, fallback_identifier=fallback_identifier),
+		}
+	)
+	get_token(request)
+	return response
 
 
 def _generate_otp_code() -> str:
@@ -170,6 +183,15 @@ def _has_recent_verified_login_otp(email: str, user_id: int) -> bool:
 @api_view(['GET'])
 def test_connection(request):
 	return Response({'message': 'Backend connected successfully'})
+
+
+@api_view(['GET'])
+@ensure_csrf_cookie
+@authentication_classes([])
+@permission_classes([AllowAny])
+def issue_csrf_cookie(request):
+	get_token(request)
+	return Response({'message': 'CSRF cookie set successfully.'}, status=status.HTTP_200_OK)
 
 
 @api_view(['POST'])
@@ -309,28 +331,20 @@ def login_user(request):
 
 	if user_bypasses_login_otp(user):
 		login(request, user)
-		return Response(
-			{
-				'message': 'Login successful.',
-				'skipOtp': True,
-				'user': _serialize_user(user=user, fallback_identifier=identifier),
-			},
-			status=status.HTTP_200_OK,
-		)
+		response = _build_login_success_response(request, user, identifier)
+		response.data['skipOtp'] = True
+		response.status_code = status.HTTP_200_OK
+		return response
 
 	if not force_otp:
 		return Response({'error': 'OTP bypass is only allowed for staff and admin accounts.'}, status=status.HTTP_403_FORBIDDEN)
 
 	if _has_recent_verified_login_otp(email=account.email, user_id=user.id):
 		login(request, user)
-		return Response(
-			{
-				'message': 'Login successful.',
-				'skipOtp': True,
-				'user': _serialize_user(user=user, fallback_identifier=identifier),
-			},
-			status=status.HTTP_200_OK,
-		)
+		response = _build_login_success_response(request, user, identifier)
+		response.data['skipOtp'] = True
+		response.status_code = status.HTTP_200_OK
+		return response
 
 	if not account.email:
 		return Response(
@@ -393,12 +407,9 @@ def verify_login_otp(request):
 	otp_record.save(update_fields=['is_used'])
 	login(request, user)
 
-	return Response(
-		{
-			'message': 'Login successful.',
-			'user': _serialize_user(user=user, fallback_identifier=email),
-		}
-	)
+	response = _build_login_success_response(request, user, email)
+	response.status_code = status.HTTP_200_OK
+	return response
 
 
 @api_view(['POST'])

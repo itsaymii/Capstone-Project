@@ -60,7 +60,54 @@ const apiBaseUrl = normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_URL)
 const api = axios.create({
   baseURL: apiBaseUrl,
   withCredentials: true,
+  xsrfCookieName: 'csrftoken',
+  xsrfHeaderName: 'X-CSRFToken',
 })
+
+function getCookieValue(cookieName: string): string | null {
+  if (typeof document === 'undefined') {
+    return null
+  }
+
+  const cookieMatch = document.cookie
+    .split('; ')
+    .find((entry) => entry.startsWith(`${cookieName}=`))
+
+  if (!cookieMatch) {
+    return null
+  }
+
+  return decodeURIComponent(cookieMatch.split('=').slice(1).join('='))
+}
+
+api.interceptors.request.use((config) => {
+  const requestMethod = config.method?.toUpperCase()
+  const isSafeMethod = requestMethod === 'GET' || requestMethod === 'HEAD' || requestMethod === 'OPTIONS'
+
+  if (!isSafeMethod) {
+    const csrfToken = getCookieValue('csrftoken')
+    if (csrfToken) {
+      config.headers.set('X-CSRFToken', csrfToken)
+    }
+  }
+
+  return config
+})
+
+let csrfBootstrapPromise: Promise<void> | null = null
+
+export async function ensureCsrfCookie(): Promise<void> {
+  if (!csrfBootstrapPromise) {
+    csrfBootstrapPromise = api
+      .get('/accounts/auth/csrf/')
+      .then(() => undefined)
+      .finally(() => {
+        csrfBootstrapPromise = null
+      })
+  }
+
+  return csrfBootstrapPromise
+}
 
 export async function getTestMessage(): Promise<TestApiResponse> {
   const { data } = await api.get<TestApiResponse>('/accounts/test/')
@@ -103,6 +150,7 @@ export async function getAdminDashboardSummary(): Promise<AdminDashboardSummaryR
 }
 
 export async function createDashboardAccount(payload: DashboardCreateAccountPayload): Promise<DashboardCreateAccountResponse> {
+  await ensureCsrfCookie()
   const { data } = await api.post<DashboardCreateAccountResponse>('/dashboard/admin/accounts/create/', payload)
   return data
 }
@@ -113,11 +161,13 @@ export async function getDashboardAccounts(): Promise<DashboardAccountsResponse>
 }
 
 export async function updateDashboardAccount(userId: number, payload: DashboardUpdateAccountPayload): Promise<DashboardUpdateAccountResponse> {
+  await ensureCsrfCookie()
   const { data } = await api.put<DashboardUpdateAccountResponse>(`/dashboard/admin/accounts/${userId}/`, payload)
   return data
 }
 
 export async function deleteDashboardAccount(userId: number): Promise<DashboardDeleteAccountResponse> {
+  await ensureCsrfCookie()
   const { data } = await api.delete<DashboardDeleteAccountResponse>(`/dashboard/admin/accounts/${userId}/`)
   return data
 }

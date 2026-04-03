@@ -86,12 +86,16 @@ def get_user_role(user: User) -> str:
 		return AccountProfile.ROLE_ADMIN
 
 	try:
-		profile = user.account_profile
-	except (AccountProfile.DoesNotExist, OperationalError, ProgrammingError):
+		resolved_role = (
+			AccountProfile.objects.filter(user=user)
+			.values_list('role', flat=True)
+			.first()
+		)
+	except (OperationalError, ProgrammingError):
 		return AccountProfile.derive_role_from_user(user)
 
-	if profile.role in dict(AccountProfile.ROLE_CHOICES):
-		return profile.role
+	if resolved_role in dict(AccountProfile.ROLE_CHOICES):
+		return resolved_role
 
 	return AccountProfile.derive_role_from_user(user)
 

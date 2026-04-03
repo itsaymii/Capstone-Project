@@ -7,12 +7,18 @@ from django.utils import timezone
 from django.utils.text import slugify
 from rest_framework.decorators import api_view
 from rest_framework.decorators import permission_classes
-from rest_framework.permissions import IsAdminUser, IsAuthenticated
+from rest_framework.permissions import BasePermission, IsAuthenticated
 from rest_framework import status
 from rest_framework.response import Response
 
 from accounts.models import AccountProfile, OneTimePassword, ensure_account_profile, get_user_role, user_has_dashboard_access
 from .models import SimulationProgress
+
+
+class HasDashboardAdminAccess(BasePermission):
+    def has_permission(self, request, view) -> bool:
+        user = getattr(request, 'user', None)
+        return bool(user and user.is_authenticated and user_has_dashboard_access(user))
 
 
 def _build_unique_username(seed: str) -> str:
@@ -208,13 +214,13 @@ def simulation_progress(request):
 
 
 @api_view(['GET'])
-@permission_classes([IsAdminUser])
+@permission_classes([HasDashboardAdminAccess])
 def simulation_admin_metrics(request):
     return Response(_serialize_simulation_admin_metrics(), status=status.HTTP_200_OK)
 
 
 @api_view(['GET'])
-@permission_classes([IsAdminUser])
+@permission_classes([HasDashboardAdminAccess])
 def admin_dashboard_summary(request):
     now = timezone.now()
     thirty_days_ago = now - timedelta(days=30)
@@ -236,7 +242,7 @@ def admin_dashboard_summary(request):
 
 
 @api_view(['POST'])
-@permission_classes([IsAdminUser])
+@permission_classes([HasDashboardAdminAccess])
 def create_dashboard_account(request):
     full_name = (request.data.get('fullName') or '').strip()
     email = (request.data.get('email') or '').strip().lower()
@@ -283,14 +289,14 @@ def create_dashboard_account(request):
 
 
 @api_view(['GET'])
-@permission_classes([IsAdminUser])
+@permission_classes([HasDashboardAdminAccess])
 def list_dashboard_accounts(request):
     users = User.objects.order_by('-date_joined', '-id')
     return Response({'users': [_serialize_dashboard_user(user) for user in users]})
 
 
 @api_view(['PUT', 'PATCH', 'DELETE'])
-@permission_classes([IsAdminUser])
+@permission_classes([HasDashboardAdminAccess])
 def dashboard_account_detail(request, user_id: int):
     user = User.objects.filter(id=user_id).first()
     if not user:

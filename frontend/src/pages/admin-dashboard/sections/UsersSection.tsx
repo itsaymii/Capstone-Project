@@ -1,5 +1,5 @@
 import axios from 'axios'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { createDashboardAccount, deleteDashboardAccount, getDashboardAccounts, updateDashboardAccount } from '../../../services/api'
 import type { AuthUser, UserRole } from '../../../types/api'
 import { glassPanelClass, glassPanelSoftClass } from './constants'
@@ -119,12 +119,15 @@ export function UsersSection() {
       const response = await getDashboardAccounts()
       setDashboardUsers(response.users)
     } catch (error) {
-      setDashboardUsers([])
       setUsersError(getUsersApiErrorMessage(error, 'Unable to load website accounts right now.'))
     } finally {
       setIsUsersLoading(false)
     }
   }
+
+  useEffect(() => {
+    void loadDashboardUsers()
+  }, [])
 
   function resetUserForm(): void {
     setEditingUserId(null)
@@ -390,7 +393,11 @@ export function UsersSection() {
                                 <button
                                   className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 font-semibold text-red-700 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
                                   disabled={deletingUserId === user.id}
-                                  onClick={() => void handleDeleteUser(user)}
+                                  onClick={() => {
+                                    const shouldDelete = window.confirm(`Delete the account for ${user.fullName}?`)
+                                    if (!shouldDelete) return
+                                    void handleDeleteUser(user)
+                                  }}
                                   type="button"
                                 >
                                   {deletingUserId === user.id ? 'Deleting...' : 'Delete'}

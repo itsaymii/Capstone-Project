@@ -10,6 +10,7 @@
  */
 
 const USGS_FDSN_API = 'https://earthquake.usgs.gov/fdsnws/event/1/query'
+const PHIVOLCS_ACTIVE_FAULTS_API = 'https://services8.arcgis.com/If57gH0ZAbByXwSk/arcgis/rest/services/Active_Faults_(PHIVOLCS)/FeatureServer/0/query'
 
 export type EarthquakeEvent = {
   id: string
@@ -24,6 +25,20 @@ export type EarthquakeEvent = {
 
 /** [lat, lng, intensity 0-1] — format expected by leaflet.heat */
 export type HeatPoint = [number, number, number]
+
+type FaultLineProperties = {
+  FAULT_NAME?: string | null
+  SEG_NAME?: string | null
+  TRACE_TYPE?: string | null
+  LINE_TYPE?: string | null
+  FAULT_CAT?: string | null
+  YR_MAPPED?: number | null
+}
+
+export type FaultLineFeatureCollection = GeoJSON.FeatureCollection<GeoJSON.Geometry, FaultLineProperties>
+
+const HEATMAP_MIN_MAGNITUDE = 1
+const HEATMAP_MAX_MAGNITUDE = 6
 
 type USGSFeature = {
   id: string
@@ -99,20 +114,46 @@ export async function fetchQuezonRegionEarthquakes(
 
 /**
  * Convert earthquake events into leaflet.heat heatmap points.
- * Intensity is normalized to [0, 1] relative to the maximum magnitude in
- * the dataset, ensuring the heatmap colour range is always fully utilized.
- *
- * A square-root scale is applied so moderate-magnitude quakes still show
- * visible heat rather than being swamped by the strongest event.
+ * Intensity is normalized against fixed magnitude bands so the same quake
+ * strength always maps to the same heat colour, regardless of other events
+ * present in the current dataset.
  */
 export function toHeatPoints(events: EarthquakeEvent[]): HeatPoint[] {
   if (events.length === 0) return []
-  const maxMag = Math.max(...events.map((e) => e.magnitude))
   return events.map((e) => [
     e.lat,
     e.lng,
-    Math.min(Math.sqrt(Math.max(e.magnitude, 0) / maxMag), 1),
+    Math.min(
+      Math.max((Math.max(e.magnitude, HEATMAP_MIN_MAGNITUDE) - HEATMAP_MIN_MAGNITUDE) / (HEATMAP_MAX_MAGNITUDE - HEATMAP_MIN_MAGNITUDE), 0.14),
+      1,
+    ),
   ])
+}
+
+export async function fetchQuezonFaultLines(): Promise<FaultLineFeatureCollection> {
+  const params = new URLSearchParams({
+    where: '1=1',
+    geometry: JSON.stringify({
+      xmin: 121.0,
+      ymin: 13.4,
+      xmax: 122.2,
+      ymax: 14.6,
+      spatialReference: { wkid: 4326 },
+    }),
+    geometryType: 'esriGeometryEnvelope',
+    inSR: '4326',
+    spatialRel: 'esriSpatialRelIntersects',
+    outFields: 'FAULT_NAME,SEG_NAME,TRACE_TYPE,LINE_TYPE,FAULT_CAT,YR_MAPPED',
+    returnGeometry: 'true',
+    f: 'geojson',
+  })
+
+  const response = await fetch(`${PHIVOLCS_ACTIVE_FAULTS_API}?${params}`)
+  if (!response.ok) {
+    throw new Error(`PHIVOLCS Active Faults API responded with status ${response.status}`)
+  }
+
+  return (await response.json()) as FaultLineFeatureCollection
 }
 
 /** Return how many events fall within or near Lucena City (±0.15° buffer). */
