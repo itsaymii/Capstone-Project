@@ -3,6 +3,7 @@ import { LoginPage } from '../pages/auth/login/LoginPage'
 import { RegisterPage } from '../pages/auth/register/RegisterPage'
 import { AdminDashboardPage } from '../pages/admin-dashboard/AdminDashboardPage'
 import { DisasterMapPage } from '../pages/disaster-map/DisasterMapPage'
+import { EmergencyHotlinesPage } from '../pages/emergency-hotlines/EmergencyHotlinesPage'
 import { LandingPage } from '../pages/landing/LandingPage'
 import { ProfileSettingsPage } from '../pages/profile/ProfileSettingsPage'
 import { SimulationPage } from '../pages/simulation/SimulationPage'
@@ -43,6 +44,7 @@ export function AppRouter() {
       />
       <Route path="/landing" element={<LandingPage />} />
       <Route path="/disaster-map" element={<DisasterMapPage />} />
+      <Route path="/emergency-hotlines" element={<EmergencyHotlinesPage />} />
       <Route path="/simulation" element={<SimulationPage />} />
       <Route
         path="/admin-profile-settings"

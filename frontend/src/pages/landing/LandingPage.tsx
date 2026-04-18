@@ -87,9 +87,9 @@ const preparednessGuides = [
 
 const emergencyHotlines = [
   { agency: 'National Emergency', number: '911' },
-  { agency: 'Lucena CDRRMO', number: '(042) XXX-XXXX' },
-  { agency: 'Lucena BFP', number: '(042) XXX-XXXX' },
-  { agency: 'Lucena PNP', number: '(042) XXX-XXXX' },
+  { agency: 'Lucena City DRRMO', number: '0970 128 5078' },
+  { agency: 'Lucena BFP', number: '(042) 797 2320' },
+  { agency: 'Lucena PNP', number: '(042) 373 7294' },
 ]
 
 
@@ -583,7 +583,7 @@ export function LandingPage() {
             </div>
           </section>
 
-          <section className="border-t border-slate-200 bg-white px-6 pb-28 pt-20 sm:px-10 sm:pb-32 sm:pt-24" id="preparedness-guides">
+          <section className="border-t border-slate-200 bg-white px-6 pb-20 pt-20 sm:px-10 sm:pb-24 sm:pt-24" id="preparedness-guides">
             <div className="mx-auto w-full max-w-7xl">
               <div className="text-center">
                 <p className="inline-flex rounded-full border border-sky-200 bg-sky-50 px-4 py-1 text-xs font-bold uppercase tracking-[0.2em] text-sky-700">
@@ -635,6 +635,16 @@ export function LandingPage() {
                   </article>
                 ))}
               </div>
+
+              <div className="mt-14 flex justify-center sm:mt-16">
+                <button
+                  className="inline-flex items-center justify-center rounded-full bg-[#1f4f82] px-7 py-3 text-sm font-bold uppercase tracking-[0.18em] text-white shadow-[0_14px_28px_rgba(31,79,130,0.28)] transition duration-200 hover:-translate-y-0.5 hover:bg-[#163a61] hover:shadow-[0_18px_32px_rgba(22,58,97,0.34)]"
+                  onClick={() => navigate('/simulation')}
+                  type="button"
+                >
+                  Proceed to Simulation
+                </button>
+              </div>
             </div>
           </section>
 
@@ -648,7 +658,7 @@ export function LandingPage() {
                 <p className="inline-flex rounded-full border border-red-200 bg-red-50 px-3 py-1 text-xs font-bold uppercase tracking-[0.2em] text-red-700">
                   Emergency Contacts
                 </p>
-                <h3 className="mt-3 text-2xl font-black tracking-tight text-slate-900 sm:text-3xl">Rapid Response Hotlines</h3>
+                <h3 className="mt-3 text-2xl font-black tracking-tight text-slate-900 sm:text-3xl">Emergency Contact</h3>
                 <p className="mt-1 text-sm text-slate-600 sm:text-base">Immediate contact lines for urgent incidents in Lucena City.</p>
               </div>
 
@@ -706,7 +716,7 @@ export function LandingPage() {
                   </p>
                   <button
                     className="mt-4 inline-flex rounded-md border border-[#7aa6d3]/45 bg-[#14345e] px-4 py-2 text-sm font-semibold text-[#d7e7f7] transition duration-150 hover:border-[#9ac0e5]/60 hover:bg-[#1a416f]"
-                    onClick={() => scrollToSection('emergency-contacts')}
+                    onClick={() => navigate('/emergency-hotlines')}
                     type="button"
                   >
                     View Emergency Contacts

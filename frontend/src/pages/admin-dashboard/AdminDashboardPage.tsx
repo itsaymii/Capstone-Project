@@ -150,6 +150,18 @@ function formatNotificationTime(value: string): string {
   })
 }
 
+function normalizeSearchValue(value: string): string {
+  return value.trim().toLowerCase()
+}
+
+function matchesDashboardSearch(fields: Array<number | string>, query: string): boolean {
+  if (!query) {
+    return true
+  }
+
+  return fields.some((field) => normalizeSearchValue(String(field)).includes(query))
+}
+
 function HeaderIcon({ name }: { name: 'search' | 'bell' }) {
   if (name === 'search') {
     return (
@@ -192,27 +204,86 @@ export function AdminDashboardPage() {
   const [liveEarthquakeEvents, setLiveEarthquakeEvents] = useState<EarthquakeEvent[]>([])
   const [eqLastUpdated, setEqLastUpdated] = useState<Date | null>(null)
   const [eqCardStatus, setEqCardStatus] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [dashboardSearchQuery, setDashboardSearchQuery] = useState('')
 
   const profile = getCurrentUserProfile()
   const displayName = profile?.fullName?.trim() || 'Administrator'
-  const firstName = useMemo(() => displayName.split(/\s+/).filter(Boolean)[0] || 'Administrator', [displayName])
+  const firstName = useMemo(
+    () => displayName.split(/\s+/).filter(Boolean)[0] || 'Administrator',
+    [displayName],
+  )
   const initials = useMemo(() => {
     const nameParts = displayName.split(/\s+/).filter(Boolean)
     if (nameParts.length === 0) return 'AD'
     if (nameParts.length === 1) return nameParts[0].slice(0, 2).toUpperCase()
     return `${nameParts[0][0]}${nameParts[1][0]}`.toUpperCase()
   }, [displayName])
+  const normalizedDashboardSearchQuery = useMemo(
+    () => normalizeSearchValue(dashboardSearchQuery),
+    [dashboardSearchQuery],
+  )
   const unreadNotificationsCount = useMemo(
     () => notifications.filter((item) => !item.read).length,
     [notifications],
   )
 
-  const fireReports = useMemo(() => reports.filter((incident) => incident.code === 'FR'), [reports])
+  const filteredReports = useMemo(
+    () =>
+      reports.filter((incident) =>
+        matchesDashboardSearch(
+          [
+            incident.id,
+            incident.title,
+            incident.code === 'FR' ? 'Fire' : incident.code === 'EQ' ? 'Earthquake' : 'Accident',
+            incident.status,
+            incident.severity,
+            incident.location,
+            incident.time,
+            incident.responseTeam,
+            incident.description,
+          ],
+          normalizedDashboardSearchQuery,
+        ),
+      ),
+    [reports, normalizedDashboardSearchQuery],
+  )
+  const filteredEarthquakeEvents = useMemo(
+    () =>
+      liveEarthquakeEvents.filter((event) =>
+        matchesDashboardSearch(
+          [
+            'earthquake',
+            'seismic',
+            event.place,
+            event.time,
+            event.magnitude.toFixed(1),
+            event.depth.toFixed(0),
+          ],
+          normalizedDashboardSearchQuery,
+        ),
+      ),
+    [liveEarthquakeEvents, normalizedDashboardSearchQuery],
+  )
+
+  const fireReports = useMemo(
+    () => filteredReports.filter((incident) => incident.code === 'FR'),
+    [filteredReports],
+  )
   const accidentReports = useMemo(
-    () => reports.filter((incident) => incident.code === 'AC'),
-    [reports],
+    () => filteredReports.filter((incident) => incident.code === 'AC'),
+    [filteredReports],
   )
   const fireRiskScore = useMemo(() => calculateFireRiskScore(fireReports), [fireReports])
+  const filteredLucenaEarthquakeEvents = useMemo(
+    () => filterLucenaEvents(filteredEarthquakeEvents),
+    [filteredEarthquakeEvents],
+  )
+  const displayedEarthquakeTotal = normalizedDashboardSearchQuery
+    ? filteredEarthquakeEvents.length
+    : liveEarthquakeTotal
+  const displayedEarthquakeRiskScore = normalizedDashboardSearchQuery
+    ? calculateEarthquakeRiskScore(filteredLucenaEarthquakeEvents)
+    : liveEarthquakeRiskScore
   useEffect(() => {
     let cancelled = false
 
@@ -261,16 +332,20 @@ export function AdminDashboardPage() {
     },
     {
       label: 'Total earthquake occurrences',
-      value: eqCardStatus === 'loading' ? '...' : liveEarthquakeTotal,
+      value: eqCardStatus === 'loading' ? '...' : displayedEarthquakeTotal,
       comparison:
         eqCardStatus === 'error'
           ? 'Live seismic API unavailable'
+          : normalizedDashboardSearchQuery
+            ? 'Search results in the USGS live feed'
           : 'USGS live data (Quezon region, last 5 years)',
       delta:
         eqCardStatus === 'loading'
           ? 'Updating from live seismic feed'
           : eqCardStatus === 'error'
             ? 'Unable to refresh right now'
+            : normalizedDashboardSearchQuery
+              ? `Filtered by "${dashboardSearchQuery.trim()}"`
             : 'Auto-refresh every 5 minutes',
       accent: 'border-t-emerald-600',
       valueClass: 'text-emerald-700',
@@ -296,17 +371,19 @@ export function AdminDashboardPage() {
     },
     {
       label: 'Current earthquake risk score',
-      value: eqCardStatus === 'loading' ? '...' : `${liveEarthquakeRiskScore}%`,
+      value: eqCardStatus === 'loading' ? '...' : `${displayedEarthquakeRiskScore}%`,
       comparison:
         eqCardStatus === 'error'
           ? 'Live seismic API unavailable'
+          : normalizedDashboardSearchQuery
+            ? 'Risk score for matching Lucena seismic events'
           : 'Lucena-only seismic recency + magnitude',
       delta:
         eqCardStatus === 'loading'
           ? 'Updating from live seismic feed'
           : eqCardStatus === 'error'
             ? 'Unable to refresh right now'
-            : liveEarthquakeRiskScore >= 70
+            : displayedEarthquakeRiskScore >= 70
               ? 'Heightened seismic watch'
               : 'Routine monitoring level',
       accent: 'border-t-teal-600',
@@ -494,9 +571,12 @@ export function AdminDashboardPage() {
                 <label className="flex min-w-[220px] w-full max-w-[360px] items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-slate-500 md:max-w-[420px]">
                   <HeaderIcon name="search" />
                   <input
+                    aria-label="Search dashboard data"
                     className="w-full bg-transparent text-sm text-slate-900 outline-none placeholder:text-slate-400"
-                    placeholder="Search..."
+                    onChange={(event) => setDashboardSearchQuery(event.target.value)}
+                    placeholder="Search incidents, reports, and users..."
                     type="text"
+                    value={dashboardSearchQuery}
                   />
                 </label>
 
@@ -634,22 +714,23 @@ export function AdminDashboardPage() {
 
           {activeSection === 'overview' ? (
             <OverviewSection
-              incidents={reports}
+              incidents={filteredReports}
               latestFireIncidents={latestFireIncidents}
               overviewMetricCards={overviewMetricCards}
             />
           ) : null}
           {activeSection === 'reports' ? (
             <ReportsSection
-              earthquakeEvents={liveEarthquakeEvents}
+              earthquakeEvents={filteredEarthquakeEvents}
               earthquakeFeedStatus={eqCardStatus}
               earthquakeLastUpdated={eqLastUpdated}
-              reports={reports}
+              reports={filteredReports}
+              searchQuery={dashboardSearchQuery}
             />
           ) : null}
           {activeSection === 'map' ? (
             <MapSection
-              incidents={reports}
+              incidents={filteredReports}
               mapFilter={mapFilter}
               onCreateIncident={handleCreateMapIncident}
               onSelectType={handleSelectMapFilter}
@@ -663,10 +744,10 @@ export function AdminDashboardPage() {
             />
           ) : null}
           {activeSection === 'trends' ? (
-            <AnalyticsSection reports={reports} />
+            <AnalyticsSection reports={filteredReports} />
           ) : null}
           {activeSection === 'resources' ? <ResourcesSection /> : null}
-          {activeSection === 'users' ? <UsersSection /> : null}
+          {activeSection === 'users' ? <UsersSection searchQuery={dashboardSearchQuery} /> : null}
           {activeSection === 'simulation' ? <SimulationSection /> : null}
           {activeSection === 'settings' ? (
             <InlineModuleSection

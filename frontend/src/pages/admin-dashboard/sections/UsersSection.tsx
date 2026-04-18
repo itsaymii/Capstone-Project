@@ -1,5 +1,5 @@
 import axios from 'axios'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { createDashboardAccount, deleteDashboardAccount, getDashboardAccounts, updateDashboardAccount } from '../../../services/api'
 import type { AuthUser, UserRole } from '../../../types/api'
 import { glassPanelClass, glassPanelSoftClass } from './constants'
@@ -94,7 +94,11 @@ function getUsersApiErrorMessage(error: unknown, fallbackMessage: string): strin
   return apiError ?? fallbackMessage
 }
 
-export function UsersSection() {
+type UsersSectionProps = {
+  searchQuery?: string
+}
+
+export function UsersSection({ searchQuery = '' }: UsersSectionProps) {
   const [dashboardUsers, setDashboardUsers] = useState<AuthUser[]>([])
   const [isUsersLoading, setIsUsersLoading] = useState(false)
   const [usersMessage, setUsersMessage] = useState('')
@@ -105,11 +109,33 @@ export function UsersSection() {
   const [deletingUserId, setDeletingUserId] = useState<number | null>(null)
   const [isUserModalOpen, setIsUserModalOpen] = useState(false)
 
+  const normalizedSearchQuery = searchQuery.trim().toLowerCase()
+
+  const filteredDashboardUsers = useMemo(
+    () =>
+      dashboardUsers.filter((user) => {
+        if (!normalizedSearchQuery) return true
+
+        const role = getRoleLabel(getUserRole(user)).toLowerCase()
+        const accountStatus = user.isActive === false ? 'inactive' : 'active'
+
+        return [
+          user.fullName,
+          user.email,
+          user.username || '',
+          role,
+          accountStatus,
+          String(user.id ?? ''),
+        ].some((value) => value.toLowerCase().includes(normalizedSearchQuery))
+      }),
+    [dashboardUsers, normalizedSearchQuery],
+  )
+
   const userAccountStats = {
-    total: dashboardUsers.length,
-    admin: dashboardUsers.filter((user) => getUserRole(user) === 'admin').length,
-    staff: dashboardUsers.filter((user) => getUserRole(user) === 'staff').length,
-    citizen: dashboardUsers.filter((user) => getUserRole(user) === 'citizen').length,
+    total: filteredDashboardUsers.length,
+    admin: filteredDashboardUsers.filter((user) => getUserRole(user) === 'admin').length,
+    staff: filteredDashboardUsers.filter((user) => getUserRole(user) === 'staff').length,
+    citizen: filteredDashboardUsers.filter((user) => getUserRole(user) === 'citizen').length,
   }
 
   async function loadDashboardUsers(): Promise<void> {
@@ -335,7 +361,11 @@ export function UsersSection() {
                 <p className="text-sm text-slate-500">No citizen, staff, or admin accounts found.</p>
               ) : null}
 
-              {dashboardUsers.length > 0 ? (
+              {!usersError && dashboardUsers.length > 0 && filteredDashboardUsers.length === 0 ? (
+                <p className="text-sm text-slate-500">No accounts match the current dashboard search.</p>
+              ) : null}
+
+              {filteredDashboardUsers.length > 0 ? (
                 <div className="overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-[0_10px_24px_rgba(15,23,42,0.05)]">
                   <div className="flex items-center justify-between gap-3 border-b border-slate-200 bg-[linear-gradient(180deg,#f8fafc_0%,#ffffff_100%)] px-4 py-3">
                     <div>
@@ -343,7 +373,7 @@ export function UsersSection() {
                       <p className="text-xs text-slate-500">Manage citizen and admin records from one table.</p>
                     </div>
                     <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">
-                      {dashboardUsers.length} total
+                      {filteredDashboardUsers.length} total
                     </span>
                   </div>
                   <div className="overflow-x-auto">
@@ -360,7 +390,7 @@ export function UsersSection() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-200 bg-white">
-                        {dashboardUsers.map((user) => (
+                        {filteredDashboardUsers.map((user) => (
                           <tr className="transition hover:bg-slate-50/80" key={user.id ?? user.email}>
                             <td className="px-4 py-4 align-top">
                               <div>

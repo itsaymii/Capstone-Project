@@ -34,6 +34,7 @@ type ReportsSectionProps = {
   earthquakeEvents: EarthquakeEvent[]
   earthquakeFeedStatus: 'loading' | 'ready' | 'error'
   earthquakeLastUpdated: Date | null
+  searchQuery: string
 }
 
 function getEarthquakeSeverity(magnitude: number): HazardIncident['severity'] {
@@ -168,12 +169,14 @@ export function ReportsSection({
   earthquakeEvents,
   earthquakeFeedStatus,
   earthquakeLastUpdated,
+  searchQuery,
 }: ReportsSectionProps) {
   const [reportStartDate, setReportStartDate] = useState('')
   const [reportEndDate, setReportEndDate] = useState('')
   const [reportHazardFilter, setReportHazardFilter] = useState<ReportHazardFilter>('all')
   const [reportLocationFilter, setReportLocationFilter] = useState('')
 
+  const normalizedDashboardSearchQuery = searchQuery.trim().toLowerCase()
   const normalizedReportLocationFilter = reportLocationFilter.trim().toLowerCase()
   const isDateFilterActive = Boolean(reportStartDate || reportEndDate)
 
@@ -298,16 +301,43 @@ export function ReportsSection({
     return (locationValue || '').toLowerCase().includes(normalizedReportLocationFilter)
   }
 
+  function matchesDashboardSearch(row: UnifiedHazardReportRow): boolean {
+    if (!normalizedDashboardSearchQuery) return true
+
+    return [
+      row.reportId,
+      row.reportType,
+      row.location,
+      row.dateTime,
+      row.responseTeam,
+      row.magnitude,
+      row.cause,
+      row.impactLevel,
+      row.riskLevel,
+      row.alertLevel,
+      row.sentVia,
+      row.status,
+    ].some((value) => value.toLowerCase().includes(normalizedDashboardSearchQuery))
+  }
+
   const filteredUnifiedHazardReportRows = useMemo(
     () =>
       unifiedHazardReportRows.filter(
         (row) =>
           matchesReportHazard(row.hazardCode) &&
           matchesReportLocation(row.locationKey) &&
+          matchesDashboardSearch(row) &&
           matchesReportDateRange(row.dateValue),
       ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [unifiedHazardReportRows, reportHazardFilter, normalizedReportLocationFilter, reportStartDate, reportEndDate],
+    [
+      unifiedHazardReportRows,
+      reportHazardFilter,
+      normalizedReportLocationFilter,
+      normalizedDashboardSearchQuery,
+      reportStartDate,
+      reportEndDate,
+    ],
   )
 
   const visibleReportLabel = `${filteredUnifiedHazardReportRows.length} of ${unifiedHazardReportRows.length} records visible`

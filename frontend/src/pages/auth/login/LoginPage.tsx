@@ -314,7 +314,7 @@ export function LoginPage({ onRequestRegister, onRequestAdminLogin: _onRequestAd
 
         navigate(getPostLoginPath(), {
           state: {
-            loginSuccessMessage: result.message ?? 'Welcome back to Lucena City DRRMO.',
+              loginSuccessMessage: result.message ?? 'Welcome back to Lucena City DRRMO.',
           },
         })
       }, 900)
@@ -358,7 +358,7 @@ export function LoginPage({ onRequestRegister, onRequestAdminLogin: _onRequestAd
 
       navigate(getPostLoginPath(), {
         state: {
-          loginSuccessMessage: result.message ?? 'Welcome back to Lucena City DRRMO.',
+            loginSuccessMessage: result.message ?? 'Welcome back to Lucena City DRRMO.',
         },
       })
     }, 900)
