@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import L, { type LatLngBoundsExpression } from 'leaflet'
+import * as L from 'leaflet'
+import type { LatLngBoundsExpression } from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import 'leaflet.heat'
 import { AdminSidebar } from '../../components/AdminSidebar'
@@ -39,6 +40,51 @@ const hazardColors = {
   FR: '#fb923c',
   AC: '#facc15',
 } as const
+
+const barangayFillColors = [
+  '#38bdf8',
+  '#60a5fa',
+  '#a855f7',
+  '#f472b6',
+  '#fb7185',
+  '#f59e0b',
+  '#22c55e',
+  '#16a34a',
+  '#0ea5e9',
+  '#7c3aed',
+]
+
+function normalizeHex(hex: string) {
+  const cleanHex = hex.replace('#', '')
+  return cleanHex.length === 3
+    ? cleanHex
+        .split('')
+        .map((digit) => digit + digit)
+        .join('')
+    : cleanHex
+}
+
+function adjustColorLuminance(hex: string, ratio: number) {
+  const normalized = normalizeHex(hex)
+  const red = Math.min(255, Math.max(0, parseInt(normalized.slice(0, 2), 16)))
+  const green = Math.min(255, Math.max(0, parseInt(normalized.slice(2, 4), 16)))
+  const blue = Math.min(255, Math.max(0, parseInt(normalized.slice(4, 6), 16)))
+
+  const newRed = Math.round(Math.min(255, Math.max(0, red + (255 - red) * ratio)))
+  const newGreen = Math.round(Math.min(255, Math.max(0, green + (255 - green) * ratio)))
+  const newBlue = Math.round(Math.min(255, Math.max(0, blue + (255 - blue) * ratio)))
+
+  return `#${newRed.toString(16).padStart(2, '0')}${newGreen.toString(16).padStart(2, '0')}${newBlue.toString(16).padStart(2, '0')}`
+}
+
+function getBarangayFillColor(name?: string | null) {
+  if (!name) return '#14b8a6'
+  let hash = 0
+  for (let i = 0; i < name.length; i += 1) {
+    hash = (hash * 31 + name.charCodeAt(i)) >>> 0
+  }
+  return barangayFillColors[hash % barangayFillColors.length]
+}
 
 type IncidentItem = {
   title: string
@@ -248,6 +294,8 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
   const [selectedType, setSelectedType] = useState<IncidentTypeFilter>('EQ')
   const [earthquakeEvents, setEarthquakeEvents] = useState<EarthquakeEvent[]>([])
   const [faultLines, setFaultLines] = useState<FaultLineFeatureCollection | null>(null)
+  const [barangayLayer, setBarangayLayer] = useState<GeoJSON.FeatureCollection<GeoJSON.Geometry, Record<string, unknown>> | null>(null)
+  const [showBarangayBoundaries, setShowBarangayBoundaries] = useState(true)
   const [eqHeatPoints, setEqHeatPoints] = useState<HeatPoint[]>([])
   const [eqFetchStatus, setEqFetchStatus] = useState<'idle' | 'loading' | 'error'>('idle')
   const [faultLineStatus, setFaultLineStatus] = useState<'idle' | 'loading' | 'error'>('idle')
@@ -288,7 +336,7 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
     )
   }, [earthquakeIncidentCards, eqSearchQuery])
   const nearestFaultLineFeatures = useMemo(() => {
-    if (!faultLines) return []
+    if (!faultLines || !faultLines.features) return []
 
     return faultLines.features
       .map((feature, index) => ({ feature, index, distanceScore: getFaultLineDistanceScore(feature.geometry) }))
@@ -301,7 +349,7 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
     [nearestFaultLineFeatures],
   )
   const nonHighlightedFaultLineCollection = useMemo(() => {
-    if (!faultLines) return null
+    if (!faultLines || !faultLines.features) return null
 
     return {
       ...faultLines,
@@ -374,6 +422,15 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
     }
   }, [selectedType, faultLines])
 
+  useEffect(() => {
+    void fetch('/lucena_barangays.geojson')
+      .then((response) => response.json())
+      .then((data) => setBarangayLayer(data))
+      .catch(() => {
+        console.error('Failed to load Lucena barangay boundaries')
+      })
+  }, [])
+
   // Auto-refresh every 5 minutes while the earthquake view is active
   useEffect(() => {
     if (selectedType !== 'EQ') return
@@ -388,59 +445,117 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
       return
     }
 
-    const existingLeafletId = (mapContainerRef.current as { _leaflet_id?: number })._leaflet_id
-    if (existingLeafletId) {
-      ;(mapContainerRef.current as { _leaflet_id?: number })._leaflet_id = undefined
-    }
-
-    if (mapInstanceRef.current) {
-      mapInstanceRef.current.remove()
-      mapInstanceRef.current = null
-    }
-
-    const isEqView = selectedType === 'EQ'
-
-    const map = L.map(mapContainerRef.current, {
-      zoomControl: true,
-      attributionControl: false,
-      maxBounds: philippinesBounds,
-      maxBoundsViscosity: 1,
-      minZoom: isEqView ? 6 : 10,
-      maxZoom: 17,
-    })
-
-    map.fitBounds(isEqView ? quezonRegionBounds : lucenaBounds)
-
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-      attribution: '&copy; OpenStreetMap &copy; CARTO',
-    }).addTo(map)
-
-    // Always draw Lucena City reference boundary
-    L.rectangle(lucenaBounds, {
-      color: '#0f766e',
-      weight: 2,
-      fillColor: '#14b8a6',
-      fillOpacity: 0.1,
-      dashArray: '6 5',
-    }).addTo(map)
-
-    if (isEqView) {
-      // ── Earthquake heatmap (Quezon / Southern Luzon region) ──
-      if (showHeatmap && eqHeatPoints.length > 0) {
-        L.heatLayer(eqHeatPoints, {
-          minOpacity: 0.35,
-          radius: 28,
-          blur: 22,
-          max: 1.0,
-          gradient: {
-            0.14: '#38bdf8',
-            0.4: '#22c55e',
-            0.6: '#facc15',
-            0.8: '#f97316',
-            1.0: '#dc2626',
-          },
-        }).addTo(map)
+    try {
+      const existingLeafletId = (mapContainerRef.current as { _leaflet_id?: number })._leaflet_id
+      if (existingLeafletId) {
+        ;(mapContainerRef.current as { _leaflet_id?: number })._leaflet_id = undefined
       }
+
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current.remove()
+        mapInstanceRef.current = null
+      }
+
+      const isEqView = selectedType === 'EQ'
+
+      const map = L.map(mapContainerRef.current, {
+        zoomControl: true,
+        attributionControl: false,
+        maxBounds: philippinesBounds,
+        maxBoundsViscosity: 1,
+        minZoom: isEqView ? 6 : 10,
+        maxZoom: 17,
+      })
+
+      map.fitBounds(isEqView ? quezonRegionBounds : lucenaBounds)
+
+      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+      }).addTo(map)
+
+      // Always draw Lucena City reference boundary
+      L.rectangle(lucenaBounds, {
+        color: '#0f766e',
+        weight: 2,
+        fillColor: '#14b8a6',
+        fillOpacity: 0.1,
+        dashArray: '6 5',
+      }).addTo(map)
+
+      if (showBarangayBoundaries && barangayLayer) {
+        try {
+          const barangayPane = map.createPane('barangay-pane')
+          barangayPane.style.zIndex = '410'
+          barangayPane.style.filter = 'drop-shadow(0 0 20px rgba(56,189,248,0.18))'
+
+          L.geoJSON(barangayLayer, {
+            pane: 'barangay-pane',
+            style: () => {
+              return {
+                color: '#0f172a',
+                weight: 1.2,
+                opacity: 0.88,
+                fillOpacity: 0,
+                dashArray: '5 6',
+                lineJoin: 'round',
+                lineCap: 'round',
+              }
+            },
+            onEachFeature: (feature, layer) => {
+              if (!feature) return
+              const barangayName =
+                (feature.properties?.barangay_name as string) ?? (feature.properties?.brgy_name as string) ?? 'Unknown Barangay'
+
+              layer.bindTooltip(`<strong>${barangayName}</strong>`, {
+                sticky: true,
+                direction: 'auto',
+                opacity: 0.98,
+                className: 'leaflet-barangay-tooltip',
+              })
+
+              layer.on({
+                mouseover: () => {
+                  (layer as L.Path).setStyle({
+                    weight: 3.4,
+                    color: '#38bdf8',
+                    fillOpacity: 0,
+                    opacity: 1,
+                  })
+                  ;(layer as L.Path).bringToFront()
+                },
+                mouseout: () => {
+                  (layer as L.Path).setStyle({
+                    weight: 1.2,
+                    color: '#0f172a',
+                    fillOpacity: 0,
+                    opacity: 0.88,
+                  })
+                },
+              })
+            },
+          }).addTo(map)
+        } catch (error) {
+          console.error('Failed to load barangay boundaries:', error)
+        }
+      }
+
+      if (isEqView) {
+        // ── Earthquake heatmap (Quezon / Southern Luzon region) ──
+        if (showHeatmap && eqHeatPoints.length > 0 && typeof L.heatLayer === 'function') {
+          L.heatLayer(eqHeatPoints, {
+            minOpacity: 0.35,
+            radius: 28,
+            blur: 22,
+            max: 1.0,
+            gradient: {
+              0.14: '#38bdf8',
+              0.4: '#22c55e',
+              0.6: '#facc15',
+              0.8: '#f97316',
+              1.0: '#dc2626',
+            },
+          }).addTo(map)
+        }
 
       if (showFaultLines && nonHighlightedFaultLineCollection) {
         const faultPane = map.createPane('fault-lines-pane')
@@ -449,8 +564,8 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
         L.geoJSON(nonHighlightedFaultLineCollection, {
           pane: 'fault-lines-pane',
           style: (feature) => {
-            const lineType = feature?.properties?.LINE_TYPE?.toLowerCase() ?? ''
-            const traceType = feature?.properties?.TRACE_TYPE?.toLowerCase() ?? ''
+            const lineType = (feature?.properties?.LINE_TYPE as string)?.toLowerCase() ?? ''
+            const traceType = (feature?.properties?.TRACE_TYPE as string)?.toLowerCase() ?? ''
             const isApproximate = lineType.includes('approx') || traceType.includes('approx')
             const isConcealed = lineType.includes('concealed') || traceType.includes('concealed')
 
@@ -462,12 +577,12 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
             }
           },
           onEachFeature: (feature, layer) => {
-            const faultName = feature.properties?.FAULT_NAME ?? 'Unnamed fault'
-            const segmentName = feature.properties?.SEG_NAME ?? 'Segment not specified'
-            const traceType = feature.properties?.TRACE_TYPE ?? 'Trace type not specified'
-            const lineType = feature.properties?.LINE_TYPE ?? 'Line type not specified'
-            const faultCategory = feature.properties?.FAULT_CAT ?? 'Category not specified'
-            const mappedYear = feature.properties?.YR_MAPPED ?? 'N/A'
+            const faultName = (feature.properties?.FAULT_NAME as string) ?? 'Unnamed fault'
+            const segmentName = (feature.properties?.SEG_NAME as string) ?? 'Segment not specified'
+            const traceType = (feature.properties?.TRACE_TYPE as string) ?? 'Trace type not specified'
+            const lineType = (feature.properties?.LINE_TYPE as string) ?? 'Line type not specified'
+            const faultCategory = (feature.properties?.FAULT_CAT as string) ?? 'Category not specified'
+            const mappedYear = (feature.properties?.YR_MAPPED as string) ?? 'N/A'
 
             layer.bindPopup(
               `<strong>${faultName}</strong><br/>Segment: ${segmentName}<br/>Trace: ${traceType}<br/>Line Type: ${lineType}<br/>Category: ${faultCategory}<br/>Mapped: ${mappedYear}`,
@@ -487,10 +602,10 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
               opacity: 0.98,
             },
             onEachFeature: (feature, layer) => {
-              const faultName = feature.properties?.FAULT_NAME ?? 'Unnamed fault'
-              const segmentName = feature.properties?.SEG_NAME ?? 'Segment not specified'
-              const traceType = feature.properties?.TRACE_TYPE ?? 'Trace type not specified'
-              const faultCategory = feature.properties?.FAULT_CAT ?? 'Category not specified'
+              const faultName = (feature.properties?.FAULT_NAME as string) ?? 'Unnamed fault'
+              const segmentName = (feature.properties?.SEG_NAME as string) ?? 'Segment not specified'
+              const traceType = (feature.properties?.TRACE_TYPE as string) ?? 'Trace type not specified'
+              const faultCategory = (feature.properties?.FAULT_CAT as string) ?? 'Category not specified'
 
               layer.bindPopup(
                 `<strong>${faultName}</strong><br/>Nearest Lucena fault segment: ${segmentName}<br/>Trace: ${traceType}<br/>Category: ${faultCategory}`,
@@ -569,6 +684,9 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
     return () => {
       map.remove()
       mapInstanceRef.current = null
+    }
+    } catch (error) {
+      console.error('Failed to initialize map:', error)
     }
   }, [filteredIncidents, selectedType, eqHeatPoints, earthquakeEvents, eqFetchStatus, showHeatmap, showFaultLines, nonHighlightedFaultLineCollection, highlightedFaultLineCollection])
 
@@ -727,7 +845,7 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
                       <span className="font-semibold text-rose-600">Loading faults…</span>
                     ) : faultLineStatus === 'error' ? (
                       <span className="font-semibold text-rose-600">Fault lines unavailable</span>
-                    ) : showFaultLines && faultLines ? (
+                    ) : showFaultLines && faultLines && faultLines.features ? (
                       <span className="rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.1em] text-rose-700">
                         {faultLines.features.length} fault traces
                       </span>
@@ -748,7 +866,23 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
                 </div>
               )}
 
-              <div className="h-[520px] w-full sm:h-[640px]" ref={mapContainerRef} />
+              <div className="relative overflow-hidden rounded-b-3xl">
+                <div className="h-[520px] w-full sm:h-[640px]" ref={mapContainerRef} />
+                {barangayLayer ? (
+                  <div className="pointer-events-none absolute right-4 top-4 z-20 w-[calc(100%-1rem)] max-w-[260px] rounded-3xl border border-white/20 bg-slate-950/80 p-3 text-white shadow-[0_18px_50px_rgba(15,23,42,0.35)] backdrop-blur-sm sm:w-auto">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan-200">Barangay layers</span>
+                      <span className="rounded-full bg-cyan-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-cyan-100">Hover</span>
+                    </div>
+                    <p className="mt-2 text-[12px] leading-5 text-slate-200">Barangay polygons are color-coded and glow brighter when hovered. Use the map to inspect each zone.</p>
+                    <div className="mt-3 grid grid-cols-5 gap-2">
+                      {barangayFillColors.slice(0, 5).map((color) => (
+                        <span key={color} className="h-2 rounded-full" style={{ backgroundColor: color }} />
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
             </div>
 
             <aside className={`h-full max-h-[740px] rounded-3xl p-4 shadow-[0_20px_44px_rgba(15,23,42,0.16)] sm:p-5 ${isAdminVariant ? 'border border-slate-600/70 bg-[#202a3d]/95' : 'border border-slate-200 bg-white/95 backdrop-blur'}`}>

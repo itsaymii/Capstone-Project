@@ -209,6 +209,7 @@ export function AdminIncidentMapPanel({ incidents, selectedType, onSelectType, o
   const [activeReportForm, setActiveReportForm] = useState<ReportableHazardType>('FR')
   const [earthquakeEvents, setEarthquakeEvents] = useState<EarthquakeEvent[]>([])
   const [faultLines, setFaultLines] = useState<FaultLineFeatureCollection | null>(null)
+  const [barangayLayer, setBarangayLayer] = useState<GeoJSON.FeatureCollection<GeoJSON.Geometry, Record<string, unknown>> | null>(null)
   const [eqHeatPoints, setEqHeatPoints] = useState<HeatPoint[]>([])
   const [eqFetchStatus, setEqFetchStatus] = useState<'idle' | 'loading' | 'error'>('idle')
   const [faultLineStatus, setFaultLineStatus] = useState<'idle' | 'loading' | 'error'>('idle')
@@ -276,6 +277,15 @@ export function AdminIncidentMapPanel({ incidents, selectedType, onSelectType, o
     return () => clearInterval(intervalId)
   }, [selectedType, loadEarthquakes])
 
+  useEffect(() => {
+    void fetch('/lucena_barangays.geojson')
+      .then((response) => response.json())
+      .then((data) => setBarangayLayer(data))
+      .catch(() => {
+        console.error('Failed to load Lucena barangay boundaries')
+      })
+  }, [])
+
   const filteredIncidents = useMemo(
     () => incidents.filter((incident) => incident.code === selectedType),
     [incidents, selectedType],
@@ -320,7 +330,7 @@ export function AdminIncidentMapPanel({ incidents, selectedType, onSelectType, o
   }, [earthquakeIncidentCards, eqSearchQuery])
 
   const nearestFaultLineFeatures = useMemo(() => {
-    if (!faultLines) return []
+    if (!faultLines || !faultLines.features) return []
 
     return faultLines.features
       .map((feature, index) => ({ feature, index, distanceScore: getFaultLineDistanceScore(feature.geometry) }))
@@ -335,7 +345,7 @@ export function AdminIncidentMapPanel({ incidents, selectedType, onSelectType, o
   )
 
   const nonHighlightedFaultLineCollection = useMemo(() => {
-    if (!faultLines) return null
+    if (!faultLines || !faultLines.features) return null
 
     return {
       ...faultLines,
@@ -391,6 +401,57 @@ export function AdminIncidentMapPanel({ incidents, selectedType, onSelectType, o
       fillOpacity: 0.1,
       dashArray: '6 5',
     }).addTo(map)
+
+    if (barangayLayer) {
+      const barangayPane = map.getPane('barangay-pane') ?? map.createPane('barangay-pane')
+      barangayPane.style.zIndex = '410'
+      barangayPane.style.filter = 'drop-shadow(0 0 20px rgba(56,189,248,0.18))'
+
+      L.geoJSON(barangayLayer, {
+        pane: 'barangay-pane',
+        style: () => ({
+          color: '#0f172a',
+          weight: 1.2,
+          opacity: 0.88,
+          fillOpacity: 0,
+          dashArray: '5 6',
+          lineJoin: 'round',
+          lineCap: 'round',
+        }),
+        onEachFeature: (feature, layer) => {
+          if (!feature) return
+          const barangayName =
+            (feature.properties?.barangay_name as string) ?? (feature.properties?.brgy_name as string) ?? 'Unknown Barangay'
+
+          layer.bindTooltip(`<strong>${barangayName}</strong>`, {
+            sticky: true,
+            direction: 'auto',
+            opacity: 0.98,
+            className: 'leaflet-barangay-tooltip',
+          })
+
+          layer.on({
+            mouseover: () => {
+              ;(layer as L.Path).setStyle({
+                weight: 3.4,
+                color: '#38bdf8',
+                fillOpacity: 0,
+                opacity: 1,
+              })
+              ;(layer as L.Path).bringToFront()
+            },
+            mouseout: () => {
+              ;(layer as L.Path).setStyle({
+                weight: 1.2,
+                color: '#0f172a',
+                fillOpacity: 0,
+                opacity: 0.88,
+              })
+            },
+          })
+        },
+      }).addTo(map)
+    }
 
     if (isEqView) {
       // ── Earthquake heatmap layer ──
@@ -538,7 +599,7 @@ export function AdminIncidentMapPanel({ incidents, selectedType, onSelectType, o
       map.remove()
       mapInstanceRef.current = null
     }
-  }, [filteredIncidents, selectedType, eqHeatPoints, earthquakeEvents, showHeatmap, showFaultLines, eqFetchStatus, nonHighlightedFaultLineCollection, highlightedFaultLineCollection])
+  }, [filteredIncidents, selectedType, eqHeatPoints, earthquakeEvents, showHeatmap, showFaultLines, eqFetchStatus, nonHighlightedFaultLineCollection, highlightedFaultLineCollection, barangayLayer])
 
   useEffect(() => {
     if (selectedType === 'FR' || selectedType === 'AC') {
@@ -808,7 +869,7 @@ export function AdminIncidentMapPanel({ incidents, selectedType, onSelectType, o
                   <span className="font-semibold text-rose-600">Loading faults…</span>
                 ) : faultLineStatus === 'error' ? (
                   <span className="font-semibold text-rose-600">Fault lines unavailable</span>
-                ) : showFaultLines && faultLines ? (
+                ) : showFaultLines && faultLines && faultLines.features ? (
                   <span className="rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.1em] text-rose-700">
                     {faultLines.features.length} fault traces
                   </span>

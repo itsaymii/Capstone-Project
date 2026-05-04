@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { adminNavItems, type AdminNavIcon, type AdminNavKey } from '../data/adminNavigation'
 import { getCurrentUserProfile, logoutUser } from '../services/auth'
+import alarmIcon from '../images/alarm.png'
 import analyticsIcon from '../images/analytics.png'
 import dashboardIcon from '../images/dashboard.png'
 import mappingIcon from '../images/mapping.png'
@@ -17,7 +18,7 @@ type AdminSidebarProps = {
   actionOverrides?: Partial<Record<AdminNavKey, () => void>>
 }
 
-function SidebarIcon({ icon, isActive = false }: { icon: AdminNavIcon; isActive?: boolean }) {
+function SidebarIcon({ icon, className = '' }: { icon: AdminNavIcon; className?: string }) {
   const iconSrcMap: Record<AdminNavIcon, string> = {
     dashboard: dashboardIcon,
     mapping: mappingIcon,
@@ -31,31 +32,21 @@ function SidebarIcon({ icon, isActive = false }: { icon: AdminNavIcon; isActive?
   }
 
   return (
-    <span
-      className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition ${
-        isActive
-          ? 'bg-white/15 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]'
-          : 'bg-slate-100 group-hover:bg-[#0b2a57]'
-      }`}
-    >
-      <img
-        alt=""
-        aria-hidden
-        className={`h-4 w-4 object-contain transition duration-200 ${
-          isActive
-            ? 'brightness-0 invert'
-            : 'opacity-80 group-hover:scale-105 group-hover:brightness-0 group-hover:invert'
-        }`}
-        src={iconSrcMap[icon]}
-      />
-    </span>
+    <img
+      alt=""
+      aria-hidden
+      className={`h-4 w-4 object-contain transition duration-200 ${className}`.trim()}
+      src={iconSrcMap[icon]}
+    />
   )
 }
 
-function renderItemContent(label: string, icon: AdminNavIcon, isActive = false): ReactNode {
+function renderItemContent(label: string, icon: AdminNavIcon, iconClassName = ''): ReactNode {
   return (
     <>
-      <SidebarIcon icon={icon} isActive={isActive} />
+      <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center">
+        <SidebarIcon className={iconClassName} icon={icon} />
+      </span>
       <span className="font-semibold leading-snug tracking-[-0.01em]">{label}</span>
     </>
   )
@@ -76,7 +67,7 @@ export function AdminSidebar({ activeKey, actionOverrides }: AdminSidebarProps) 
 
   function handleLogout(): void {
     logoutUser()
-    navigate('/login', {
+    navigate('/admin-page', {
       replace: true,
       state: {
         logoutSuccessMessage: 'You have been logged out successfully.',
@@ -149,12 +140,13 @@ export function AdminSidebar({ activeKey, actionOverrides }: AdminSidebarProps) 
                     ? 'bg-[linear-gradient(135deg,#0b2a57,#123a73)] text-white shadow-[0_14px_26px_rgba(11,42,87,0.2)]'
                     : 'text-slate-700 hover:bg-blue-50 hover:text-[#0b2a57] hover:shadow-[0_10px_22px_rgba(15,23,42,0.08)]'
                 }`
+                const buttonIconClassName = isActive ? 'invert' : 'group-hover:scale-105'
 
                 return (
                   <li key={item.key}>
                     {isAction ? (
                       <button className={buttonClassName} onClick={actionOverrides?.[item.key]} type="button">
-                        {renderItemContent(item.label, item.icon, isActive)}
+                        {renderItemContent(item.label, item.icon, buttonIconClassName)}
                       </button>
                     ) : (
                       <NavLink
@@ -167,7 +159,11 @@ export function AdminSidebar({ activeKey, actionOverrides }: AdminSidebarProps) 
                         }
                         to={item.to}
                       >
-                        {({ isActive }) => renderItemContent(item.label, item.icon, isActive)}
+                        {renderItemContent(
+                          item.label,
+                          item.icon,
+                          activeKey === item.key ? 'invert' : 'group-hover:scale-105',
+                        )}
                       </NavLink>
                     )}
                   </li>
