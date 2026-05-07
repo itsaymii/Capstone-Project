@@ -1,67 +1,61 @@
-from django.http import JsonResponse
-from django.views.decorators.http import require_http_methods
-from .models import Barangay, Location, EarthquakeFaultLine
+from rest_framework import viewsets, status, permissions
+from rest_framework.decorators import action
+from rest_framework.response import Response
+from rest_framework.authentication import TokenAuthentication, SessionAuthentication
+from .models import Barangay, Location, PopulationDensity, EarthquakeFaultLine
+from .serializers import (
+    BarangaySerializer, BarangayGeoJSONSerializer,
+    LocationSerializer, PopulationDensitySerializer,
+    EarthquakeFaultLineSerializer
+)
+from accounts.permissions import IsStaffOrReadOnly
 
 
-@require_http_methods(["GET"])
-def get_barangays_geojson(request):
-    """Serve all barangays as GeoJSON"""
-    barangays = Barangay.objects.all()
+class BarangayViewSet(viewsets.ModelViewSet):
+    """
+    API endpoint for barangays.
+    GET: List all barangays
+    POST: Create new barangay (staff/admin only)
+    """
+    queryset = Barangay.objects.all()
+    serializer_class = BarangaySerializer
+    authentication_classes = [SessionAuthentication, TokenAuthentication]
+    permission_classes = [IsStaffOrReadOnly]
+    search_fields = ['name', 'city', 'province']
+    ordering_fields = ['name', 'province', 'city']
     
-    features = []
-    for b in barangays:
-        if b.boundary:
-            features.append({
-                "type": "Feature",
-                "properties": {
-                    "id": str(b.id),
-                    "name": b.name,
-                    "city": b.city,
-                    "province": b.province,
-                    "population": b.population,
-                    "brgy_code": b.brgy_code,
-                },
-                "geometry": b.boundary
-            })
-    
-    return JsonResponse({
-        "type": "FeatureCollection",
-        "features": features
-    })
-
-
-@require_http_methods(["GET"])
-def get_locations(request):
-    """Serve all incident locations as JSON"""
-    locations = Location.objects.all()
-    
-    data = [{
-        "id": str(loc.id),
-        "address": loc.address,
-        "coordinates": loc.get_coordinates(),
-        "barangay": loc.barangay.name if loc.barangay else None
-    } for loc in locations]
-    
-    return JsonResponse({"locations": data})
-
-
-@require_http_methods(["GET"])
-def get_fault_lines(request):
-    """Serve earthquake fault lines as GeoJSON"""
-    fault_lines = EarthquakeFaultLine.objects.all()
-    
-    features = []
-    for fl in fault_lines:
-        features.append({
-            "type": "Feature",
-            "properties": {
-                "id": str(fl.id),
-                "name": fl.name,
-            },
-            "geometry": fl.coordinates
+    @action(detail=False, methods=['get'])
+    def geojson(self, request):
+        """Return barangays as GeoJSON"""
+        barangays = self.get_queryset()
+        serializer = BarangayGeoJSONSerializer(barangays, many=True)
+        return Response({
+            "type": "FeatureCollection",
+            "features": serializer.data
         })
-    
-    return JsonResponse({
-        "type": "FeatureCollection",
-        "features": features
-    })
+
+
+class LocationViewSet(viewsets.ModelViewSet):
+    """API endpoint for locations"""
+    queryset = Location.objects.all()
+    serializer_class = LocationSerializer
+    authentication_classes = [SessionAuthentication, TokenAuthentication]
+    permission_classes = [IsStaffOrReadOnly]
+    search_fields = ['address', 'barangay__name']
+    ordering_fields = ['created_at', 'address']
+
+
+class PopulationDensityViewSet(viewsets.ModelViewSet):
+    """API endpoint for population density"""
+    queryset = PopulationDensity.objects.all()
+    serializer_class = PopulationDensitySerializer
+    authentication_classes = [SessionAuthentication, TokenAuthentication]
+    permission_classes = [IsStaffOrReadOnly]
+
+
+class EarthquakeFaultLineViewSet(viewsets.ModelViewSet):
+    """API endpoint for earthquake fault lines"""
+    queryset = EarthquakeFaultLine.objects.all()
+    serializer_class = EarthquakeFaultLineSerializer
+    authentication_classes = [SessionAuthentication, TokenAuthentication]
+    permission_classes = [IsStaffOrReadOnly]

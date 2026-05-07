@@ -30,11 +30,15 @@ INSTALLED_APPS = [
     # Third-party apps
     'corsheaders',
     'rest_framework',
+    'rest_framework.authtoken',
+    'rest_framework_simplejwt',
     
     # apps
     'accounts',
     'dashboard',
     'locations',
+    'incidents',
+    'resources',
 ]
 
 MIDDLEWARE = [
@@ -144,3 +148,27 @@ OTP_EMAIL_BODY_TEMPLATE = config(
         'If you did not request this, you can ignore this email.'
     ),
 )
+
+# ============================================
+# Django REST Framework Configuration
+# ============================================
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'rest_framework.authentication.SessionAuthentication',
+        'rest_framework.authentication.TokenAuthentication',
+    ],
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.IsAuthenticatedOrReadOnly',
+    ],
+    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
+    'PAGE_SIZE': 20,
+    'DEFAULT_FILTER_BACKENDS': [
+        'rest_framework.filters.SearchFilter',
+        'rest_framework.filters.OrderingFilter',
+    ],
+}
+
+# ============================================
+# Custom Permission Classes
+# ============================================
+# (We'll create these in next steps)
