@@ -60,13 +60,24 @@ export function LoginPage({ onRequestRegister, onRequestAdminLogin: _onRequestAd
   function getPostLoginPath(): string {
     const redirectPath = (location.state as { from?: string } | null)?.from
     const profile = getCurrentUserProfile()
-    const hasDashboardSession = Boolean(profile?.hasDashboardAccess || profile?.role === 'admin' || profile?.role === 'staff')
 
-    if (hasDashboardSession) {
-      if (redirectPath?.startsWith('/admin')) {
+    const role = profile?.role
+    const hasDashboardSession = Boolean(profile?.hasDashboardAccess || role === 'admin' || role === 'staff')
+
+    // If user came from a protected route, respect it when it matches the correct area.
+    if (redirectPath) {
+      if (role === 'admin' && redirectPath.startsWith('/admin')) {
         return redirectPath
       }
+      if (role === 'staff' && redirectPath.startsWith('/responder')) {
+        return redirectPath
+      }
+    }
 
+    if (hasDashboardSession) {
+      if (role === 'staff') {
+        return '/responder-dashboard'
+      }
       return '/admin-dashboard'
     }
 
