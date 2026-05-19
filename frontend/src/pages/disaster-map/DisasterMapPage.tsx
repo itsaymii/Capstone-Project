@@ -54,37 +54,7 @@ const barangayFillColors = [
   '#7c3aed',
 ]
 
-function normalizeHex(hex: string) {
-  const cleanHex = hex.replace('#', '')
-  return cleanHex.length === 3
-    ? cleanHex
-        .split('')
-        .map((digit) => digit + digit)
-        .join('')
-    : cleanHex
-}
 
-function adjustColorLuminance(hex: string, ratio: number) {
-  const normalized = normalizeHex(hex)
-  const red = Math.min(255, Math.max(0, parseInt(normalized.slice(0, 2), 16)))
-  const green = Math.min(255, Math.max(0, parseInt(normalized.slice(2, 4), 16)))
-  const blue = Math.min(255, Math.max(0, parseInt(normalized.slice(4, 6), 16)))
-
-  const newRed = Math.round(Math.min(255, Math.max(0, red + (255 - red) * ratio)))
-  const newGreen = Math.round(Math.min(255, Math.max(0, green + (255 - green) * ratio)))
-  const newBlue = Math.round(Math.min(255, Math.max(0, blue + (255 - blue) * ratio)))
-
-  return `#${newRed.toString(16).padStart(2, '0')}${newGreen.toString(16).padStart(2, '0')}${newBlue.toString(16).padStart(2, '0')}`
-}
-
-function getBarangayFillColor(name?: string | null) {
-  if (!name) return '#14b8a6'
-  let hash = 0
-  for (let i = 0; i < name.length; i += 1) {
-    hash = (hash * 31 + name.charCodeAt(i)) >>> 0
-  }
-  return barangayFillColors[hash % barangayFillColors.length]
-}
 
 type IncidentItem = {
   title: string
@@ -295,7 +265,7 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
   const [earthquakeEvents, setEarthquakeEvents] = useState<EarthquakeEvent[]>([])
   const [faultLines, setFaultLines] = useState<FaultLineFeatureCollection | null>(null)
   const [barangayLayer, setBarangayLayer] = useState<GeoJSON.FeatureCollection<GeoJSON.Geometry, Record<string, unknown>> | null>(null)
-  const [showBarangayBoundaries, setShowBarangayBoundaries] = useState(true)
+  const [showBarangayBoundaries] = useState(true)
   const [eqHeatPoints, setEqHeatPoints] = useState<HeatPoint[]>([])
   const [eqFetchStatus, setEqFetchStatus] = useState<'idle' | 'loading' | 'error'>('idle')
   const [faultLineStatus, setFaultLineStatus] = useState<'idle' | 'loading' | 'error'>('idle')
