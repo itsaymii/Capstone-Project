@@ -7,6 +7,7 @@ import { EmergencyHotlinesPage } from '../pages/emergency-hotlines/EmergencyHotl
 import { LandingPage } from '../pages/landing/LandingPage'
 import { ProfileSettingsPage } from '../pages/profile/ProfileSettingsPage'
 import { SimulationPage } from '../pages/simulation/SimulationPage'
+import ResponderDashboardPage from '../pages/responder/ResponderDashboardPage'
 import { ProtectedRoute } from './ProtectedRoute'
 
 export function AppRouter() {
@@ -46,6 +47,10 @@ export function AppRouter() {
       <Route path="/disaster-map" element={<DisasterMapPage />} />
       <Route path="/emergency-hotlines" element={<EmergencyHotlinesPage />} />
       <Route path="/simulation" element={<SimulationPage />} />
+      <Route
+        path="/responder-dashboard"
+        element={<ProtectedRoute element={<ResponderDashboardPage />} requireDashboardAccess redirectTo="/login" />}
+      />
       <Route
         path="/admin-profile-settings"
         element={<ProtectedRoute element={<Navigate replace to="/admin-dashboard?section=settings" />} requireDashboardAccess redirectTo="/login" />}
