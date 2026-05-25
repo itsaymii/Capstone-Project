@@ -1,5 +1,6 @@
 from django.urls import path
 from .views import (
+    api_root,
     confirm_password_reset,
     issue_csrf_cookie,
     login_user,
@@ -11,6 +12,7 @@ from .views import (
 )
 
 urlpatterns = [
+    path('', api_root, name='api-root'),
     path('test/', test_connection, name='test-connection'),
     path('auth/csrf/', issue_csrf_cookie, name='issue-csrf-cookie'),
     path('auth/register/', register_user, name='register-user'),
