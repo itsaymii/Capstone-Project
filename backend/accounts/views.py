@@ -194,8 +194,19 @@ def _has_recent_verified_login_otp(email: str, user_id: int) -> bool:
 
 
 @api_view(['GET'])
+@api_view(['GET'])
+@authentication_classes([])
+@permission_classes([AllowAny])
+def api_root(request):
+	"""Root API endpoint."""
+	return Response({'message': 'API Server is running', 'status': 'ok'})
+
+
+@api_view(['GET'])
+@authentication_classes([])
+@permission_classes([AllowAny])
 def test_connection(request):
-	# """Health-check endpoint used to verify backend connectivity."""
+	"""Health-check endpoint used to verify backend connectivity."""
 	return Response({'message': 'Backend connected successfully'})
 
 

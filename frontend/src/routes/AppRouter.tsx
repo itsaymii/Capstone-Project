@@ -8,6 +8,8 @@ import { LandingPage } from '../pages/landing/LandingPage'
 import { ProfileSettingsPage } from '../pages/profile/ProfileSettingsPage'
 import { SimulationPage } from '../pages/simulation/SimulationPage'
 import ResponderDashboardPage from '../pages/responder/ResponderDashboardPage'
+import { ResponderIncidentsPage } from '../pages/responder/ResponderIncidentsPage'
+import { ResponderReportsPage } from '../pages/responder/ResponderReportsPage'
 import { ProtectedRoute } from './ProtectedRoute'
 
 export function AppRouter() {
@@ -50,6 +52,14 @@ export function AppRouter() {
       <Route
         path="/responder-dashboard"
         element={<ProtectedRoute element={<ResponderDashboardPage />} requireDashboardAccess redirectTo="/login" />}
+      />
+      <Route
+        path="/responder-incidents"
+        element={<ProtectedRoute element={<ResponderIncidentsPage />} requireDashboardAccess redirectTo="/login" />}
+      />
+      <Route
+        path="/responder-reports"
+        element={<ProtectedRoute element={<ResponderReportsPage />} requireDashboardAccess redirectTo="/login" />}
       />
       <Route
         path="/admin-profile-settings"
