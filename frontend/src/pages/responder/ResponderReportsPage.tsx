@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { getCurrentUserProfile, logoutUser } from '../../services/auth'
-import notificationIcon from '../../images/notification.png'
 
 interface Incident {
   id: string
@@ -28,34 +27,6 @@ interface ReportFormData {
   equipmentUsed: string[]
   finalOutcome: 'Resolved' | 'Transferred to Hospital' | 'On-going' | 'Cleared'
 }
-
-// Mock Data
-const mockIncidents: Incident[] = [
-  {
-    id: 'INC-001',
-    type: 'Medical',
-    location: 'Barangay 1, Main St',
-    timeOccurred: '2:30 PM',
-    status: 'Pending Report',
-    victimCount: 2,
-  },
-  {
-    id: 'INC-002',
-    type: 'RTC',
-    location: 'Highway 1, Junction',
-    timeOccurred: '3:15 PM',
-    status: 'Pending Report',
-    victimCount: 3,
-  },
-  {
-    id: 'INC-003',
-    type: 'Fire',
-    location: 'Barangay 3, Warehouse',
-    timeOccurred: '1:45 PM',
-    status: 'Completed',
-    victimCount: 0,
-  },
-]
 
 const mockReports: Report[] = [
   {
@@ -162,6 +133,7 @@ const ReportCreationModal: React.FC<ReportCreationModalProps> = ({
           <button 
             onClick={onClose} 
             className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+            aria-label="Close modal"
           >
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -277,6 +249,7 @@ const ReportCreationModal: React.FC<ReportCreationModalProps> = ({
                           type="button"
                           onClick={() => handleRemoveEquipment(idx)}
                           className="text-gray-400 hover:text-red-500 transition-colors p-0.5 rounded"
+                          aria-label={`Remove ${item}`}
                         >
                           <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
@@ -295,7 +268,7 @@ const ReportCreationModal: React.FC<ReportCreationModalProps> = ({
                 </label>
                 <select
                   value={formData.finalOutcome}
-                  onChange={(e) => setFormData({ ...formData, finalOutcome: e.target.value as any })}
+                  onChange={(e) => setFormData({ ...formData, finalOutcome: e.target.value as ReportFormData['finalOutcome'] })}
                   className="w-full px-3 py-2.5 bg-gray-50/50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:bg-white focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
                 >
                   <option value="Resolved">Resolved</option>
@@ -374,7 +347,7 @@ export function ResponderReportsPage() {
 
   const [reports, setReports] = useState<Report[]>(mockReports)
   const [isReportModalOpen, setIsReportModalOpen] = useState(initialSelected.length > 0)
-  const [selectedIncidents, setSelectedIncidents] = useState<Incident[]>(initialSelected)
+  const [selectedIncidents] = useState<Incident[]>(initialSelected)
   const [isTopProfileMenuOpen, setIsTopProfileMenuOpen] = useState(false)
   const [filters, setFilters] = useState({
     dateRange: '',
@@ -389,7 +362,7 @@ export function ResponderReportsPage() {
     )
   })
 
-  const handleSubmitReport = (formData: ReportFormData) => {
+  const handleSubmitReport = (_formData: ReportFormData) => {
     const newReport: Report = {
       id: `REP-${String(reports.length + 1).padStart(3, '0')}`,
       incidentIds: selectedIncidents.map((inc) => inc.id),
@@ -417,19 +390,24 @@ export function ResponderReportsPage() {
   }
 
   const handleCreateReport = () => {
-    setSelectedIncidents([])
-    setIsReportModalOpen(true)
+    navigate('/create-report')
+  }
+
+  const isActiveNav = (path: string) => {
+    if (typeof window === 'undefined') return false
+    return window.location.pathname.includes(path)
   }
 
   return (
-    <div className="min-h-screen bg-gray-50/60 font-sans antialiased text-gray-900">
+    <div className="min-h-screen bg-[#f4f7fb] text-slate-900">
       {/* Top Navigation Bar */}
-      <header className="bg-white border-b border-gray-200/80 sticky top-0 z-50 shadow-sm shadow-gray-100/40">
+      <header className="sticky top-0 z-50 border-b border-slate-200 bg-white shadow-[0_12px_32px_rgba(15,23,42,0.08)]">
         <div className="flex items-center justify-between px-6 py-3.5">
           <div className="flex items-center gap-3">
             <button 
               onClick={() => navigate('/responder-dashboard')} 
               className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-gray-100 rounded-lg transition-colors"
+              aria-label="Back to dashboard"
             >
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
@@ -439,9 +417,11 @@ export function ResponderReportsPage() {
           </div>
 
           <div className="flex items-center gap-4">
-            {/* Notification Icon */}
-            <button className="relative p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100/80 rounded-lg transition-colors">
-              <img src={notificationIcon} alt="Notifications" className="w-5 h-5 opacity-75" />
+            {/* Notification Icon - FIXED: Using inline SVG instead of undefined variable */}
+            <button className="relative p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100/80 rounded-lg transition-colors" aria-label="Notifications">
+              <svg className="w-5 h-5 opacity-75" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+              </svg>
               <span className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full ring-2 ring-white"></span>
             </button>
 
@@ -450,6 +430,8 @@ export function ResponderReportsPage() {
               <button
                 onClick={() => setIsTopProfileMenuOpen(!isTopProfileMenuOpen)}
                 className="flex items-center gap-2.5 p-1.5 hover:bg-gray-100/80 rounded-lg transition-colors"
+                aria-label="Profile menu"
+                aria-expanded={isTopProfileMenuOpen}
               >
                 <div className="w-7 h-7 bg-gradient-to-br from-blue-600 to-indigo-600 rounded-full flex items-center justify-center text-white text-xs font-semibold shadow-sm">
                   {initials}
@@ -462,23 +444,29 @@ export function ResponderReportsPage() {
 
               {/* Dropdown Menu */}
               {isTopProfileMenuOpen && (
-                <div className="absolute right-0 mt-2 w-52 bg-white rounded-xl shadow-xl border border-gray-100 py-1 z-50 transform origin-top-right transition-all">
-                  <div className="px-4 py-3 border-b border-gray-100 bg-gray-50/50">
-                    <p className="text-sm font-semibold text-gray-900 truncate">{displayName}</p>
-                    <p className="text-xs text-gray-500 mt-0.5 truncate">{profile?.role || 'Responder'}</p>
+                <div className="absolute right-0 top-[calc(100%+0.5rem)] z-30 w-48 rounded-2xl border border-slate-200 bg-white shadow-[0_18px_38px_rgba(15,23,42,0.12)]">
+                  <div className="border-b border-slate-200 px-4 py-3">
+                    <p className="text-sm font-semibold text-slate-900 truncate">{displayName}</p>
+                    <p className="text-xs text-slate-600 mt-0.5 truncate">{profile?.role || 'Responder'}</p>
                   </div>
                   <div className="py-1">
-                    <button className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 transition-colors">
+                    <button 
+                      onClick={() => {
+                        setIsTopProfileMenuOpen(false)
+                        navigate('/responder-profile-settings')
+                      }}
+                      className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
+                    >
                       Profile Settings
                     </button>
-                    <button className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 transition-colors">
+                    <button className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 transition-colors">
                       Help & Support
                     </button>
                   </div>
-                  <div className="border-t border-gray-100 pt-1 mt-1">
+                  <div className="border-t border-slate-200 pt-1 mt-1">
                     <button
                       onClick={handleLogout}
-                      className="w-full text-left px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50/60 transition-colors"
+                      className="w-full text-left px-4 py-2 text-sm font-medium text-rose-600 hover:bg-rose-50/60 transition-colors"
                     >
                       Logout
                     </button>
@@ -591,6 +579,7 @@ export function ResponderReportsPage() {
                           <button
                             className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-gray-50 rounded-lg transition-colors"
                             title="View report parameters"
+                            aria-label="View report"
                           >
                             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
@@ -601,6 +590,7 @@ export function ResponderReportsPage() {
                             onClick={() => handleDownloadPDF(report.id)}
                             className="p-1.5 text-gray-400 hover:text-emerald-600 hover:bg-gray-50 rounded-lg transition-colors"
                             title="Download localized package"
+                            aria-label="Download report"
                           >
                             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
@@ -611,6 +601,7 @@ export function ResponderReportsPage() {
                               onClick={() => handleEditReport(report.id)}
                               className="p-1.5 text-gray-400 hover:text-orange-600 hover:bg-gray-50 rounded-lg transition-colors"
                               title="Modify operational matrix"
+                              aria-label="Edit report"
                             >
                               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
@@ -642,6 +633,75 @@ export function ResponderReportsPage() {
         selectedIncidents={selectedIncidents}
         onSubmit={handleSubmitReport}
       />
+
+      {/* --- MOBILE BOTTOM NAVIGATION BAR --- */}
+      <nav className="sm:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 shadow-[0_-4px_12px_rgba(0,0,0,0.05)] z-50 px-2 py-2">
+        <div className="flex justify-around items-center">
+          
+          {/* Incident Button */}
+          <button 
+            onClick={() => navigate('/responder-incidents')}
+            className={`flex flex-col items-center gap-1 transition-colors active:scale-95 ${
+              isActiveNav('/responder-incidents') ? 'text-blue-600' : 'text-slate-500 hover:text-blue-600'
+            }`}
+            aria-label="View Incidents"
+          >
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+            </svg>
+            <span className="text-[10px] font-medium">Incident</span>
+          </button>
+
+          {/* Create Report Button */}
+          <button 
+            onClick={() => navigate('/create-report')} 
+            className={`flex flex-col items-center gap-1 transition-colors active:scale-95 ${
+              isActiveNav('/create-report') ? 'text-blue-600' : 'text-slate-500 hover:text-blue-600'
+            }`}
+            aria-label="Create Report"
+          >
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
+            <span className="text-[10px] font-medium">Create Report</span>
+          </button>
+
+          {/* Accomplishment Report Button */}
+          <button 
+            onClick={() => navigate('/responder-reports')}
+            className={`flex flex-col items-center gap-1 transition-colors active:scale-95 ${
+              isActiveNav('/responder-reports') ? 'text-blue-600' : 'text-slate-500 hover:text-blue-600'
+            }`}
+            aria-label="View Reports"
+          >
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <span className="text-[10px] font-medium">Accomplishment</span>
+          </button>
+
+          {/* Profile Button */}
+          <button 
+            onClick={() => navigate('/responder-profile-settings')} 
+            className={`flex flex-col items-center gap-1 transition-colors active:scale-95 ${
+              isActiveNav('/responder-profile-settings') ? 'text-blue-600' : 'text-slate-500 hover:text-blue-600'
+            }`}
+            aria-label="Profile Settings"
+          >
+            <div className={`w-5 h-5 rounded-full flex items-center justify-center text-white text-[9px] font-bold shadow-sm ${
+              isActiveNav('/responder-profile-settings') 
+                ? 'bg-gradient-to-br from-blue-700 to-indigo-700 ring-2 ring-blue-300' 
+                : 'bg-gradient-to-br from-blue-600 to-indigo-600'
+            }`}>
+              {initials}
+            </div>
+            <span className="text-[10px] font-medium">Profile</span>
+          </button>
+
+        </div>
+      </nav>
     </div>
   )
 }
+
+export default ResponderReportsPage
