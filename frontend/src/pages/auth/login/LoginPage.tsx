@@ -62,26 +62,20 @@ export function LoginPage({ onRequestRegister, onRequestAdminLogin: _onRequestAd
     const profile = getCurrentUserProfile()
 
     const role = profile?.role
-    const hasDashboardSession = Boolean(profile?.hasDashboardAccess || role === 'admin' || role === 'staff')
 
-    // If user came from a protected route, respect it when it matches the correct area.
-    if (redirectPath) {
-      if (role === 'admin' && redirectPath.startsWith('/admin')) {
-        return redirectPath
-      }
-      if (role === 'staff' && redirectPath.startsWith('/responder')) {
-        return redirectPath
-      }
-    }
-
-    if (hasDashboardSession) {
-      if (role === 'staff') {
-        return '/responder-dashboard'
-      }
+    // Strict role-based routing: Route ONLY based on role, never based on previous location
+    if (role === 'admin') {
+      // Admin users ALWAYS go to admin dashboard
       return '/admin-dashboard'
     }
 
-    if (redirectPath && !redirectPath.startsWith('/admin')) {
+    if (role === 'staff') {
+      // Staff users ALWAYS go to responder dashboard
+      return '/responder-dashboard'
+    }
+
+    // Citizens: Respect previous redirect if it's safe, otherwise landing page
+    if (redirectPath && !redirectPath.startsWith('/admin') && !redirectPath.startsWith('/responder')) {
       return redirectPath
     }
 
