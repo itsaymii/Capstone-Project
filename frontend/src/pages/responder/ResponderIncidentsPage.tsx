@@ -1,406 +1,331 @@
-import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useState, useEffect } from 'react'
+import { useNavigate, useLocation } from 'react-router-dom'
+import { getIncidents, type BackendIncident } from '../../services/incidents'
+import { addNotification } from '../../services/notifications'
+import { MobileNavBar } from '../../components/MobileNavBar'
 import { getCurrentUserProfile } from '../../services/auth'
-
-interface Incident {
-  id: string
-  type: 'Medical' | 'RTC' | 'Fire' | 'Hazmat'
-  location: string
-  timeOccurred: string
-  status: 'Pending Report' | 'Completed'
-  victimCount: number
-}
-
-const mockIncidents: Incident[] = [
-  { id: 'INC-001', type: 'Medical', location: 'Barangay 1, Main St', timeOccurred: '2:30 PM', status: 'Pending Report', victimCount: 2 },
-  { id: 'INC-002', type: 'RTC', location: 'Highway 1, Junction', timeOccurred: '3:15 PM', status: 'Pending Report', victimCount: 3 },
-  { id: 'INC-003', type: 'Fire', location: 'Barangay 3, Warehouse', timeOccurred: '1:45 PM', status: 'Completed', victimCount: 0 },
-  { id: 'INC-004', type: 'Hazmat', location: 'Industrial Zone', timeOccurred: '4:00 PM', status: 'Pending Report', victimCount: 1 },
-  { id: 'INC-005', type: 'Medical', location: 'Barangay 2, School', timeOccurred: '2:00 PM', status: 'Completed', victimCount: 1 },
-]
 
 export function ResponderIncidentsPage() {
   const navigate = useNavigate()
+  const location = useLocation()
   const profile = getCurrentUserProfile()
-  const displayName = profile?.fullName?.trim() || 'Responder'
-  const initials = displayName
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0])
-    .join('')
-    .toUpperCase() || 'RE'
-
-  const [incidents] = useState<Incident[]>(mockIncidents)
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  
+  const [incidents, setIncidents] = useState<BackendIncident[]>([])
+  const [selectedIncidents, setSelectedIncidents] = useState<Set<string>>(new Set())
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [filters, setFilters] = useState({
     type: '',
     status: '',
     search: '',
   })
 
+  // Fetch incidents on mount and when location changes
+  useEffect(() => {
+    const fetchIncidents = async () => {
+      try {
+        setLoading(true)
+        setError(null)
+        const data = await getIncidents()
+        setIncidents(data)
+        setSelectedIncidents(new Set())
+        
+        // Show success message if returning from report submission
+        if (location.state?.message) {
+          addNotification(location.state.message)
+        }
+      } catch (err) {
+        console.error('Failed to fetch incidents:', err)
+        setError('Failed to load incidents. Please try again.')
+        addNotification('❌ Failed to load incidents')
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchIncidents()
+  }, [location])
+
   const filteredIncidents = incidents.filter((incident) => {
+    const hazardType = incident.hazard_type?.name || ''
     return (
-      (!filters.type || incident.type === filters.type) &&
+      (!filters.type || hazardType.toLowerCase().includes(filters.type.toLowerCase())) &&
       (!filters.status || incident.status === filters.status) &&
       (!filters.search ||
-        incident.location.toLowerCase().includes(filters.search.toLowerCase()) ||
-        incident.id.toLowerCase().includes(filters.search.toLowerCase()))
+        hazardType.toLowerCase().includes(filters.search.toLowerCase()) ||
+        incident.address.toLowerCase().includes(filters.search.toLowerCase()) ||
+        incident.reference_code?.toLowerCase().includes(filters.search.toLowerCase()))
     )
   })
 
   const handleSelectAll = () => {
-    if (selectedIds.size === filteredIncidents.length) {
-      setSelectedIds(new Set())
+    if (selectedIncidents.size === filteredIncidents.length) {
+      setSelectedIncidents(new Set())
     } else {
-      setSelectedIds(new Set(filteredIncidents.map((inc) => inc.id)))
+      setSelectedIncidents(new Set(filteredIncidents.map((inc) => inc.id)))
     }
   }
 
   const handleToggleIncident = (id: string) => {
-    const newSelected = new Set(selectedIds)
+    const newSelected = new Set(selectedIncidents)
     if (newSelected.has(id)) {
       newSelected.delete(id)
     } else {
       newSelected.add(id)
     }
-    setSelectedIds(newSelected)
+    setSelectedIncidents(newSelected)
   }
 
   const handleGenerateReport = () => {
-    navigate('/responder-reports', {
+    const selected = incidents.filter((inc) => selectedIncidents.has(inc.id))
+    if (selected.length === 0) {
+      addNotification('⚠️ Please select at least one incident')
+      return
+    }
+    navigate('/create-report', {
       state: {
-        selectedIncidents: incidents.filter((inc) => selectedIds.has(inc.id)),
+        selectedIncidents: selected,
+        incidentId: selected[0].reference_code || selected[0].id,
       },
     })
   }
 
-  const isActiveNav = (path: string) => {
-    if (typeof window === 'undefined') return false
-    return window.location.pathname.includes(path)
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'reported':
+        return 'bg-blue-50 text-blue-700 border-blue-100'
+      case 'verified':
+        return 'bg-purple-50 text-purple-700 border-purple-100'
+      case 'ongoing':
+        return 'bg-amber-50 text-amber-700 border-amber-100'
+      case 'contained':
+        return 'bg-yellow-50 text-yellow-700 border-yellow-100'
+      case 'resolved':
+        return 'bg-emerald-50 text-emerald-700 border-emerald-100'
+      case 'false_alarm':
+        return 'bg-slate-100 text-slate-600 border-slate-200'
+      default:
+        return 'bg-slate-100 text-slate-600 border-slate-200'
+    }
   }
 
-  // Configuration helper for unified theme semantics
-  const getIncidentTypeConfig = (type: Incident['type']) => {
-    switch (type) {
-      case 'Medical':
-        return {
-          badge: 'bg-rose-50 text-rose-700 border-rose-100',
-          icon: <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
-        }
-      case 'RTC':
-        return {
-          badge: 'bg-amber-50 text-amber-700 border-amber-100',
-          icon: <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
-        }
-      case 'Fire':
-        return {
-          badge: 'bg-orange-50 text-orange-700 border-orange-100',
-          icon: <path strokeLinecap="round" strokeLinejoin="round" d="M15.362 5.214A8.252 8.252 0 0112 21 8.25 8.25 0 016.038 7.048 8.287 8.287 0 009 9.6a8.983 8.983 0 013.361-6.867 8.21 8.21 0 003 2.48z" />
-        }
-      case 'Hazmat':
-        return {
-          badge: 'bg-purple-50 text-purple-700 border-purple-100',
-          icon: <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 9.75l4.5 4.5m0-4.5l-4.5 4.5M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-        }
+  const getSeverityColor = (severity: string) => {
+    switch (severity) {
+      case 'low':
+        return 'bg-emerald-50 text-emerald-700 border-emerald-100'
+      case 'moderate':
+        return 'bg-blue-50 text-blue-700 border-blue-100'
+      case 'high':
+        return 'bg-orange-50 text-orange-700 border-orange-100'
+      case 'critical':
+        return 'bg-rose-50 text-rose-700 border-rose-100 font-bold animate-pulse'
+      default:
+        return 'bg-slate-50 text-slate-600 border-slate-100'
     }
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 pb-28 sm:pb-12 antialiased text-slate-800">
-      
-      {/* Top Application Header Bar */}
-      <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/95 backdrop-blur-md shadow-sm">
-        <div className="max-w-7xl mx-auto flex items-center justify-between px-4 sm:px-6 py-4">
-          <div className="flex items-center gap-3">
-            <button 
-              onClick={() => navigate('/responder-dashboard')} 
-              className="p-2 -ml-2 text-slate-500 hover:text-slate-800 rounded-lg hover:bg-slate-100 transition-colors"
-              aria-label="Back to dashboard"
-            >
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
-              </svg>
-            </button>
-            <div>
-              <h1 className="text-base font-bold text-slate-900 tracking-tight">Emergency Dispatch Ledger</h1>
-            </div>
-          </div>
-        </div>
-      </header>
-
-      {/* Main Container Workspace */}
+    <div className="min-h-screen bg-slate-100 pb-28 sm:pb-12 pt-6 antialiased text-slate-800">
       <main className="max-w-7xl mx-auto p-4 sm:p-6 space-y-6">
         
-        {/* Title Action Bar Block */}
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm">
-          <div>
-            <h2 className="text-xl font-extrabold tracking-tight text-slate-900">Incident Master Logs</h2>
-            <p className="text-xs text-slate-400 font-medium mt-0.5">Select logged responses below to compile dynamic accomplishment briefs.</p>
-          </div>
-          <button
-            onClick={handleGenerateReport}
-            disabled={selectedIds.size === 0}
-            className="inline-flex items-center justify-center gap-2 bg-blue-600 text-white text-xs font-bold uppercase tracking-wider px-5 py-3 rounded-xl hover:bg-blue-700 active:scale-[0.98] disabled:opacity-35 disabled:pointer-events-none shadow-md transition-all shrink-0"
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-            </svg>
-            <span>Compile Report ({selectedIds.size})</span>
-          </button>
-        </div>
-
-        {/* Dynamic Filtering Control Hub */}
-        <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
-          <div className="flex flex-col lg:flex-row gap-3">
-            <div className="flex-1 relative">
-              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+        {/* Main Control Panel */}
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+          {/* Header Navigation */}
+          <div className="p-5 sm:p-7 border-b border-slate-200/80 space-y-5 overflow-hidden relative">
+            {/* Subtle Accent Gradient for Status */}
+            <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-500" />
+            
+            <div className="flex items-center gap-4">
+              <button 
+                onClick={() => navigate('/responder-dashboard')}
+                className="group flex items-center justify-center w-10 h-10 bg-slate-50 text-slate-500 hover:bg-blue-50 hover:text-blue-600 rounded-2xl transition-all border border-slate-100 shadow-sm active:scale-90"
+                title="Back to Dashboard"
+              >
+                <svg className="w-5 h-5 transform group-hover:-translate-x-0.5 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
                 </svg>
+              </button>
+              
+              <div>
+                <span className="text-[10px] font-black uppercase tracking-[0.2em] text-blue-600 opacity-60 block mb-0.5 leading-none">Operational Queue</span>
+                <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-slate-900 leading-tight">Emergency Dispatch Ledger</h1>
               </div>
+            </div>
+            
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-t border-slate-100 pt-5">
+              <p className="text-sm text-slate-500 font-medium leading-relaxed max-w-lg">
+                Browse and select active incidents to document field operations and synchronize data.
+              </p>
+            </div>
+          </div>
+
+          {/* Lower Filter Section */}
+          <div className="p-5 sm:p-6 bg-white grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+            <div className="space-y-1.5">
+              <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wider">Search</label>
+              <div className="relative">
+                <input
+                  type="text"
+                  placeholder="Search by ID, location, or type..."
+                  value={filters.search}
+                  onChange={(e) => setFilters({ ...filters, search: e.target.value })}
+                  className="w-full pl-3 pr-10 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-sm placeholder:text-slate-400"
+                />
+                {filters.search && (
+                  <button 
+                    onClick={() => setFilters({ ...filters, search: '' })}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs font-medium"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wider">Incident Type</label>
               <input
                 type="text"
-                placeholder="Filter by incident token hash or geographic location..."
-                value={filters.search}
-                onChange={(e) => setFilters({ ...filters, search: e.target.value })}
-                className="w-full pl-9 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm font-medium focus:outline-none focus:bg-white focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all placeholder:text-slate-400"
-              />
-            </div>
-            <div className="grid grid-cols-2 lg:flex gap-3">
-              <select
+                placeholder="Filter by type..."
                 value={filters.type}
                 onChange={(e) => setFilters({ ...filters, type: e.target.value })}
-                className="px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold text-slate-600 focus:outline-none focus:bg-white focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all min-w-[140px]"
-              >
-                <option value="">All Categories</option>
-                <option value="Medical">Medical</option>
-                <option value="RTC">RTC</option>
-                <option value="Fire">Fire</option>
-                <option value="Hazmat">Hazmat</option>
-              </select>
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-sm placeholder:text-slate-400"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wider">Status</label>
               <select
                 value={filters.status}
                 onChange={(e) => setFilters({ ...filters, status: e.target.value })}
-                className="px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold text-slate-600 focus:outline-none focus:bg-white focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all min-w-[155px]"
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-sm cursor-pointer"
               >
-                <option value="">All Dispatch Status</option>
-                <option value="Pending Report">Pending Report</option>
-                <option value="Completed">Completed</option>
+                <option value="">All Statuses</option>
+                <option value="reported">Reported</option>
+                <option value="verified">Verified</option>
+                <option value="ongoing">Ongoing</option>
+                <option value="contained">Contained</option>
+                <option value="resolved">Resolved</option>
+                <option value="false_alarm">False Alarm</option>
               </select>
             </div>
           </div>
         </div>
 
-        {/* Master Incident Log Module Container */}
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-          
-          {/* DESKTOP MATRIX GRID VIEW */}
-          <div className="hidden sm:block overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-slate-50/70 border-b border-slate-200 text-[10px] font-extrabold uppercase tracking-widest text-slate-400">
-                  <th className="px-6 py-4 w-12 text-center">
-                    <input
-                      type="checkbox"
-                      checked={selectedIds.size === filteredIncidents.length && filteredIncidents.length > 0}
-                      onChange={handleSelectAll}
-                      className="rounded border-slate-300 text-blue-600 focus:ring-blue-500/20 w-4 h-4 transition cursor-pointer"
-                      aria-label="Select all incidents"
-                    />
-                  </th>
-                  <th className="px-6 py-4">Incident ID</th>
-                  <th className="px-6 py-4">Classification</th>
-                  <th className="px-6 py-4">Geographic Location</th>
-                  <th className="px-6 py-4">Time Dispatched</th>
-                  <th className="px-6 py-4 text-center">Casualties</th>
-                  <th className="px-6 py-4 text-right">Status State</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 text-sm font-medium">
-                {filteredIncidents.length === 0 ? (
-                  <tr>
-                    <td colSpan={7} className="px-6 py-16 text-center text-slate-400 font-medium">
-                      No matching historical incident registries found.
-                    </td>
-                  </tr>
-                ) : (
-                  filteredIncidents.map((incident) => {
-                    const isSelected = selectedIds.has(incident.id)
-                    const typeConfig = getIncidentTypeConfig(incident.type)
-                    return (
-                      <tr 
-                        key={incident.id} 
-                        className={`transition-colors duration-150 hover:bg-slate-50/60 ${
-                          isSelected ? 'bg-blue-50/30' : ''
-                        }`}
-                      >
-                        <td className="px-6 py-4 text-center">
-                          <input
-                            type="checkbox"
-                            checked={isSelected}
-                            onChange={() => handleToggleIncident(incident.id)}
-                            className="rounded border-slate-300 text-blue-600 focus:ring-blue-500/20 w-4 h-4 transition cursor-pointer"
-                            aria-label={`Select incident ${incident.id}`}
-                          />
-                        </td>
-                        <td className="px-6 py-4 font-bold text-slate-900 font-mono text-xs">{incident.id}</td>
-                        <td className="px-6 py-4">
-                          <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 border text-xs font-extrabold uppercase tracking-wider rounded-md ${typeConfig?.badge}`}>
-                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                              {typeConfig?.icon}
-                            </svg>
-                            {incident.type}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 text-slate-600 max-w-xs truncate">{incident.location}</td>
-                        <td className="px-6 py-4 text-slate-400 font-semibold text-xs">{incident.timeOccurred}</td>
-                        <td className="px-6 py-4 text-center">
-                          <span className={`inline-block px-2 py-0.5 rounded text-xs font-bold ${incident.victimCount > 0 ? 'bg-rose-50 border border-rose-100 text-rose-600' : 'text-slate-400 bg-slate-50'}`}>
-                            {incident.victimCount}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 text-right">
-                          <span className={`inline-flex items-center text-xs font-bold ${
-                            incident.status === 'Completed' ? 'text-emerald-600' : 'text-amber-600'
-                          }`}>
-                            <span className={`w-1.5 h-1.5 rounded-full mr-2 ${
-                              incident.status === 'Completed' ? 'bg-emerald-500' : 'bg-amber-500'
-                            }`}></span>
-                            {incident.status}
-                          </span>
-                        </td>
-                      </tr>
-                    )
-                  })
-                )}
-              </tbody>
-            </table>
+        {/* Selection Info Bar */}
+        {selectedIncidents.size > 0 && (
+          <div className="bg-blue-600 border border-blue-700 rounded-2xl p-4 flex items-center justify-between shadow-md transition-all animate-in fade-in slide-in-from-top-2 duration-200">
+            <p className="text-sm font-medium text-white px-1">
+              {selectedIncidents.size} incident{selectedIncidents.size !== 1 ? 's' : ''} selected for reporting
+            </p>
+            <button
+              onClick={handleGenerateReport}
+              className="px-5 py-2 bg-white text-blue-700 font-bold text-sm rounded-xl hover:bg-blue-50 active:scale-[0.98] transition-all flex items-center gap-2 shadow-sm"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+              </svg>
+              Generate Report
+            </button>
           </div>
+        )}
 
-          {/* COMPACT MOBILE LIST CARDS VIEW */}
-          <div className="block sm:hidden divide-y divide-slate-100">
-            {filteredIncidents.length === 0 ? (
-              <div className="p-8 text-center text-slate-400 text-sm font-medium">
-                No matching operational files found.
-              </div>
-            ) : (
-              filteredIncidents.map((incident) => {
-                const isSelected = selectedIds.has(incident.id)
-                const typeConfig = getIncidentTypeConfig(incident.type)
-                return (
-                  <div 
-                    key={incident.id}
-                    className={`p-4 flex gap-3 transition-colors ${isSelected ? 'bg-blue-50/20' : ''}`}
-                  >
-                    <div className="pt-1 shrink-0">
+        {/* Incidents Table */}
+        {loading ? (
+          <div className="bg-white rounded-2xl p-16 text-center border border-slate-200 shadow-sm">
+            <div className="flex justify-center mb-4">
+              <svg className="animate-spin h-8 w-8 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+            </div>
+            <p className="text-slate-500 font-medium">Loading incidents from system...</p>
+          </div>
+        ) : error ? (
+          <div className="bg-rose-50 border border-rose-200 rounded-2xl p-8 text-center shadow-sm">
+            <p className="text-rose-800 font-semibold">{error}</p>
+            <button
+              onClick={() => window.location.reload()}
+              className="mt-4 px-5 py-2 bg-rose-600 text-white font-bold rounded-xl hover:bg-rose-700 active:scale-95 transition"
+            >
+              Retry Connection
+            </button>
+          </div>
+        ) : filteredIncidents.length === 0 ? (
+          <div className="bg-white rounded-2xl p-16 text-center border border-slate-200 shadow-sm">
+            <p className="text-slate-400 text-lg"></p>
+            <p className="text-slate-500 font-medium mt-2">No matching incidents found</p>
+            <p className="text-xs text-slate-400 mt-1">Try adjusting your filters or search keywords</p>
+          </div>
+        ) : (
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead className="bg-slate-50 border-b border-slate-200">
+                  <tr>
+                    <th className="px-6 py-3.5 w-12">
                       <input
                         type="checkbox"
-                        checked={isSelected}
-                        onChange={() => handleToggleIncident(incident.id)}
-                        className="rounded border-slate-300 text-blue-600 focus:ring-blue-500/20 w-4.5 h-4.5 transition"
+                        checked={selectedIncidents.size === filteredIncidents.length && filteredIncidents.length > 0}
+                        onChange={handleSelectAll}
+                        className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 h-4 w-4 cursor-pointer"
                       />
-                    </div>
-                    <div className="flex-1 min-w-0 space-y-2">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="font-mono text-xs font-black text-slate-900">{incident.id}</span>
-                        <span className="text-[11px] font-semibold text-slate-400">{incident.timeOccurred}</span>
-                      </div>
-                      
-                      <p className="text-xs font-bold text-slate-600 truncate">{incident.location}</p>
-                      
-                      <div className="flex items-center justify-between gap-2 pt-1">
-                        <div className="flex items-center gap-1.5">
-                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 border text-[10px] font-black uppercase tracking-wider rounded ${typeConfig?.badge}`}>
-                            {incident.type}
-                          </span>
-                          {incident.victimCount > 0 && (
-                            <span className="text-[10px] font-bold bg-rose-50 text-rose-600 border border-rose-100 px-1.5 py-0.5 rounded">
-                              {incident.victimCount} Cas
-                            </span>
-                          )}
-                        </div>
-
-                        <span className={`inline-flex items-center text-xs font-bold ${
-                          incident.status === 'Completed' ? 'text-emerald-600' : 'text-amber-600'
-                        }`}>
-                          <span className={`w-1.5 h-1.5 rounded-full mr-1.5 ${
-                            incident.status === 'Completed' ? 'bg-emerald-500' : 'bg-amber-500'
-                          }`}></span>
-                          {incident.status}
+                    </th>
+                    <th className="px-6 py-3.5 font-semibold text-slate-700 text-xs uppercase tracking-wider">ID</th>
+                    <th className="px-6 py-3.5 font-semibold text-slate-700 text-xs uppercase tracking-wider">Type</th>
+                    <th className="px-6 py-3.5 font-semibold text-slate-700 text-xs uppercase tracking-wider">Location</th>
+                    <th className="px-6 py-3.5 font-semibold text-slate-700 text-xs uppercase tracking-wider">Date/Time</th>
+                    <th className="px-6 py-3.5 font-semibold text-slate-700 text-xs uppercase tracking-wider">Severity</th>
+                    <th className="px-6 py-3.5 font-semibold text-slate-700 text-xs uppercase tracking-wider">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredIncidents.map((incident) => (
+                    <tr key={incident.id} className="hover:bg-slate-50/80 transition-colors">
+                      <td className="px-6 py-4">
+                        <input
+                          type="checkbox"
+                          checked={selectedIncidents.has(incident.id)}
+                          onChange={() => handleToggleIncident(incident.id)}
+                          className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 h-4 w-4 cursor-pointer"
+                        />
+                      </td>
+                      <td className="px-6 py-4 text-sm font-mono font-medium text-slate-600">
+                        {incident.reference_code || `${incident.id.slice(0, 8)}...`}
+                      </td>
+                      <td className="px-6 py-4 text-sm">
+                        <span className="font-semibold text-slate-900">
+                          {incident.hazard_type?.name || 'Unknown'}
                         </span>
-                      </div>
-                    </div>
-                  </div>
-                )
-              })
-            )}
-          </div>
-        </div>
-      </main>
-
-      {/* --- MOBILE BOTTOM NAVIGATION BAR --- */}
-      <nav className="sm:hidden fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-slate-200 shadow-[0_-4px_16px_rgba(15,23,42,0.06)] z-50 px-2 py-2">
-        <div className="flex justify-around items-center">
-          
-          <button 
-            onClick={() => navigate('/responder-incidents')}
-            className={`flex flex-col items-center gap-1 py-1 px-3 transition-all active:scale-95 ${
-              isActiveNav('/responder-incidents') ? 'text-blue-600 font-bold' : 'text-slate-400 hover:text-slate-600'
-            }`}
-            aria-label="View Incidents"
-          >
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={isActiveNav('/responder-incidents') ? 2.5 : 2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-            </svg>
-            <span className="text-[10px] tracking-tight">Incident</span>
-          </button>
-
-          <button 
-            onClick={() => navigate('/create-report')} 
-            className={`flex flex-col items-center gap-1 py-1 px-3 transition-all active:scale-95 ${
-              isActiveNav('/create-report') ? 'text-blue-600 font-bold' : 'text-slate-400 hover:text-slate-600'
-            }`}
-            aria-label="Create Report"
-          >
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={isActiveNav('/create-report') ? 2.5 : 2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-            </svg>
-            <span className="text-[10px] tracking-tight">New Report</span>
-          </button>
-
-          <button 
-            onClick={() => navigate('/responder-reports')}
-            className={`flex flex-col items-center gap-1 py-1 px-3 transition-all active:scale-95 ${
-              isActiveNav('/responder-reports') ? 'text-blue-600 font-bold' : 'text-slate-400 hover:text-slate-600'
-            }`}
-            aria-label="View Reports"
-          >
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={isActiveNav('/responder-reports') ? 2.5 : 2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            <span className="text-[10px] tracking-tight">Logs</span>
-          </button>
-
-          <button 
-            onClick={() => navigate('/responder-profile-settings')} 
-            className={`flex flex-col items-center gap-1 py-1 px-3 transition-all active:scale-95 ${
-              isActiveNav('/responder-profile-settings') ? 'text-blue-600 font-bold' : 'text-slate-400'
-            }`}
-            aria-label="Profile Settings"
-          >
-            <div className={`w-5 h-5 rounded-full flex items-center justify-center text-white text-[9px] font-extrabold shadow-sm ${
-              isActiveNav('/responder-profile-settings') 
-                ? 'bg-blue-600 ring-2 ring-blue-100' 
-                : 'bg-slate-400'
-            }`}>
-              {initials}
+                      </td>
+                      <td className="px-6 py-4 text-sm text-slate-600 max-w-xs truncate">{incident.address}</td>
+                      <td className="px-6 py-4 text-sm text-slate-600 whitespace-nowrap">
+                        {new Date(incident.incident_datetime).toLocaleString('en-US', {
+                          month: 'short',
+                          day: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                      </td>
+                      <td className="px-6 py-4 text-xs whitespace-nowrap">
+                        <span className={`px-2.5 py-1 rounded-md font-bold tracking-wide border ${getSeverityColor(incident.severity_level)}`}>
+                          {incident.severity_level.toUpperCase()}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 text-xs whitespace-nowrap">
+                        <span className={`px-2.5 py-1 rounded-full font-semibold border ${getStatusColor(incident.status)}`}>
+                          {incident.status.replace('_', ' ').toUpperCase()}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
-            <span className="text-[10px] tracking-tight">Profile</span>
-          </button>
-
-        </div>
-      </nav>
+          </div>
+        )}
+      </main>
+      <MobileNavBar />
     </div>
   )
 }

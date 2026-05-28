@@ -318,13 +318,13 @@ def verify_register_otp(request):
 	otp_record.is_used = True
 	otp_record.save(update_fields=['is_used'])
 
+	# Automatically log the user in after successful registration
+	login(request, user)
+
 	return Response(
 		{
-			'message': 'Registration successful! Welcome to Lucena City DRRMO. You can now log in using your verified account.',
-			'user': {
-				'fullName': user.first_name or user.username,
-				'email': user.email,
-			},
+			'message': 'Registration successful! Welcome to Lucena City DRRMO.',
+			'user': _serialize_user(user, fallback_identifier=email),
 		},
 		status=status.HTTP_201_CREATED,
 	)
@@ -336,7 +336,7 @@ def verify_register_otp(request):
 @permission_classes([AllowAny])
 def login_user(request):
 	# """Authenticate a user and trigger OTP verification when policy requires it."""
-	identifier = (request.data.get('email') or request.data.get('identifier') or '').strip().lower()
+	identifier = (request.data.get('email') or request.data.get('username') or request.data.get('identifier') or '').strip().lower()
 	password = request.data.get('password') or ''
 	force_otp = _coerce_bool(request.data.get('forceOtp'), default=True)
 
@@ -345,18 +345,21 @@ def login_user(request):
 
 	account = User.objects.filter(Q(email__iexact=identifier) | Q(username__iexact=identifier)).first()
 	if not account:
-		return Response({'error': 'Invalid email/username or password.'}, status=status.HTTP_400_BAD_REQUEST)
+		print(f"DEBUG: No account found for identifier: {identifier}")
+		return Response({'error': 'Invalid email/username or password.'}, status=status.HTTP_401_UNAUTHORIZED)
 
 	user = authenticate(request, username=account.username, password=password)
 	# Upgrade any legacy plain-text password record on successful login.
 	if not user and account.password and not _is_encoded_password(account.password):
 		if account.password == password:
+			print(f"DEBUG: Upgrading legacy password for: {account.username}")
 			account.set_password(password)
 			account.save(update_fields=['password'])
 			user = authenticate(request, username=account.username, password=password)
 
 	if not user:
-		return Response({'error': 'Invalid email/username or password.'}, status=status.HTTP_400_BAD_REQUEST)
+		print(f"DEBUG: Authentication failed for user: {account.username}")
+		return Response({'error': 'Invalid email/username or password.'}, status=status.HTTP_401_UNAUTHORIZED)
 
 	if not user.is_active:
 		return Response({'error': 'This account is inactive.'}, status=status.HTTP_403_FORBIDDEN)
@@ -531,4 +534,3 @@ def confirm_password_reset(request):
 	otp_record.save(update_fields=['is_used'])
 
 	return Response({'message': 'Password reset successful. You can now log in with your new password.'}, status=status.HTTP_200_OK)
-

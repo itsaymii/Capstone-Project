@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { ClipboardEvent, FormEvent, KeyboardEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { useNavigate } from 'react-router-dom'
-import { requestRegisterOtp, verifyRegisterOtpCode } from '../../../services/auth'
+import { getCurrentUserProfile, requestRegisterOtp, verifyRegisterOtpCode } from '../../../services/auth'
 
 interface RegisterPageProps {
   onRequestLogin?: () => void
@@ -166,6 +166,15 @@ export function RegisterPage({ onRequestLogin, onRegistered, modalMode = false }
     return `${firstName.trim()} ${lastName.trim()}`.trim()
   }
 
+  function getPostRegistrationPath(): string {
+    const profile = getCurrentUserProfile()
+    const role = profile?.role
+
+    // Newly registered users are citizens by default
+    // Redirect to landing page for citizens
+    return '/landing'
+  }
+
   async function handleCredentialSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
 
@@ -235,6 +244,25 @@ export function RegisterPage({ onRequestLogin, onRegistered, modalMode = false }
 
     clearCooldown()
     setErrorMessage('')
+    
+    // If automatic login happened (skipOtp = true), redirect to dashboard
+    if (result.skipOtp) {
+      setSuccessMessage(result.message ?? 'Registration successful! Redirecting...')
+      window.setTimeout(() => {
+        if (onRegistered) {
+          onRegistered()
+          return
+        }
+        navigate(getPostRegistrationPath(), {
+          state: {
+            registrationLoginSuccessMessage: result.message ?? 'Welcome! Your account is now ready to use.',
+          },
+        })
+      }, 600)
+      return
+    }
+    
+    // Otherwise, redirect to login page
     if (onRegistered) {
       onRegistered()
       return

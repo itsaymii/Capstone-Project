@@ -203,6 +203,28 @@ export async function verifyRegisterOtpCode(email: string, otp: string): Promise
 
   try {
     const response = await verifyRegisterOtp({ email: normalizedEmail, otp: trimmedOtp })
+    
+    // If response contains user data, automatically log the user in
+    if (response.user) {
+      persistAuthenticatedSession(
+        {
+          fullName: response.user.fullName,
+          email: response.user.email,
+          role: response.user.role,
+          isAdmin: response.user.isAdmin,
+          isStaff: response.user.isStaff,
+          hasDashboardAccess: response.user.hasDashboardAccess,
+        },
+        false, // Don't persist to localStorage for new users, use sessionStorage
+      )
+      addNotification('Registration completed successfully. Welcome!')
+      return {
+        success: true,
+        message: response.message,
+        skipOtp: true, // Indicate automatic login
+      }
+    }
+    
     addNotification('Registration completed successfully.')
     return {
       success: true,
