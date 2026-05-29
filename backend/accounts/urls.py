@@ -9,6 +9,8 @@ from .views import (
     test_connection,
     verify_login_otp,
     verify_register_otp,
+    create_incident_report,
+    list_incident_reports,
 )
 
 urlpatterns = [
@@ -21,4 +23,6 @@ urlpatterns = [
     path('auth/login/verify-otp/', verify_login_otp, name='verify-login-otp'),
     path('auth/password-reset/', request_password_reset, name='request-password-reset'),
     path('auth/password-reset/confirm/', confirm_password_reset, name='confirm-password-reset'),
+    path('incidents/report/', create_incident_report, name='create-incident-report'),
+    path('incidents/list/', list_incident_reports, name='list-incident-reports'),
 ]

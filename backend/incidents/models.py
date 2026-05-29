@@ -2,6 +2,8 @@ import uuid
 from django.db import models, transaction
 from django.conf import settings
 from django.utils import timezone
+from django.db.models.functions import Length
+
 
 
 class HazardType(models.Model):
@@ -24,12 +26,12 @@ class HazardType(models.Model):
 class IncidentManager(models.Manager):
     """Custom manager for easy reference_code lookups"""
     def get_by_reference(self, value):
-        """Lookup incident by INC-XXXX format OR UUID"""
-        import re
-        # Check if it's INC-YYYY-NNN format
-        if re.match(r'^INC-\d{4}-\d{3}$', str(value).upper()):
-            return self.get(reference_code=value.upper())
-        # Otherwise treat as UUID
+        """Lookup incident by reference_code OR UUID"""
+        # Try finding by reference code first (case insensitive)
+        incident = self.filter(reference_code__iexact=str(value).strip()).first()
+        if incident:
+            return incident
+        # Otherwise treat as UUID/Internal ID
         return self.get(id=value)
 
 
@@ -58,9 +60,9 @@ class Incident(models.Model):
     reference_code = models.CharField(
         max_length=20, 
         unique=True, 
-        editable=False,
+        blank=True,  # ✅ Allow empty input for auto-generation
         db_index=True,  # ✅ Fast lookups
-        help_text="Format: INC-YYYY-NNN (e.g., INC-2025-001)"
+        help_text="Incident reference code (e.g., INC-2025-001). Auto-generated if blank."
     )
     
     hazard_type = models.ForeignKey(
@@ -105,14 +107,15 @@ class Incident(models.Model):
         return f"{self.reference_code} - {self.hazard_type.name}"
 
     def save(self, *args, **kwargs):
-        # ✅ Auto-generate reference_code ONLY on create
-        if not self.reference_code and not self.pk:
+        # ✅ Auto-generate reference_code ONLY if it hasn't been set yet
+        if not self.reference_code:
             with transaction.atomic():
                 year = self.incident_datetime.year if self.incident_datetime else timezone.now().year
                 # Lock table for safe sequence generation
+                # Order by length then code to handle numbers >= 1000 correctly in lexicographical sort
                 last = Incident.objects.select_for_update().filter(
                     reference_code__startswith=f'INC-{year}-'
-                ).order_by('reference_code').last()
+                ).order_by(Length('reference_code'), 'reference_code').last()
                 
                 next_num = 1
                 if last:
@@ -243,9 +246,8 @@ class Alert(models.Model):
 
 class ResponderReport(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    # ✅ Now looks cleaner with reference_code in __str__
     incident = models.ForeignKey(Incident, on_delete=models.CASCADE, related_name='responder_reports')
-    responder = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='reports')
+    responder = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='responder_reports')
     report_time = models.DateTimeField(auto_now_add=True)
     report_text = models.TextField()
     action_taken = models.TextField(blank=True)
@@ -259,3 +261,89 @@ class ResponderReport(models.Model):
 
     def __str__(self): 
         return f"Report for {self.incident.reference_code} by {self.responder}"
+
+class IncidentReport(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    report_code = models.CharField(max_length=30, unique=True, blank=True)
+    incident_code = models.CharField(max_length=30)
+    time_occurred = models.TimeField()
+    incident_type = models.CharField(max_length=100)
+    responder_team = models.CharField(max_length=100)
+    location = models.TextField()
+    description = models.TextField()
+    victim_count = models.PositiveIntegerField(default=0)
+    action_taken = models.TextField()
+    status = models.CharField(max_length=30, default='Submitted')
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'incident_reports'
+        ordering = ['-created_at']
+
+    def save(self, *args, **kwargs):
+        if not self.report_code:
+            year = timezone.now().year
+            last = IncidentReport.objects.filter(
+                report_code__startswith=f'IR-{year}-'
+            ).order_by(Length('report_code'), 'report_code').last()
+
+            next_num = 1
+            if last:
+                try:
+                    next_num = int(last.report_code.split('-')[-1]) + 1
+                except ValueError:
+                    next_num = 1
+
+            self.report_code = f'IR-{year}-{next_num:05d}'
+
+        super().save(*args, **kwargs)
+
+
+class VictimDetail(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    incident_report = models.ForeignKey(IncidentReport, on_delete=models.CASCADE, related_name='victims')
+    name = models.CharField(max_length=150)
+    age = models.CharField(max_length=20)
+    gender = models.CharField(max_length=10)
+    address = models.TextField()
+    condition = models.TextField()
+
+    class Meta:
+        db_table = 'victim_details'
+
+    def __str__(self):
+        return f'{self.name} - {self.incident_report.report_code}'
+
+
+class AccomplishmentReport(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    compiled_code = models.CharField(max_length=30, unique=True, blank=True)
+    title = models.CharField(max_length=100, default='Accomplishment Report')
+    incident_reports = models.ManyToManyField(IncidentReport, related_name='accomplishment_reports')
+    total_reports = models.PositiveIntegerField(default=0)
+    status = models.CharField(max_length=30, default='Compiled')
+    compiled_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'accomplishment_reports'
+        ordering = ['-created_at']
+
+    def save(self, *args, **kwargs):
+        if not self.compiled_code:
+            year = timezone.now().year
+            last = AccomplishmentReport.objects.filter(
+                compiled_code__startswith=f'AR-{year}-'
+            ).order_by(Length('compiled_code'), 'compiled_code').last()
+
+            next_num = 1
+            if last:
+                try:
+                    next_num = int(last.compiled_code.split('-')[-1]) + 1
+                except ValueError:
+                    next_num = 1
+
+            self.compiled_code = f'AR-{year}-{next_num:05d}'
+
+        super().save(*args, **kwargs)

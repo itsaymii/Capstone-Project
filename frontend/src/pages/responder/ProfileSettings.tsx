@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { FC, FormEvent } from 'react'
+import type { FC, FormEvent, ChangeEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { getCurrentUserProfile } from '../../services/auth'
 import { MobileNavBar } from '../../components/MobileNavBar'
@@ -46,7 +46,7 @@ const ProfileSettingsPage: FC = () => {
 
   const [isAddingMember, setIsAddingMember] = useState(false)
 
-  const handleProfileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleProfileChange = (e: ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target
     setProfileData(prev => ({ ...prev, [name]: value }))
   }
@@ -75,6 +75,19 @@ const ProfileSettingsPage: FC = () => {
     }
   }
 
+  // Functional Log Out Handler
+  const handleLogOut = () => {
+    if (confirm('Are you sure you want to log out of your session?')) {
+      // Linisin ang user credentials mula sa local at session storage
+      localStorage.removeItem('user')
+      localStorage.removeItem('token')
+      sessionStorage.clear()
+      
+      // I-redirect ang field responder sa landing/login screen
+      navigate('/')
+    }
+  }
+
   const getStatusStyles = (status: TeamMember['status']) => {
     switch (status) {
       case 'Active': return 'bg-emerald-50 text-emerald-700 border-emerald-200'
@@ -97,7 +110,6 @@ const ProfileSettingsPage: FC = () => {
         
         {/* Header Navigation */}
         <div className="bg-white p-5 sm:p-7 rounded-2xl border border-slate-200/80 shadow-sm space-y-5 overflow-hidden relative">
-          {/* Subtle Accent Gradient for Status */}
           <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-500" />
           
           <div className="flex items-center gap-4">
@@ -127,7 +139,22 @@ const ProfileSettingsPage: FC = () => {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
           
           {/* Left Column: Profile Card & Form */}
-          <div className="lg:col-span-1 bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-6">
+          <div className="lg:col-span-1 bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-6 relative">
+            
+            {/* Integrated Log Out Mechanism */}
+            <div className="absolute top-4 right-4">
+              <button
+                type="button"
+                onClick={handleLogOut}
+                className="inline-flex items-center justify-center p-2 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 border border-transparent hover:border-rose-100 transition-all active:scale-95 group/logout"
+                title="Log Out Session"
+              >
+                <svg className="w-5 h-5 transform group-hover/logout:translate-x-0.5 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.25}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                </svg>
+              </button>
+            </div>
+
             <div className="flex flex-col items-center text-center pb-5 border-b border-slate-100">
               <div className="w-20 h-20 bg-gradient-to-tr from-blue-600 to-indigo-600 rounded-full flex items-center justify-center text-white text-2xl font-extrabold shadow-md mb-3 ring-4 ring-blue-50">
                 {initials}

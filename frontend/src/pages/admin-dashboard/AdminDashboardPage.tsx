@@ -3,12 +3,14 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { AdminSidebar } from '../../components/AdminSidebar'
 import {
   hazardIncidents,
+  mapBackendIncidentToHazardIncident,
   type HazardIncident,
   type HazardType,
 } from '../../data/adminOperations'
 import type { AdminNavKey } from '../../data/adminNavigation'
 import { getCurrentUserProfile, logoutUser } from '../../services/auth'
 import { fetchQuezonRegionEarthquakes, type EarthquakeEvent } from '../../services/earthquakes'
+import { getIncidents, getIncidentReports } from '../../services/incidents'
 import {
   NOTIFICATIONS_CHANGED_EVENT,
   getNotifications,
@@ -90,9 +92,7 @@ function getSeverityScore(severity: HazardIncident['severity']): number {
 }
 
 function calculateFireRiskScore(incidents: HazardIncident[]): number {
-  if (incidents.length === 0) {
-    return 0
-  }
+  if (incidents.length === 0) return 0
 
   const activeIncidents = incidents.filter((incident) => incident.status === 'active')
   if (activeIncidents.length === 0) {
@@ -138,9 +138,7 @@ function getWorkspaceSection(sectionParam: string | null): WorkspaceSection {
 
 function formatNotificationTime(value: string): string {
   const parsed = new Date(value)
-  if (Number.isNaN(parsed.getTime())) {
-    return value
-  }
+  if (Number.isNaN(parsed.getTime())) return value
 
   return parsed.toLocaleString(undefined, {
     month: 'short',
@@ -155,10 +153,7 @@ function normalizeSearchValue(value: string): string {
 }
 
 function matchesDashboardSearch(fields: Array<number | string>, query: string): boolean {
-  if (!query) {
-    return true
-  }
-
+  if (!query) return true
   return fields.some((field) => normalizeSearchValue(String(field)).includes(query))
 }
 
@@ -189,12 +184,14 @@ export function AdminDashboardPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const notificationsMenuRef = useRef<HTMLDivElement | null>(null)
   const topProfileMenuRef = useRef<HTMLDivElement | null>(null)
+
   const [currentDate, setCurrentDate] = useState('')
   const [currentTime, setCurrentTime] = useState('')
   const [activeSection, setActiveSection] = useState<WorkspaceSection>(() =>
     getWorkspaceSection(searchParams.get('section')),
   )
-  const [reports, setReports] = useState(() => hazardIncidents)
+  const [reports, setReports] = useState<HazardIncident[]>(() => hazardIncidents)
+  const [responderReports, setResponderReports] = useState<any[]>([])
   const [mapFilter, setMapFilter] = useState<MapFilter>('EQ')
   const [notifications, setNotifications] = useState<NotificationItem[]>(() => getNotifications())
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false)
@@ -206,30 +203,161 @@ export function AdminDashboardPage() {
   const [eqCardStatus, setEqCardStatus] = useState<'loading' | 'ready' | 'error'>('loading')
   const [dashboardSearchQuery, setDashboardSearchQuery] = useState('')
 
+useEffect(() => {
+  let isMounted = true
+
+  async function loadBackendData() {
+    try {
+      const [backendIncidents, backendIncidentReports] = await Promise.all([
+        getIncidents(),
+        getIncidentReports(),
+      ])
+
+      const mappedIncidents = backendIncidents.map(mapBackendIncidentToHazardIncident)
+
+      const mappedResponderIncidents: HazardIncident[] = backendIncidentReports.map((report: any) => {
+        const type = String(report.incidentType || '').toLowerCase()
+
+        let code: HazardType = 'AC'
+
+        if (type.includes('fire')) {
+          code = 'FR'
+        } else if (
+          type.includes('rca') ||
+          type.includes('vehicular') ||
+          type.includes('accident')
+        ) {
+          code = 'AC'
+        } else if (type.includes('earthquake')) {
+          code = 'EQ'
+        }
+
+        let severity: HazardIncident['severity'] = 'Moderate'
+
+        if (Number(report.victimCount || 0) >= 3) {
+          severity = 'High'
+        }
+
+        return {
+          id: report.id,
+          title: `${report.incidentType || 'Responder Report'} - ${
+            report.reportCode || report.incidentCode || report.id
+          }`,
+          code,
+          status: 'active',
+          severity,
+          location: report.location || 'Lucena City',
+          time: report.createdAt
+            ? new Date(report.createdAt).toLocaleTimeString(undefined, {
+                hour: 'numeric',
+                minute: '2-digit',
+              })
+            : '-',
+          responseTeam: report.responderTeam || 'Responder Team',
+          description:
+            report.description ||
+            report.actionTaken ||
+            'No description provided.',
+          coordinates: [13.9414, 121.6236],
+        }
+      })
+
+      if (isMounted) {
+        setReports([...mappedResponderIncidents, ...mappedIncidents])
+        setResponderReports(backendIncidentReports)
+      }
+    } catch (error) {
+      console.error('[AdminDashboard] Failed to load backend data:', error)
+
+      if (isMounted) {
+        setReports(hazardIncidents)
+        setResponderReports([])
+      }
+    }
+  }
+
+  void loadBackendData()
+
+  return () => {
+    isMounted = false
+  }
+}, [])
+
   const profile = getCurrentUserProfile()
   const displayName = profile?.fullName?.trim() || 'Administrator'
+
   const firstName = useMemo(
     () => displayName.split(/\s+/).filter(Boolean)[0] || 'Administrator',
     [displayName],
   )
+
   const initials = useMemo(() => {
     const nameParts = displayName.split(/\s+/).filter(Boolean)
     if (nameParts.length === 0) return 'AD'
     if (nameParts.length === 1) return nameParts[0].slice(0, 2).toUpperCase()
     return `${nameParts[0][0]}${nameParts[1][0]}`.toUpperCase()
   }, [displayName])
+
   const normalizedDashboardSearchQuery = useMemo(
     () => normalizeSearchValue(dashboardSearchQuery),
     [dashboardSearchQuery],
   )
+
   const unreadNotificationsCount = useMemo(
     () => notifications.filter((item) => !item.read).length,
     [notifications],
   )
 
+  // Merge responder reports as pseudo-incidents for display
+  const responderReportIncidents = useMemo(() => {
+    // Build a map from both reference_code and id to incident code (FR, EQ, AC)
+    const refOrIdToHazardType = new Map<string, HazardType>()
+    reports.forEach((incident) => {
+      // Only use incidents with a reference_code or id
+      const refCode = (incident as any).reference_code || (incident as any).referenceCode || undefined
+      if (refCode && incident.code) {
+        refOrIdToHazardType.set(refCode, incident.code)
+      }
+      if (incident.id && incident.code) {
+        refOrIdToHazardType.set(incident.id, incident.code)
+      }
+    })
+    return responderReports.map((report) => {
+      let code: HazardType = 'AC'
+      // Try to get the code from the incident reference code or id
+      if (report.incident_reference_code_readonly && refOrIdToHazardType.has(report.incident_reference_code_readonly)) {
+        code = refOrIdToHazardType.get(report.incident_reference_code_readonly) as HazardType
+      } else if (report.incident_id && refOrIdToHazardType.has(report.incident_id)) {
+        code = refOrIdToHazardType.get(report.incident_id) as HazardType
+      }
+      // Map status_update to IncidentStatus
+      let status: 'active' | 'pending' | 'resolved' = 'active'
+      const statusStr = (report.status_update || '').toLowerCase()
+      if (statusStr.includes('pending')) status = 'pending'
+      else if (statusStr.includes('resolved') || statusStr.includes('complete')) status = 'resolved'
+      // Map severity (default to Moderate)
+      let severity: 'Low' | 'Moderate' | 'High' | 'Critical' = 'Moderate'
+      return {
+        id: report.id,
+        title: `Responder Report - ${report.incident_reference_code_readonly || report.incident_id}`,
+        code,
+        status,
+        severity,
+        location: '-',
+        time: report.report_time ? new Date(report.report_time).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) : '-',
+        responseTeam: report.responder_username || report.responder || '-',
+        description: report.report_text || '-',
+        coordinates: [0, 0] as [number, number],
+      }
+    })
+  }, [responderReports, reports])
+
   const filteredReports = useMemo(
     () =>
-      reports.filter((incident) =>
+      [
+        ...reports,
+        ...responderReportIncidents,
+      ].filter((incident) =>
         matchesDashboardSearch(
           [
             incident.id,
@@ -245,8 +373,9 @@ export function AdminDashboardPage() {
           normalizedDashboardSearchQuery,
         ),
       ),
-    [reports, normalizedDashboardSearchQuery],
+    [reports, responderReportIncidents, normalizedDashboardSearchQuery],
   )
+
   const filteredEarthquakeEvents = useMemo(
     () =>
       liveEarthquakeEvents.filter((event) =>
@@ -269,21 +398,27 @@ export function AdminDashboardPage() {
     () => filteredReports.filter((incident) => incident.code === 'FR'),
     [filteredReports],
   )
+
   const accidentReports = useMemo(
     () => filteredReports.filter((incident) => incident.code === 'AC'),
     [filteredReports],
   )
+
   const fireRiskScore = useMemo(() => calculateFireRiskScore(fireReports), [fireReports])
+
   const filteredLucenaEarthquakeEvents = useMemo(
     () => filterLucenaEvents(filteredEarthquakeEvents),
     [filteredEarthquakeEvents],
   )
+
   const displayedEarthquakeTotal = normalizedDashboardSearchQuery
     ? filteredEarthquakeEvents.length
     : liveEarthquakeTotal
+
   const displayedEarthquakeRiskScore = normalizedDashboardSearchQuery
     ? calculateEarthquakeRiskScore(filteredLucenaEarthquakeEvents)
     : liveEarthquakeRiskScore
+
   useEffect(() => {
     let cancelled = false
 
@@ -295,6 +430,7 @@ export function AdminDashboardPage() {
       try {
         const events = await fetchQuezonRegionEarthquakes(1825, 1.0)
         if (cancelled) return
+
         const lucenaEvents = filterLucenaEvents(events)
         setLiveEarthquakeEvents(events)
         setLiveEarthquakeTotal(events.length)
@@ -308,6 +444,7 @@ export function AdminDashboardPage() {
     }
 
     void loadEarthquakeCardData()
+
     const refreshTimer = window.setInterval(() => {
       void loadEarthquakeCardData(true)
     }, 5 * 60 * 1000)
@@ -338,7 +475,7 @@ export function AdminDashboardPage() {
           ? 'Live seismic API unavailable'
           : normalizedDashboardSearchQuery
             ? 'Search results in the USGS live feed'
-          : 'USGS live data (Quezon region, last 5 years)',
+            : 'USGS live data (Quezon region, last 5 years)',
       delta:
         eqCardStatus === 'loading'
           ? 'Updating from live seismic feed'
@@ -346,7 +483,7 @@ export function AdminDashboardPage() {
             ? 'Unable to refresh right now'
             : normalizedDashboardSearchQuery
               ? `Filtered by "${dashboardSearchQuery.trim()}"`
-            : 'Auto-refresh every 5 minutes',
+              : 'Auto-refresh every 5 minutes',
       accent: 'border-t-emerald-600',
       valueClass: 'text-emerald-700',
     },
@@ -377,7 +514,7 @@ export function AdminDashboardPage() {
           ? 'Live seismic API unavailable'
           : normalizedDashboardSearchQuery
             ? 'Risk score for matching Lucena seismic events'
-          : 'Lucena-only seismic recency + magnitude',
+            : 'Lucena-only seismic recency + magnitude',
       delta:
         eqCardStatus === 'loading'
           ? 'Updating from live seismic feed'
@@ -396,6 +533,7 @@ export function AdminDashboardPage() {
   useEffect(() => {
     function syncDateTime(): void {
       const now = new Date()
+
       setCurrentDate(
         now.toLocaleDateString(undefined, {
           year: 'numeric',
@@ -403,6 +541,7 @@ export function AdminDashboardPage() {
           day: 'numeric',
         }),
       )
+
       setCurrentTime(
         now.toLocaleTimeString(undefined, {
           hour: 'numeric',
@@ -412,7 +551,9 @@ export function AdminDashboardPage() {
     }
 
     syncDateTime()
+
     const timer = window.setInterval(syncDateTime, 60000)
+
     return () => window.clearInterval(timer)
   }, [])
 
@@ -431,6 +572,7 @@ export function AdminDashboardPage() {
     }
 
     document.addEventListener('mousedown', handleDocumentClick)
+
     return () => document.removeEventListener('mousedown', handleDocumentClick)
   }, [])
 
@@ -440,12 +582,15 @@ export function AdminDashboardPage() {
     }
 
     syncNotifications()
+
     window.addEventListener(NOTIFICATIONS_CHANGED_EVENT, syncNotifications)
+
     return () => window.removeEventListener(NOTIFICATIONS_CHANGED_EVENT, syncNotifications)
   }, [])
 
   useEffect(() => {
     const nextSection = getWorkspaceSection(searchParams.get('section'))
+
     setActiveSection((currentSection) =>
       currentSection === nextSection ? currentSection : nextSection,
     )
@@ -455,6 +600,7 @@ export function AdminDashboardPage() {
     setActiveSection(section)
 
     const nextSearchParams = new URLSearchParams(searchParams)
+
     if (section === 'overview') {
       nextSearchParams.delete('section')
     } else {
@@ -501,6 +647,7 @@ export function AdminDashboardPage() {
 
   function handleLogout(): void {
     logoutUser()
+
     navigate('/login', {
       replace: true,
       state: {
@@ -588,6 +735,7 @@ export function AdminDashboardPage() {
                     type="button"
                   >
                     <img alt="" aria-hidden className="h-6 w-6 object-contain" src={notificationIcon} />
+
                     {unreadNotificationsCount > 0 ? (
                       <span className="absolute -right-1 -top-1 flex min-h-[1.1rem] min-w-[1.1rem] items-center justify-center rounded-full bg-rose-600 px-1 text-[10px] font-bold text-white">
                         {unreadNotificationsCount > 9 ? '9+' : unreadNotificationsCount}
@@ -602,6 +750,7 @@ export function AdminDashboardPage() {
                           <p className="text-sm font-semibold text-slate-900">Notifications</p>
                           <p className="text-xs text-slate-500">{unreadNotificationsCount} unread</p>
                         </div>
+
                         <button
                           className="text-xs font-semibold text-blue-700 transition hover:text-blue-800 disabled:text-slate-300"
                           disabled={unreadNotificationsCount === 0}
@@ -614,7 +763,9 @@ export function AdminDashboardPage() {
 
                       <div className="max-h-[320px] overflow-y-auto py-2">
                         {notifications.length === 0 ? (
-                          <p className="px-3 py-8 text-center text-sm text-slate-500">No notifications yet.</p>
+                          <p className="px-3 py-8 text-center text-sm text-slate-500">
+                            No notifications yet.
+                          </p>
                         ) : (
                           notifications.slice(0, 10).map((item) => (
                             <div
@@ -648,10 +799,12 @@ export function AdminDashboardPage() {
                         initials
                       )}
                     </div>
+
                     <div className="hidden min-w-0 sm:block">
                       <p className="truncate text-sm font-semibold text-slate-900">{displayName}</p>
                       <p className="text-[11px] text-slate-500">Administrator</p>
                     </div>
+
                     <svg
                       aria-hidden
                       className={`h-4 w-4 text-slate-500 transition ${
@@ -678,6 +831,7 @@ export function AdminDashboardPage() {
                           {profile?.email || 'Administrator account'}
                         </p>
                       </div>
+
                       <div className="pt-2">
                         <button
                           className="flex w-full items-center rounded-xl px-3 py-2 text-left text-sm text-slate-700 transition hover:bg-slate-100 hover:text-slate-900"
@@ -686,6 +840,7 @@ export function AdminDashboardPage() {
                         >
                           Profile settings
                         </button>
+
                         <button
                           className="mt-1 flex w-full items-center rounded-xl px-3 py-2 text-left text-sm text-red-700 transition hover:bg-red-50"
                           onClick={handleLogout}
@@ -719,15 +874,18 @@ export function AdminDashboardPage() {
               overviewMetricCards={overviewMetricCards}
             />
           ) : null}
+
           {activeSection === 'reports' ? (
             <ReportsSection
               earthquakeEvents={filteredEarthquakeEvents}
               earthquakeFeedStatus={eqCardStatus}
               earthquakeLastUpdated={eqLastUpdated}
               reports={filteredReports}
+              responderReports={responderReports}
               searchQuery={dashboardSearchQuery}
             />
           ) : null}
+
           {activeSection === 'map' ? (
             <MapSection
               incidents={filteredReports}
@@ -736,6 +894,7 @@ export function AdminDashboardPage() {
               onSelectType={handleSelectMapFilter}
             />
           ) : null}
+
           {activeSection === 'scoring' ? (
             <InlineModuleSection
               description="Risk scoring now opens inside the main dashboard so the workflow stays on the same page as Overview."
@@ -743,12 +902,17 @@ export function AdminDashboardPage() {
               title="Risk Scoring"
             />
           ) : null}
+
           {activeSection === 'trends' ? (
             <AnalyticsSection reports={filteredReports} />
           ) : null}
+
           {activeSection === 'resources' ? <ResourcesSection /> : null}
+
           {activeSection === 'users' ? <UsersSection searchQuery={dashboardSearchQuery} /> : null}
+
           {activeSection === 'simulation' ? <SimulationSection /> : null}
+
           {activeSection === 'settings' ? (
             <InlineModuleSection
               description="Settings now stay in the same dashboard page so the admin workspace remains consistent and light-themed."
