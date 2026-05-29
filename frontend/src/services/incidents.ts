@@ -370,3 +370,17 @@ export async function getIncidentByReferenceCode(referenceCode: string): Promise
     return null
   }
 }
+
+export async function getIncidentReports() {
+  const response = await fetch(
+    'http://127.0.0.1:8000/api/incidents/incident-reports/'
+  )
+
+  if (!response.ok) {
+    throw new Error('Failed to fetch incident reports')
+  }
+
+  const data = await response.json()
+  return Array.isArray(data) ? data : data.results || []
+}
+
