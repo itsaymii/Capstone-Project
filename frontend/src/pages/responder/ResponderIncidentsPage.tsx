@@ -69,9 +69,7 @@ const IncidentReportPage: FC = () => {
     return now - reportTime <= twentyFourHours
   }
 
-  const hazardTypes = Array.from(
-    new Set(reports.map((report) => report.incidentType))
-  )
+  const hazardTypes = Array.from(new Set(reports.map((report) => report.incidentType)))
 
   const filteredAndSortedReports = reports
     .filter((report) => {
@@ -128,49 +126,51 @@ const IncidentReportPage: FC = () => {
     }
   }
 
-    const compileReports = async () => {
-      const selectedReports = reports.filter((report) =>
-        selectedIds.includes(report.id)
+  const compileReports = async () => {
+    const selectedReports = reports.filter((report) =>
+      selectedIds.includes(report.id)
+    )
+
+    if (selectedReports.length === 0) {
+      addNotification('Please select at least one report.')
+      return
+    }
+
+    try {
+      const response = await fetch(
+        'http://127.0.0.1:8000/api/incidents/accomplishment-reports/',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            title: 'Accomplishment Report',
+            status: 'Compiled',
+            reportIds: selectedIds,
+          }),
+        }
       )
 
-      if (selectedReports.length === 0) {
-        addNotification('Please select at least one report.')
-        return
+      if (!response.ok) {
+        throw new Error('Failed to compile reports')
       }
 
-      try {
-        const response = await fetch(
-          'http://127.0.0.1:8000/api/incidents/accomplishment-reports/',
-          {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              title: 'Accomplishment Report',
-              status: 'Compiled',
-              reportIds: selectedIds,
-            }),
-          }
-        )
-
-        if (!response.ok) {
-          throw new Error('Failed to compile reports')
-        }
-
-        addNotification('Reports compiled successfully!')
-        navigate('/responder-reports')
-      } catch (error) {
-        console.error('Error compiling reports:', error)
-        addNotification('Failed to compile reports.')
-      }
+      addNotification('Reports compiled successfully!')
+      navigate('/responder-reports')
+    } catch (error) {
+      console.error('Error compiling reports:', error)
+      addNotification('Failed to compile reports.')
     }
+  }
 
   const getIncidentBadgeStyle = (type: string) => {
     const lower = type.toLowerCase()
+
     if (lower.includes('med')) return 'bg-rose-50 text-rose-700 border-rose-100 ring-rose-500/10'
     if (lower.includes('fire')) return 'bg-orange-50 text-orange-700 border-orange-100 ring-orange-500/10'
     if (lower.includes('rtc') || lower.includes('vehic')) return 'bg-amber-50 text-amber-700 border-amber-100 ring-amber-500/10'
+
     return 'bg-purple-50 text-purple-700 border-purple-100 ring-purple-500/10'
   }
 
@@ -210,7 +210,7 @@ const IncidentReportPage: FC = () => {
 
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-t border-slate-100 pt-5">
               <p className="text-sm text-slate-500 font-medium leading-relaxed max-w-lg">
-                Select only reports created within the last 24 hours and compile them into accomplishment reports.
+                Click any report row to view full details. Select only reports created within the last 24 hours and compile them into accomplishment reports.
               </p>
 
               {selectedIds.length > 0 && (
@@ -285,7 +285,9 @@ const IncidentReportPage: FC = () => {
                 >
                   <span>{sortOrder === 'desc' ? 'Newest First' : 'Oldest First'}</span>
                   <svg
-                    className={`w-4 h-4 text-slate-500 transition-transform duration-300 ${sortOrder === 'asc' ? 'rotate-180' : ''}`}
+                    className={`w-4 h-4 text-slate-500 transition-transform duration-300 ${
+                      sortOrder === 'asc' ? 'rotate-180' : ''
+                    }`}
                     fill="none"
                     viewBox="0 0 24 24"
                     stroke="currentColor"
@@ -333,6 +335,7 @@ const IncidentReportPage: FC = () => {
                             .filter((r) => isWithin24Hours(r.createdAt))
                             .every((r) => selectedIds.includes(r.id))
                         }
+                        onClick={(e) => e.stopPropagation()}
                         onChange={toggleSelectAll}
                         className="w-4 h-4 accent-blue-600 rounded transition"
                       />
@@ -344,7 +347,6 @@ const IncidentReportPage: FC = () => {
                     <th className="px-6 py-4 text-xs font-extrabold uppercase text-slate-500 tracking-wider">Date Recorded</th>
                     <th className="px-6 py-4 text-xs font-extrabold uppercase text-slate-500 tracking-wider">Status</th>
                     <th className="px-6 py-4 text-xs font-extrabold uppercase text-slate-500 tracking-wider">Selection</th>
-                    <th className="px-6 py-4 text-right text-xs font-extrabold uppercase text-slate-500 tracking-wider">Action</th>
                   </tr>
                 </thead>
 
@@ -355,14 +357,17 @@ const IncidentReportPage: FC = () => {
                     return (
                       <tr
                         key={report.id}
-                        className={`hover:bg-slate-50/50 transition-colors group ${
+                        onClick={() => setDetailsReport(report)}
+                        className={`hover:bg-slate-50/80 transition-colors group cursor-pointer ${
                           !selectable ? 'opacity-60' : ''
                         }`}
+                        title="Click to view full details"
                       >
                         <td className="px-6 py-4">
                           <input
                             type="checkbox"
                             checked={selectedIds.includes(report.id)}
+                            onClick={(e) => e.stopPropagation()}
                             onChange={() => toggleSelect(report)}
                             disabled={!selectable}
                             title={
@@ -416,15 +421,6 @@ const IncidentReportPage: FC = () => {
                               Expired
                             </span>
                           )}
-                        </td>
-
-                        <td className="px-6 py-4 text-right">
-                          <button
-                            onClick={() => setDetailsReport(report)}
-                            className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-bold text-blue-600 hover:text-blue-700 bg-blue-50 hover:bg-blue-100/70 border border-blue-100 rounded-xl transition-all active:scale-95 tracking-wide shadow-sm group/btn"
-                          >
-                            <span>Details</span>
-                          </button>
                         </td>
                       </tr>
                     )
