@@ -74,7 +74,7 @@ class EvacuationCenter(models.Model):
     """Evacuation centers/shelters"""
     
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    name = models.CharField(max_length=200)
+    name = models.CharField(max_length=200, unique=True)
     
     # Location
     latitude = models.DecimalField(max_digits=9, decimal_places=6)
@@ -128,7 +128,7 @@ class Equipment(models.Model):
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    name = models.CharField(max_length=200)
+    name = models.CharField(max_length=200, unique=True)
     equipment_type = models.CharField(max_length=30, choices=TYPE_CHOICES)
     description = models.TextField(blank=True)
     

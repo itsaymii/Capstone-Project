@@ -1,15 +1,20 @@
-from rest_framework import viewsets, permissions
-from rest_framework.decorators import action
+from rest_framework import viewsets, permissions, status
+from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.authentication import TokenAuthentication, SessionAuthentication
 from django.db.models import Count, Sum
+from django.db import transaction
 from .models import SupplyCategory, Supply, EvacuationCenter, Equipment, Volunteer
+from locations.models import Barangay
 from .serializers import (
     SupplyCategorySerializer, SupplySerializer,
     EvacuationCenterSerializer, EquipmentSerializer,
     VolunteerSerializer
 )
 from accounts.permissions import IsStaffOrReadOnly
+from io import TextIOWrapper
+from decimal import Decimal, InvalidOperation
+import csv
 
 
 class SupplyCategoryViewSet(viewsets.ModelViewSet):
@@ -173,3 +178,78 @@ class ResourcesSummaryViewSet(viewsets.ViewSet):
             },
             "evacuation_centers": center_count,
         })
+
+
+@api_view(['POST'])
+@permission_classes([IsStaffOrReadOnly])
+def import_evacuation_centers_csv(request):
+    if 'file' not in request.FILES:
+        return Response({"error": "No file uploaded."}, status=status.HTTP_400_BAD_REQUEST)
+
+    csv_file = request.FILES['file']
+    if not csv_file.name.endswith('.csv'):
+        return Response({"error": "Invalid format. Please upload a .csv file."}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        decoded_file = TextIOWrapper(csv_file.file, encoding='utf-8')
+        reader = csv.DictReader(decoded_file)
+
+        # Required columns based on your EvacuationCenter model
+        required_fields = {'name', 'latitude', 'longitude'}
+        if not required_fields.issubset(set(reader.fieldnames or [])):
+            return Response({
+                "error": f"CSV must contain columns: {', '.join(required_fields)}"
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        with transaction.atomic():
+            created = 0
+            updated = 0
+            errors = []
+
+            for i, row in enumerate(reader, start=2):  # start=2 skips header
+                try:
+                    name = row['name'].strip()
+                    if not name:
+                        raise ValueError("Name cannot be empty")
+
+                    lat = Decimal(row['latitude'])
+                    lng = Decimal(row['longitude'])
+
+                    # Optional: Link to Barangay if name matches
+                    barangay = None
+                    brgy_name = row.get('barangay', '').strip()
+                    if brgy_name:
+                        try:
+                            barangay = Barangay.objects.get(name__iexact=brgy_name)
+                        except Barangay.DoesNotExist:
+                            errors.append(f"Row {i}: Barangay '{brgy_name}' not found. Center saved without link.")
+                            # Non-fatal: continues import but logs warning
+
+                    # Create or update center
+                    obj, is_created = EvacuationCenter.objects.update_or_create(
+                        name=name,
+                        defaults={
+                            'latitude': lat,
+                            'longitude': lng,
+                            'address': row.get('address', '').strip(),
+                            'barangay': barangay
+                        }
+                    )
+
+                    if is_created:
+                        created += 1
+                    else:
+                        updated += 1
+
+                except (InvalidOperation, ValueError, KeyError) as e:
+                    errors.append(f"Row {i}: {str(e)}")
+
+            return Response({
+                "status": "success",
+                "created": created,
+                "updated": updated,
+                "errors": errors[:10]  # Cap errors for clean frontend UI
+            }, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        return Response({"error": f"Server error: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
