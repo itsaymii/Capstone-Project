@@ -14,41 +14,143 @@ interface VictimDetails {
 
 interface IncidentReportForm {
   timeOccurred: string
-  incidentCode: string
   incidentType: string
   responderTeam: string
   description: string
   location: string
+  latitude: string
+  longitude: string
   victimCount: number
   victims: VictimDetails[]
   actionTaken: string
 }
 
+type CoordinateSource = 'none' | 'gps' | 'development' | 'manual'
 
+const LUCENA_CENTER_COORDINATES = {
+  latitude: 13.9414,
+  longitude: 121.6236,
+}
+
+function isWithinLucena(latitude: number, longitude: number): boolean {
+  return latitude >= 13.89 && latitude <= 13.98 && longitude >= 121.57 && longitude <= 121.69
+}
 
 export const CreateReport: FC = () => {
   const navigate = useNavigate()
 
   const [formData, setFormData] = useState<IncidentReportForm>({
     timeOccurred: new Date().toTimeString().slice(0, 5),
-    incidentCode: '',
     incidentType: '',
     responderTeam: '',
     description: '',
     location: '',
+    latitude: '',
+    longitude: '',
     victimCount: 0,
     victims: [],
     actionTaken: '',
   })
 
   const [isLoading, setIsLoading] = useState(false)
+  const [isGettingLocation, setIsGettingLocation] = useState(false)
+  const [coordinateSource, setCoordinateSource] = useState<CoordinateSource>('none')
+  const [gpsAccuracy, setGpsAccuracy] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const handleInputChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
   ) => {
     const { name, value } = e.target
+
+    if (name === 'latitude' || name === 'longitude') {
+      setCoordinateSource('manual')
+      setGpsAccuracy(null)
+    }
+
     setFormData((prev) => ({ ...prev, [name]: value }))
+  }
+
+  const fillCoordinates = (
+    latitude: number,
+    longitude: number,
+    source: CoordinateSource,
+    accuracy: number | null = null
+  ) => {
+    setFormData((prev) => ({
+      ...prev,
+      latitude: latitude.toFixed(6),
+      longitude: longitude.toFixed(6),
+    }))
+
+    setCoordinateSource(source)
+    setGpsAccuracy(accuracy)
+  }
+
+  const useDevelopmentLocation = () => {
+    fillCoordinates(
+      LUCENA_CENTER_COORDINATES.latitude,
+      LUCENA_CENTER_COORDINATES.longitude,
+      'development',
+      null
+    )
+
+    setError(null)
+    addNotification('Development coordinates added for Lucena City testing.')
+  }
+
+  const useCurrentGpsLocation = () => {
+    if (!('geolocation' in navigator)) {
+      setError('GPS location is not supported by this browser. Use development coordinates or enter coordinates manually.')
+      addNotification('GPS location is not supported by this browser.')
+      return
+    }
+
+    setIsGettingLocation(true)
+    setError(null)
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const latitude = position.coords.latitude
+        const longitude = position.coords.longitude
+        const accuracy = position.coords.accuracy
+
+        fillCoordinates(latitude, longitude, 'gps', accuracy)
+        setIsGettingLocation(false)
+
+        if (!isWithinLucena(latitude, longitude)) {
+          setError('GPS coordinates were captured, but they are outside the Lucena City validation range. Use this only if testing outside Lucena.')
+          addNotification('GPS captured, but outside Lucena City range.')
+          return
+        }
+
+        addNotification(`GPS location captured${accuracy ? ` with ±${Math.round(accuracy)}m accuracy` : ''}.`)
+      },
+      (locationError) => {
+        console.error('[CreateReport] GPS error:', locationError)
+        setIsGettingLocation(false)
+        setError('Unable to get current location. Allow location permission, turn on device location, or use development coordinates.')
+        addNotification('Unable to get current location.')
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 15000,
+        maximumAge: 0,
+      }
+    )
+  }
+
+  const getCoordinateSourceLabel = () => {
+    switch (coordinateSource) {
+      case 'gps':
+        return `Device GPS${gpsAccuracy ? ` · ±${Math.round(gpsAccuracy)}m accuracy` : ''}`
+      case 'development':
+        return 'Development test location · Lucena City center'
+      case 'manual':
+        return 'Manually entered coordinates'
+      default:
+        return 'No coordinates captured yet'
+    }
   }
 
   const handleVictimChange = (
@@ -121,12 +223,6 @@ export const CreateReport: FC = () => {
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
 
-    if (!formData.incidentCode.trim()) {
-      setError('Incident code is required.')
-      addNotification('Incident code is required.')
-      return
-    }
-
     if (!formData.incidentType.trim()) {
       setError('Incident type is required.')
       addNotification('Incident type is required.')
@@ -151,6 +247,27 @@ export const CreateReport: FC = () => {
       return
     }
 
+    const latitude = Number(formData.latitude)
+    const longitude = Number(formData.longitude)
+
+    if (!Number.isFinite(latitude)) {
+      setError('Valid latitude is required.')
+      addNotification('Valid latitude is required.')
+      return
+    }
+
+    if (!Number.isFinite(longitude)) {
+      setError('Valid longitude is required.')
+      addNotification('Valid longitude is required.')
+      return
+    }
+
+    if (latitude < 13.89 || latitude > 13.98 || longitude < 121.57 || longitude > 121.69) {
+      setError('Coordinates must be within Lucena City area.')
+      addNotification('Coordinates must be within Lucena City area.')
+      return
+    }
+
     if (!formData.actionTaken.trim()) {
       setError('Action taken details are required.')
       addNotification('Action taken details are required.')
@@ -169,12 +286,13 @@ export const CreateReport: FC = () => {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          incidentCode: formData.incidentCode.trim().toUpperCase(),
           timeOccurred: formData.timeOccurred,
           incidentType: formData.incidentType,
           responderTeam: formData.responderTeam,
           description: formData.description,
           location: formData.location,
+          latitude,
+          longitude,
           victimCount: formData.victimCount,
           victims: formData.victims,
           actionTaken: formData.actionTaken,
@@ -294,42 +412,10 @@ export const CreateReport: FC = () => {
             </div>
           )}
 
-          <div className="p-6 space-y-4 bg-blue-50 border-l-4 border-l-blue-500">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-blue-700 bg-blue-100 inline-block px-2.5 py-1 rounded-md">
-              0. Incident Reference
-            </h3>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-600 mb-1.5">
-                Incident Code *
-              </label>
-
-              <input
-                type="text"
-                name="incidentCode"
-                value={formData.incidentCode}
-                onChange={(e) => {
-                  setFormData((prev) => ({
-                    ...prev,
-                    incidentCode: e.target.value.toUpperCase(),
-                  }))
-                  setError(null)
-                }}
-                placeholder="e.g. INC-2026-001"
-                className="w-full text-sm border border-slate-200 rounded-xl px-3.5 py-2.5 bg-white focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 transition-all outline-none font-medium placeholder-slate-400 font-mono tracking-tight uppercase"
-                required
-              />
-
-              <p className="text-xs text-slate-500 mt-1">
-                Enter the incident code for this responder report.
-              </p>
-            </div>
-          </div>
-
           <div className={`p-6 space-y-5 transition-all ${getAccentColor(formData.incidentType)}`}>
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-bold uppercase tracking-wider text-blue-600 bg-blue-50 px-2.5 py-1 rounded-md">
-                1. Incident Overview
+                0. Incident Overview
               </h3>
 
               <span className="text-[11px] font-semibold text-slate-400 uppercase bg-slate-100 px-2 py-0.5 rounded">
@@ -423,6 +509,91 @@ export const CreateReport: FC = () => {
                 className="w-full text-sm border border-slate-200 rounded-xl px-3.5 py-2.5 bg-slate-50/50 focus:bg-white focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 transition-all outline-none font-medium placeholder-slate-400"
                 required
               />
+            </div>
+
+            <div className="rounded-2xl border border-blue-100 bg-blue-50/50 p-4 space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-wide text-blue-700">
+                    GPS Coordinates
+                  </p>
+                  <p className="mt-1 text-xs text-slate-600">
+                    Use browser GPS for real testing. Use development location when presenting on a laptop without GPS.
+                  </p>
+                </div>
+
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <button
+                    type="button"
+                    onClick={useCurrentGpsLocation}
+                    disabled={isGettingLocation}
+                    className="rounded-xl bg-blue-600 px-4 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {isGettingLocation ? 'Getting GPS...' : 'Use Current GPS Location'}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={useDevelopmentLocation}
+                    disabled={isGettingLocation}
+                    className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-xs font-bold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    Use Dev Lucena Location
+                  </button>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-white/70 bg-white px-3 py-2 text-xs text-slate-600">
+                <span className="font-bold text-slate-800">Coordinate Source:</span> {getCoordinateSourceLabel()}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1.5">
+                  Latitude *
+                </label>
+
+                <input
+                  type="number"
+                  name="latitude"
+                  value={formData.latitude}
+                  onChange={handleInputChange}
+                  placeholder="Example: 13.9414"
+                  min="13.89"
+                  max="13.98"
+                  step="0.000001"
+                  className="w-full text-sm border border-slate-200 rounded-xl px-3.5 py-2.5 bg-slate-50/50 focus:bg-white focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 transition-all outline-none font-medium placeholder-slate-400"
+                  required
+                />
+
+                <p className="mt-1 text-[11px] text-slate-400">
+                  Lucena latitude range: 13.89 to 13.98
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1.5">
+                  Longitude *
+                </label>
+
+                <input
+                  type="number"
+                  name="longitude"
+                  value={formData.longitude}
+                  onChange={handleInputChange}
+                  placeholder="Example: 121.6236"
+                  min="121.57"
+                  max="121.69"
+                  step="0.000001"
+                  className="w-full text-sm border border-slate-200 rounded-xl px-3.5 py-2.5 bg-slate-50/50 focus:bg-white focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 transition-all outline-none font-medium placeholder-slate-400"
+                  required
+                />
+
+                <p className="mt-1 text-[11px] text-slate-400">
+                  Lucena longitude range: 121.57 to 121.69
+                </p>
+              </div>
             </div>
           </div>
 

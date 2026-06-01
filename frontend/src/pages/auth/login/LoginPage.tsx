@@ -57,20 +57,28 @@ export function LoginPage({ onRequestRegister, onRequestAdminLogin: _onRequestAd
 
   const otpInputRefs = useRef<Array<HTMLInputElement | null>>([])
 
-  function getPostLoginPath(): string {
+  function getPostLoginPath(overrideProfile?: { role?: string; isAdmin?: boolean; isStaff?: boolean; hasDashboardAccess?: boolean }): string {
     const redirectPath = (location.state as { from?: string } | null)?.from
-    const profile = getCurrentUserProfile()
+    const profile = overrideProfile ?? getCurrentUserProfile()
 
     const role = profile?.role
+    const isAdmin = profile?.isAdmin
+    const isStaff = profile?.isStaff
+    const hasDashboardAccess = profile?.hasDashboardAccess
 
-    // Strict role-based routing: Route ONLY based on role, never based on previous location
-    if (role === 'admin') {
-      // Admin users ALWAYS go to admin dashboard
+    // Strict role-based routing: prefer explicit role fields, but also support boolean flags
+    // Admin users ALWAYS go to admin dashboard
+    if (role === 'admin' || isAdmin) {
       return '/admin-dashboard'
     }
 
-    if (role === 'staff') {
-      // Staff users ALWAYS go to responder dashboard
+    // Staff users ALWAYS go to the responder dashboard
+    if (role === 'staff' || isStaff) {
+      return '/responder-dashboard'
+    }
+
+    // Fallback: if profile has dashboard access but no explicit role flags, assume responder role
+    if (hasDashboardAccess) {
       return '/responder-dashboard'
     }
 
@@ -317,9 +325,9 @@ export function LoginPage({ onRequestRegister, onRequestAdminLogin: _onRequestAd
           return
         }
 
-        navigate(getPostLoginPath(), {
+        navigate(getPostLoginPath(result.user), {
           state: {
-              loginSuccessMessage: result.message ?? 'Welcome back to Lucena City DRRMO.',
+            loginSuccessMessage: result.message ?? 'Welcome back to Lucena City DRRMO.',
           },
         })
       }, 900)
@@ -361,7 +369,7 @@ export function LoginPage({ onRequestRegister, onRequestAdminLogin: _onRequestAd
         return
       }
 
-      navigate(getPostLoginPath(), {
+      navigate(getPostLoginPath(result.user), {
         state: {
             loginSuccessMessage: result.message ?? 'Welcome back to Lucena City DRRMO.',
         },

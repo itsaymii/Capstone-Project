@@ -1,5 +1,5 @@
 export type HazardType = 'EQ' | 'FR' | 'AC'
-export type IncidentStatus = 'active' | 'pending' | 'resolved'
+export type IncidentStatus = 'active' | 'pending' | 'approved' | 'resolved'
 
 export type HazardIncident = {
   id: string
@@ -99,6 +99,7 @@ export const hazardMeta: Record<HazardType, { label: string; accent: string; sur
 export const incidentStatusClasses: Record<IncidentStatus, string> = {
   active: 'border-red-300/22 bg-red-400/12 text-red-100',
   pending: 'border-amber-300/22 bg-amber-400/12 text-amber-100',
+  approved: 'border-sky-300/22 bg-sky-400/12 text-sky-100',
   resolved: 'border-emerald-300/22 bg-emerald-400/12 text-emerald-100',
 }
 

@@ -63,8 +63,10 @@ def _serialize_user(user: User, fallback_identifier: str = '') -> dict:
 		'fullName': _get_user_full_name(user),
 		'email': contact_value,
 		'role': role,
-		'isAdmin': role == AccountProfile.ROLE_ADMIN,
-		'isStaff': role == AccountProfile.ROLE_STAFF,
+		# Prefer explicit Django flags when available so frontend routing
+		# works even if AccountProfile hasn't been synchronized.
+		'isAdmin': bool(user.is_superuser) or role == AccountProfile.ROLE_ADMIN,
+		'isStaff': bool(user.is_staff) or role == AccountProfile.ROLE_STAFF,
 		'hasDashboardAccess': user_has_dashboard_access(user),
 	}
 

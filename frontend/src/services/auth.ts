@@ -44,6 +44,7 @@ type AuthResult = {
   retryAfterSeconds?: number
   otpEmail?: string
   skipOtp?: boolean
+  user?: SessionUser
 }
 
 const AUTH_KEY = 'drms-auth'
@@ -288,6 +289,14 @@ export async function requestLoginOtp(
         message: response.message ?? 'Login successful.',
         otpEmail: response.user.email,
         skipOtp: true,
+        user: {
+          fullName: response.user.fullName,
+          email: response.user.email,
+          role: response.user.role,
+          isAdmin: response.user.isAdmin,
+          isStaff: response.user.isStaff,
+          hasDashboardAccess: response.user.hasDashboardAccess,
+        },
       }
     }
 
@@ -351,6 +360,14 @@ export async function verifyLoginOtpCode(payload: {
     return {
       success: true,
       message: response.message ?? 'Login successful.',
+      user: {
+        fullName: response.user.fullName,
+        email: response.user.email,
+        role: response.user.role,
+        isAdmin: response.user.isAdmin,
+        isStaff: response.user.isStaff,
+        hasDashboardAccess: response.user.hasDashboardAccess,
+      },
     }
   } catch (error) {
     const parsedError = parseApiError(error, 'Unable to verify OTP.')

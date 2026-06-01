@@ -24,9 +24,9 @@ export function ProtectedRoute({ element, redirectTo = '/login', requireDashboar
   }
 
   // Enforce role-based access control
-  if (requiredRole && profile?.role !== requiredRole) {
+  const actualRole = profile?.role || (profile?.isAdmin ? 'admin' : profile?.isStaff ? 'staff' : undefined)
+  if (requiredRole && actualRole !== requiredRole) {
     // Redirect to appropriate dashboard based on actual role
-    const actualRole = profile?.role
     if (actualRole === 'admin') {
       return <Navigate replace to="/admin-dashboard" />
     }

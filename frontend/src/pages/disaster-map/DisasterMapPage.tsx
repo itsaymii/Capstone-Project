@@ -18,8 +18,8 @@ import {
 } from '../../services/earthquakes'
 
 const lucenaBounds: LatLngBoundsExpression = [
-  [13.89, 121.57],
-  [13.98, 121.69],
+  [13.895, 121.575],
+  [13.975, 121.665],
 ]
 
 const philippinesBounds: LatLngBoundsExpression = [
@@ -45,7 +45,7 @@ type IncidentItem = {
   id?: string
   title: string
   time: string
-  status: 'active' | 'resolved' | 'pending'
+  status: 'active' | 'resolved' | 'pending' | 'approved'
   color: string
   code: 'EQ' | 'FR' | 'AC'
   location: string
@@ -60,7 +60,7 @@ const mockIncidents: IncidentItem[] = [
   {
     title: 'Building Fire - Commercial District',
     time: '7:15 AM',
-    status: 'active',
+    status: 'pending',
     color: hazardColors.FR,
     code: 'FR',
     location: 'Commercial District, Lucena City',
@@ -95,6 +95,7 @@ const statusClassByType: Record<string, string> = {
   active: 'border border-red-200 bg-red-50 text-red-800',
   resolved: 'border border-emerald-200 bg-emerald-50 text-emerald-800',
   pending: 'border border-amber-200 bg-amber-50 text-amber-800',
+  approved: 'border border-emerald-200 bg-emerald-50 text-emerald-800',
 }
 
 function getEarthquakeSeverity(magnitude: number): IncidentItem['severity'] {
@@ -106,14 +107,20 @@ function getEarthquakeSeverity(magnitude: number): IncidentItem['severity'] {
 
 function getEarthquakeDescription(event: EarthquakeEvent): string {
   if (event.magnitude >= 5) {
-    return `Strong seismic event detected near ${event.place}. Depth ${event.depth.toFixed(1)} km. Immediate structural assessment recommended.`
+    return `Strong seismic event detected near ${event.place}. Depth ${event.depth.toFixed(
+      1,
+    )} km. Immediate structural assessment recommended.`
   }
 
   if (event.magnitude >= 4) {
-    return `Moderate earthquake recorded near ${event.place}. Depth ${event.depth.toFixed(1)} km with potential light shaking.`
+    return `Moderate earthquake recorded near ${event.place}. Depth ${event.depth.toFixed(
+      1,
+    )} km with potential light shaking.`
   }
 
-  return `Minor-to-light seismic activity near ${event.place}. Depth ${event.depth.toFixed(1)} km. Monitoring remains active.`
+  return `Minor-to-light seismic activity near ${event.place}. Depth ${event.depth.toFixed(
+    1,
+  )} km. Monitoring remains active.`
 }
 
 function getFaultLineDistanceScore(geometry: GeoJSON.Geometry | null | undefined): number {
@@ -205,6 +212,9 @@ function mapIncidentReportToMapIncident(report: any): IncidentItem {
 
   const victimCount = Number(report.victimCount || report.victim_count || 0)
 
+  const rawStatus = String(report.status || '').toLowerCase()
+  const status: IncidentItem['status'] = rawStatus === 'approved' ? 'approved' : 'pending'
+
   return {
     id: report.id,
     title: `${report.incidentType || report.incident_type || 'Incident Report'} - ${
@@ -219,7 +229,7 @@ function mapIncidentReportToMapIncident(report: any): IncidentItem {
             minute: '2-digit',
           })
         : 'Unknown time'),
-    status: 'active',
+    status,
     color,
     code,
     location,
@@ -244,17 +254,12 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
   const [barangayLayer, setBarangayLayer] = useState<GeoJSON.FeatureCollection<GeoJSON.Geometry, Record<string, unknown>> | null>(null)
   const [eqHeatPoints, setEqHeatPoints] = useState<HeatPoint[]>([])
   const [eqFetchStatus, setEqFetchStatus] = useState<'idle' | 'loading' | 'error'>('idle')
-  // const [faultLineStatus, setFaultLineStatus] = useState<'idle' | 'loading' | 'error'>('idle')
   const [showHeatmap, setShowHeatmap] = useState(true)
   const [showFaultLines, setShowFaultLines] = useState(true)
   const [eqLastRefreshed, setEqLastRefreshed] = useState<Date | null>(null)
-  // const [eqIsRefreshing, setEqIsRefreshing] = useState(false)
   const [eqSearchQuery, setEqSearchQuery] = useState('')
 
-  const allMappedIncidents = useMemo(
-    () => [...backendIncidents, ...mockIncidents],
-    [backendIncidents],
-  )
+  const allMappedIncidents = useMemo(() => [...backendIncidents, ...mockIncidents], [backendIncidents])
 
   const filteredIncidents = useMemo(
     () => allMappedIncidents.filter((incident) => incident.code === selectedType),
@@ -335,6 +340,35 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
     setSelectedIncident(incident)
   }
 
+  function handleEditReport(id?: string) {
+    if (!id) return
+    navigate(`/admin/incident-reports/${id}/edit`)
+  }
+
+  function handleMarkPending(id?: string) {
+    if (!id) return
+
+    setBackendIncidents((items) =>
+      items.map((item) => (item.id === id ? { ...item, status: 'pending' } : item)),
+    )
+
+    if (selectedIncident?.id === id) {
+      setSelectedIncident({ ...selectedIncident, status: 'pending' })
+    }
+  }
+
+  function handleApprove(id?: string) {
+    if (!id) return
+
+    setBackendIncidents((items) =>
+      items.map((item) => (item.id === id ? { ...item, status: 'approved' } : item)),
+    )
+
+    if (selectedIncident?.id === id) {
+      setSelectedIncident({ ...selectedIncident, status: 'approved' })
+    }
+  }
+
   const loadIncidentReports = useCallback(async () => {
     try {
       const reports = await getIncidentReports()
@@ -391,7 +425,7 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
         }
       })
       .catch(() => {
-        // Optionally handle error
+        console.error('Failed to load fault lines')
       })
 
     return () => {
@@ -437,24 +471,20 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
       const map = L.map(mapContainerRef.current, {
         zoomControl: true,
         attributionControl: false,
-        maxBounds: philippinesBounds,
+        maxBounds: isEqView ? philippinesBounds : lucenaBounds,
         maxBoundsViscosity: 1,
-        minZoom: isEqView ? 6 : 10,
-        maxZoom: 17,
+        minZoom: isEqView ? 6 : 12,
+        maxZoom: 18,
       })
 
-      map.fitBounds(isEqView ? quezonRegionBounds : lucenaBounds)
+      if (isEqView) {
+        map.fitBounds(quezonRegionBounds)
+      } else {
+        map.fitBounds(lucenaBounds, { padding: [18, 18] })
+      }
 
       L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
         attribution: '&copy; OpenStreetMap contributors',
-      }).addTo(map)
-
-      L.rectangle(lucenaBounds, {
-        color: '#0f766e',
-        weight: 2,
-        fillColor: '#14b8a6',
-        fillOpacity: 0.1,
-        dashArray: '6 5',
       }).addTo(map)
 
       if (barangayLayer) {
@@ -557,7 +587,7 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
             interactive: false,
           }).addTo(map)
 
-          if (incident.status === 'active') {
+          if (incident.status === 'pending') {
             L.circleMarker(incident.coordinates, {
               radius: 11,
               color: incident.color,
@@ -581,7 +611,8 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
               `<strong>${incident.title}</strong><br/>
               <small>${incident.location}</small><br/>
               <small>${incident.time}</small><br/>
-              <small>${incident.severity}</small>`,
+              <small>${incident.severity}</small><br/>
+              <small>Status: ${incident.status}</small>`,
             )
             .on('click', () => handleIncidentClick(incident))
         })
@@ -653,12 +684,21 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
                 {isAdminVariant ? 'Hazard Mapping Control' : 'Lucena City DRRMO Monitoring Desk'}
               </p>
 
-              <h1 className={`mt-3 text-3xl font-black tracking-tight sm:text-4xl ${isAdminVariant ? 'text-white' : 'text-slate-900'}`}>
+              <h1
+                className={`mt-3 text-3xl font-black tracking-tight sm:text-4xl ${
+                  isAdminVariant ? 'text-white' : 'text-slate-900'
+                }`}
+              >
                 Disaster Incident Map
               </h1>
 
-              <p className={`mt-2 max-w-3xl text-sm leading-relaxed sm:text-base ${isAdminVariant ? 'text-slate-300' : 'text-slate-600'}`}>
-                Every submitted responder incident report is plotted automatically on the map using its saved location coordinates.
+              <p
+                className={`mt-2 max-w-3xl text-sm leading-relaxed sm:text-base ${
+                  isAdminVariant ? 'text-slate-300' : 'text-slate-600'
+                }`}
+              >
+                Every submitted responder incident report is plotted automatically on the map using its saved location
+                coordinates.
               </p>
             </div>
           </section>
@@ -671,7 +711,7 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
                   : 'border border-slate-200 bg-white/90 backdrop-blur'
               }`}
             >
-              <p className="mr-1 text-xs font-bold uppercase tracking-[0.14em] text-slate-600">
+              <p className={`mr-1 text-xs font-bold uppercase tracking-[0.14em] ${isAdminVariant ? 'text-slate-300' : 'text-slate-600'}`}>
                 Incident Type Mapping
               </p>
 
@@ -695,7 +735,7 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
               ))}
 
               <span className="ml-auto rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700">
-                {backendIncidents.length} backend reports loaded
+                {backendIncidents.length} responder reports loaded
               </span>
             </div>
           </section>
@@ -723,7 +763,7 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
                     <p className="mt-0.5 text-[11px] text-slate-500">
                       {selectedType === 'EQ'
                         ? 'Quezon Province seismic view — Lucena City highlighted'
-                        : 'Backend incident reports are plotted here'}
+                        : 'Responder reports are plotted here'}
                     </p>
                   </div>
 
@@ -859,7 +899,7 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
                     <div className={`pb-3 ${isAdminVariant ? 'border-b border-slate-700' : 'border-b border-slate-200'}`}>
                       <div className="flex items-center justify-between">
                         <h2 className={`text-xl font-bold ${isAdminVariant ? 'text-white' : 'text-slate-900'}`}>
-                          Incident Log
+                          Responder Reports Review
                         </h2>
                         <span className="rounded-full bg-[#e8f2fc] px-2.5 py-1 text-xs font-semibold text-[#245785]">
                           {filteredIncidents.length}
@@ -867,7 +907,7 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
                       </div>
 
                       <p className="mt-1 text-xs text-slate-500">
-                        Submitted responder incident reports
+                        Admin can review, edit, mark pending, or approve responder reports.
                       </p>
                     </div>
 
@@ -891,21 +931,30 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
                                   >
                                     {incident.code}
                                   </span>
-                                  <p className={`truncate text-sm font-semibold ${isAdminVariant ? 'text-white' : 'text-slate-900'}`}>
+                                  <p
+                                    className={`truncate text-sm font-semibold ${
+                                      isAdminVariant ? 'text-white' : 'text-slate-900'
+                                    }`}
+                                  >
                                     {incident.title}
                                   </p>
                                 </div>
 
                                 <p className="mt-1 pl-7 text-xs text-slate-500">{incident.location}</p>
                                 <p className="mt-1 pl-7 text-xs text-slate-500">{incident.time}</p>
+                                <p className="mt-1 pl-7 text-xs text-slate-500">{incident.responseTeam}</p>
                               </div>
 
-                              <span className={`rounded-full px-2 py-1 text-[10px] font-bold uppercase ${statusClassByType[incident.status]}`}>
+                              <span
+                                className={`rounded-full px-2 py-1 text-[10px] font-bold uppercase ${
+                                  statusClassByType[incident.status]
+                                }`}
+                              >
                                 {incident.status}
                               </span>
                             </div>
 
-                            <div className="mt-3 pl-7">
+                            <div className="mt-3 flex flex-wrap gap-2 pl-7">
                               <button
                                 className="rounded-md border border-[#234d77]/30 bg-white px-2.5 py-1.5 text-xs font-semibold text-[#234d77]"
                                 onClick={() => handleIncidentClick(incident)}
@@ -913,12 +962,40 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
                               >
                                 View Info
                               </button>
+
+                              {isAdminVariant ? (
+                                <>
+                                  <button
+                                    className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                                    onClick={() => handleEditReport(incident.id)}
+                                    type="button"
+                                  >
+                                    Edit
+                                  </button>
+
+                                  <button
+                                    className="rounded-md border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-xs font-semibold text-amber-800 hover:bg-amber-100"
+                                    onClick={() => handleMarkPending(incident.id)}
+                                    type="button"
+                                  >
+                                    Pending
+                                  </button>
+
+                                  <button
+                                    className="rounded-md border border-emerald-300 bg-emerald-50 px-2.5 py-1.5 text-xs font-semibold text-emerald-800 hover:bg-emerald-100"
+                                    onClick={() => handleApprove(incident.id)}
+                                    type="button"
+                                  >
+                                    Approved
+                                  </button>
+                                </>
+                              ) : null}
                             </div>
                           </article>
                         ))
                       ) : (
                         <p className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
-                          No submitted reports for this incident type yet.
+                          No submitted responder reports for this incident type yet.
                         </p>
                       )}
                     </div>
@@ -939,7 +1016,7 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
                 <div className="flex items-start justify-between gap-3 border-b border-slate-200 pb-3">
                   <div>
                     <p className="text-xs font-bold uppercase tracking-[0.15em] text-slate-500">
-                      Incident Details
+                      Responder Incident Report
                     </p>
                     <h3 className="mt-1 text-xl font-black text-slate-900 sm:text-2xl">
                       {selectedIncident.title}
@@ -970,13 +1047,52 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
                     <span className="font-semibold text-slate-800">Severity:</span> {selectedIncident.severity}
                   </p>
                   <p className="text-slate-600">
-                    <span className="font-semibold text-slate-800">Response Team:</span> {selectedIncident.responseTeam}
+                    <span className="font-semibold text-slate-800">Response Team:</span>{' '}
+                    {selectedIncident.responseTeam}
+                  </p>
+                  <p className="text-slate-600">
+                    <span className="font-semibold text-slate-800">Status:</span>{' '}
+                    <span
+                      className={`rounded-full px-2 py-1 text-[10px] font-bold uppercase ${
+                        statusClassByType[selectedIncident.status]
+                      }`}
+                    >
+                      {selectedIncident.status}
+                    </span>
                   </p>
                   <p className="text-slate-600">
                     <span className="font-semibold text-slate-800">Coordinates:</span>{' '}
                     {selectedIncident.coordinates[0].toFixed(5)}, {selectedIncident.coordinates[1].toFixed(5)}
                   </p>
                 </div>
+
+                {isAdminVariant && selectedIncident.code !== 'EQ' ? (
+                  <div className="mt-5 flex flex-wrap gap-2 border-t border-slate-200 pt-4">
+                    <button
+                      className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                      onClick={() => handleEditReport(selectedIncident.id)}
+                      type="button"
+                    >
+                      Edit Report
+                    </button>
+
+                    <button
+                      className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-xs font-semibold text-amber-800 hover:bg-amber-100"
+                      onClick={() => handleMarkPending(selectedIncident.id)}
+                      type="button"
+                    >
+                      Mark as Pending
+                    </button>
+
+                    <button
+                      className="rounded-lg border border-emerald-300 bg-emerald-50 px-4 py-2 text-xs font-semibold text-emerald-800 hover:bg-emerald-100"
+                      onClick={() => handleApprove(selectedIncident.id)}
+                      type="button"
+                    >
+                      Approve Report
+                    </button>
+                  </div>
+                ) : null}
               </section>
             </div>
           </div>

@@ -37,7 +37,7 @@ class IncidentManager(models.Manager):
 
 class Incident(models.Model):
     """Core incident table - all disaster types link here"""
-    
+
     SEVERITY_CHOICES = [
         ('low', 'Low'), ('moderate', 'Moderate'),
         ('high', 'High'), ('critical', 'Critical'),
@@ -55,7 +55,7 @@ class Incident(models.Model):
 
     # ✅ UUID remains as internal PK for FK relationships (best practice)
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    
+
     # ✅ Human-readable reference code as PRIMARY external identifier
     reference_code = models.CharField(
         max_length=20, 
@@ -64,11 +64,11 @@ class Incident(models.Model):
         db_index=True,  # ✅ Fast lookups
         help_text="Incident reference code (e.g., INC-2025-001). Auto-generated if blank."
     )
-    
+
     hazard_type = models.ForeignKey(
         HazardType, on_delete=models.PROTECT, related_name='incidents'
     )
-    
+
     # Location
     latitude = models.DecimalField(max_digits=9, decimal_places=6)
     longitude = models.DecimalField(max_digits=9, decimal_places=6)
@@ -77,7 +77,7 @@ class Incident(models.Model):
         'locations.Barangay', on_delete=models.SET_NULL,
         null=True, blank=True, related_name='incidents'
     )
-    
+
     reported_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
         null=True, related_name='reported_incidents'
@@ -116,7 +116,7 @@ class Incident(models.Model):
                 last = Incident.objects.select_for_update().filter(
                     reference_code__startswith=f'INC-{year}-'
                 ).order_by(Length('reference_code'), 'reference_code').last()
-                
+
                 next_num = 1
                 if last:
                     try:
@@ -124,9 +124,9 @@ class Incident(models.Model):
                         next_num = last_num + 1
                     except (ValueError, IndexError):
                         next_num = 1
-                
+
                 self.reference_code = f'INC-{year}-{next_num:03d}'
-        
+
         super().save(*args, **kwargs)
 
     def get_coordinates(self):
@@ -226,7 +226,7 @@ class Alert(models.Model):
         ('all_clear', 'All Clear'), ('advisory', 'Advisory'),
     ]
     SEVERITY_CHOICES = [('low', 'Low'), ('medium', 'Medium'), ('high', 'High'), ('critical', 'Critical')]
-    
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     incident = models.ForeignKey(Incident, on_delete=models.CASCADE, related_name='alerts')
     alert_type = models.CharField(max_length=20, choices=ALERT_TYPE_CHOICES)
@@ -265,11 +265,13 @@ class ResponderReport(models.Model):
 class IncidentReport(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     report_code = models.CharField(max_length=30, unique=True, blank=True)
-    incident_code = models.CharField(max_length=30)
+    incident_code = models.CharField(max_length=30, unique=True, blank=True, db_index=True)
     time_occurred = models.TimeField()
     incident_type = models.CharField(max_length=100)
     responder_team = models.CharField(max_length=100)
     location = models.TextField()
+    latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
     description = models.TextField()
     victim_count = models.PositiveIntegerField(default=0)
     action_taken = models.TextField()
@@ -282,22 +284,38 @@ class IncidentReport(models.Model):
         ordering = ['-created_at']
 
     def save(self, *args, **kwargs):
-        if not self.report_code:
-            year = timezone.now().year
-            last = IncidentReport.objects.filter(
-                report_code__startswith=f'IR-{year}-'
-            ).order_by(Length('report_code'), 'report_code').last()
+        with transaction.atomic():
+            if not self.incident_code:
+                year = timezone.now().year
+                last_incident_report = IncidentReport.objects.select_for_update().filter(
+                    incident_code__startswith=f'INC-{year}-'
+                ).order_by(Length('incident_code'), 'incident_code').last()
 
-            next_num = 1
-            if last:
-                try:
-                    next_num = int(last.report_code.split('-')[-1]) + 1
-                except ValueError:
-                    next_num = 1
+                next_incident_num = 1
+                if last_incident_report:
+                    try:
+                        next_incident_num = int(last_incident_report.incident_code.split('-')[-1]) + 1
+                    except (ValueError, IndexError):
+                        next_incident_num = 1
 
-            self.report_code = f'IR-{year}-{next_num:05d}'
+                self.incident_code = f'INC-{year}-{next_incident_num:05d}'
 
-        super().save(*args, **kwargs)
+            if not self.report_code:
+                year = timezone.now().year
+                last_report = IncidentReport.objects.select_for_update().filter(
+                    report_code__startswith=f'IR-{year}-'
+                ).order_by(Length('report_code'), 'report_code').last()
+
+                next_report_num = 1
+                if last_report:
+                    try:
+                        next_report_num = int(last_report.report_code.split('-')[-1]) + 1
+                    except (ValueError, IndexError):
+                        next_report_num = 1
+
+                self.report_code = f'IR-{year}-{next_report_num:05d}'
+
+            super().save(*args, **kwargs)
 
 
 class VictimDetail(models.Model):

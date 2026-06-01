@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import type { FC } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { MobileNavBar } from '../../components/MobileNavBar'
+import { getCurrentUserProfile } from '../../services/auth'
 import { addNotification } from '../../services/notifications'
 
 interface VictimDetails {
@@ -14,22 +15,159 @@ interface VictimDetails {
 
 interface IncidentReport {
   id: string
-  reportCode: string
-  incidentCode: string
-  timeOccurred: string
-  incidentType: string
-  responderTeam: string
+  reportCode?: string
+  report_code?: string
+  incidentCode?: string
+  incident_code?: string
+  incident_reference_code_readonly?: string
+  timeOccurred?: string
+  time_occurred?: string
+  incidentType?: string
+  incident_type?: string
+  responderTeam?: string
+  responder_team?: string
   location: string
   description: string
-  victimCount: number
-  victims: VictimDetails[]
-  actionTaken: string
-  status: string
-  createdAt: string
+  victimCount?: number
+  victim_count?: number
+  victims?: VictimDetails[]
+  actionTaken?: string
+  action_taken?: string
+  status?: string
+  status_update?: string
+  createdAt?: string
+  created_at?: string
+}
+
+const API_BASE_URL = 'http://127.0.0.1:8000'
+
+function getStatusValue(report: IncidentReport): string {
+  return report.status_update || report.status || 'Submitted'
+}
+
+function normalizeStatus(status?: string): 'approved' | 'pending' | 'submitted' {
+  const value = String(status || '').trim().toLowerCase()
+
+  if (value === 'approved' || value === 'approve' || value === 'verified') return 'approved'
+  if (value === 'pending') return 'pending'
+
+  return 'submitted'
+}
+
+function getStatusLabel(status?: string): string {
+  const normalized = normalizeStatus(status)
+
+  if (normalized === 'approved') return 'Approved'
+  if (normalized === 'pending') return 'Pending'
+
+  return 'Submitted'
+}
+
+function getStatusBadgeClass(status?: string): string {
+  const normalized = normalizeStatus(status)
+
+  if (normalized === 'approved') return 'bg-emerald-50 text-emerald-700 border-emerald-100'
+  if (normalized === 'pending') return 'bg-amber-50 text-amber-700 border-amber-100'
+
+  return 'bg-blue-50 text-blue-700 border-blue-100'
+}
+
+function getStatusDotClass(status?: string): string {
+  const normalized = normalizeStatus(status)
+
+  if (normalized === 'approved') return 'bg-emerald-500'
+  if (normalized === 'pending') return 'bg-amber-500'
+
+  return 'bg-blue-500'
+}
+
+function getReportCode(report: IncidentReport): string {
+  return report.reportCode || report.report_code || report.id
+}
+
+function getIncidentCode(report: IncidentReport): string {
+  return (
+    report.incidentCode ||
+    report.incident_code ||
+    report.incident_reference_code_readonly ||
+    'N/A'
+  )
+}
+
+function getIncidentType(report: IncidentReport): string {
+  return report.incidentType || report.incident_type || 'Incident Report'
+}
+
+function getCreatedAt(report: IncidentReport): string {
+  return report.createdAt || report.created_at || ''
+}
+
+function getTimeOccurred(report: IncidentReport): string {
+  return report.timeOccurred || report.time_occurred || 'N/A'
+}
+
+function getResponderTeam(report: IncidentReport): string {
+  return report.responderTeam || report.responder_team || 'Responder Team'
+}
+
+function getVictimCount(report: IncidentReport): number {
+  return Number(report.victimCount ?? report.victim_count ?? report.victims?.length ?? 0)
+}
+
+function getActionTaken(report: IncidentReport): string {
+  return report.actionTaken || report.action_taken || ''
+}
+
+type ResponderTeamCode = 'alpha' | 'bravo' | 'charlie' | 'unknown'
+
+function normalizeTeamValue(value?: string): ResponderTeamCode {
+  const normalized = String(value || '').trim().toLowerCase()
+
+  if (normalized.includes('alpha')) return 'alpha'
+  if (normalized.includes('bravo')) return 'bravo'
+  if (normalized.includes('charlie')) return 'charlie'
+
+  return 'unknown'
+}
+
+function getLoggedInResponderTeam(): ResponderTeamCode {
+  const profile = getCurrentUserProfile() as any
+
+  return normalizeTeamValue(
+    [
+      profile?.responderTeam,
+      profile?.responder_team,
+      profile?.team,
+      profile?.teamName,
+      profile?.team_name,
+      profile?.username,
+      profile?.fullName,
+      profile?.full_name,
+      profile?.email,
+      profile?.role,
+    ]
+      .filter(Boolean)
+      .join(' '),
+  )
+}
+
+function getTeamDisplayName(team: ResponderTeamCode): string {
+  if (team === 'alpha') return 'Alpha'
+  if (team === 'bravo') return 'Bravo'
+  if (team === 'charlie') return 'Charlie'
+
+  return 'Unassigned'
+}
+
+function isReportOwnedByResponderTeam(report: IncidentReport, team: ResponderTeamCode): boolean {
+  if (team === 'unknown') return false
+
+  return normalizeTeamValue(getResponderTeam(report)) === team
 }
 
 const IncidentReportPage: FC = () => {
   const navigate = useNavigate()
+  const currentResponderTeam = getLoggedInResponderTeam()
 
   const [reports, setReports] = useState<IncidentReport[]>([])
   const [selectedIds, setSelectedIds] = useState<string[]>([])
@@ -39,62 +177,96 @@ const IncidentReportPage: FC = () => {
   const [sortOrder, setSortOrder] = useState<'desc' | 'asc'>('desc')
   const [hazardFilter, setHazardFilter] = useState('All')
 
-  useEffect(() => {
-    const fetchReports = async () => {
-      try {
-        const response = await fetch('http://127.0.0.1:8000/api/incidents/incident-reports/')
+  const fetchReports = useCallback(async (showError = true) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/incidents/incident-reports/`, {
+        credentials: 'include',
+      })
 
-        if (!response.ok) {
-          throw new Error('Failed to fetch incident reports')
-        }
+      if (!response.ok) {
+        throw new Error('Failed to fetch incident reports')
+      }
 
-        const data = await response.json()
-        const reportsData = Array.isArray(data) ? data : data.results || []
+      const data = await response.json()
+      const reportsData = Array.isArray(data) ? data : data.results || []
 
-        setReports(reportsData)
-      } catch (error) {
-        console.error('Error fetching incident reports:', error)
+      setReports(reportsData)
+    } catch (error) {
+      console.error('Error fetching incident reports:', error)
+
+      if (showError) {
         addNotification('Failed to load incident reports.')
       }
     }
-
-    fetchReports()
   }, [])
 
+  useEffect(() => {
+    void fetchReports()
+
+    const intervalId = window.setInterval(() => {
+      void fetchReports(false)
+    }, 10000)
+
+    return () => window.clearInterval(intervalId)
+  }, [fetchReports])
+
   const isWithin24Hours = (createdAt: string) => {
+    if (!createdAt) return false
+
     const reportTime = new Date(createdAt).getTime()
     const now = new Date().getTime()
     const twentyFourHours = 24 * 60 * 60 * 1000
 
-    return now - reportTime <= twentyFourHours
+    return Number.isFinite(reportTime) && now - reportTime <= twentyFourHours
   }
 
-  const hazardTypes = Array.from(new Set(reports.map((report) => report.incidentType)))
+  const canSelectReport = (report: IncidentReport): boolean => {
+    return isWithin24Hours(getCreatedAt(report)) && isReportOwnedByResponderTeam(report, currentResponderTeam)
+  }
+
+  const getSelectionRestrictionMessage = (report: IncidentReport): string => {
+    if (!isReportOwnedByResponderTeam(report, currentResponderTeam)) {
+      return `Only ${getTeamDisplayName(currentResponderTeam)} reports can be selected by this account.`
+    }
+
+    if (!isWithin24Hours(getCreatedAt(report))) {
+      return 'Only reports created within the last 24 hours can be selected.'
+    }
+
+    return 'Select for accomplishment report'
+  }
+
+  const hazardTypes = Array.from(new Set(reports.map((report) => getIncidentType(report))))
 
   const filteredAndSortedReports = reports
     .filter((report) => {
       const query = searchQuery.toLowerCase()
+      const location = report.location || ''
 
       const matchesSearch =
-        report.reportCode.toLowerCase().includes(query) ||
-        report.incidentCode.toLowerCase().includes(query) ||
-        report.incidentType.toLowerCase().includes(query) ||
-        report.location.toLowerCase().includes(query)
+        getReportCode(report).toLowerCase().includes(query) ||
+        getIncidentCode(report).toLowerCase().includes(query) ||
+        getIncidentType(report).toLowerCase().includes(query) ||
+        location.toLowerCase().includes(query)
 
-      const matchesHazard =
-        hazardFilter === 'All' || report.incidentType === hazardFilter
+      const matchesHazard = hazardFilter === 'All' || getIncidentType(report) === hazardFilter
 
       return matchesSearch && matchesHazard
     })
     .sort((a, b) => {
-      const dateA = new Date(a.createdAt).getTime()
-      const dateB = new Date(b.createdAt).getTime()
+      const dateA = new Date(getCreatedAt(a)).getTime()
+      const dateB = new Date(getCreatedAt(b)).getTime()
 
       return sortOrder === 'desc' ? dateB - dateA : dateA - dateB
     })
 
   const toggleSelect = (report: IncidentReport) => {
-    if (!isWithin24Hours(report.createdAt)) {
+    if (!isReportOwnedByResponderTeam(report, currentResponderTeam)) {
+      addNotification(`Only ${getTeamDisplayName(currentResponderTeam)} reports can be selected by this account.`)
+      return
+    }
+
+    if (!isWithin24Hours(getCreatedAt(report))) {
       addNotification('Only reports created within the last 24 hours can be selected.')
       return
     }
@@ -102,17 +274,15 @@ const IncidentReportPage: FC = () => {
     setSelectedIds((prev) =>
       prev.includes(report.id)
         ? prev.filter((item) => item !== report.id)
-        : [...prev, report.id]
+        : [...prev, report.id],
     )
   }
 
   const toggleSelectAll = () => {
-    const selectableReports = filteredAndSortedReports.filter((report) =>
-      isWithin24Hours(report.createdAt)
-    )
+    const selectableReports = filteredAndSortedReports.filter((report) => canSelectReport(report))
 
     if (selectableReports.length === 0) {
-      addNotification('No reports within the last 24 hours can be selected.')
+      addNotification(`No ${getTeamDisplayName(currentResponderTeam)} reports within the last 24 hours can be selected.`)
       return
     }
 
@@ -127,8 +297,9 @@ const IncidentReportPage: FC = () => {
   }
 
   const compileReports = async () => {
-    const selectedReports = reports.filter((report) =>
-      selectedIds.includes(report.id)
+    const selectedReports = reports.filter((report) => selectedIds.includes(report.id))
+    const invalidTeamReports = selectedReports.filter(
+      (report) => !isReportOwnedByResponderTeam(report, currentResponderTeam),
     )
 
     if (selectedReports.length === 0) {
@@ -136,27 +307,38 @@ const IncidentReportPage: FC = () => {
       return
     }
 
-    try {
-      const response = await fetch(
-        'http://127.0.0.1:8000/api/incidents/accomplishment-reports/',
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            title: 'Accomplishment Report',
-            status: 'Compiled',
-            reportIds: selectedIds,
-          }),
-        }
+    if (invalidTeamReports.length > 0) {
+      addNotification(`You can only compile ${getTeamDisplayName(currentResponderTeam)} reports.`)
+      setSelectedIds((current) =>
+        current.filter((id) => {
+          const report = reports.find((item) => item.id === id)
+          return report ? isReportOwnedByResponderTeam(report, currentResponderTeam) : false
+        }),
       )
+      return
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/incidents/accomplishment-reports/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          title: 'Accomplishment Report',
+          status: 'Compiled',
+          report_ids: selectedIds,
+          reportIds: selectedIds,
+        }),
+      })
 
       if (!response.ok) {
         throw new Error('Failed to compile reports')
       }
 
       addNotification('Reports compiled successfully!')
+      setSelectedIds([])
       navigate('/responder-reports')
     } catch (error) {
       console.error('Error compiling reports:', error)
@@ -175,142 +357,151 @@ const IncidentReportPage: FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-slate-100 pb-28 sm:pb-12 pt-6 antialiased text-slate-800">
-      <main className="max-w-7xl mx-auto p-4 sm:p-6 space-y-6">
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-          <div className="p-5 sm:p-7 border-b border-slate-200/80 space-y-5 overflow-hidden relative">
-            <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-500" />
+    <div className="min-h-screen bg-slate-100 pb-28 pt-6 text-slate-800 antialiased sm:pb-12">
+      <main className="mx-auto max-w-7xl space-y-6 p-4 sm:p-6">
+        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="relative space-y-5 overflow-hidden border-b border-slate-200/80 p-5 sm:p-7">
+            <div className="absolute left-0 right-0 top-0 h-1.5 bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-500" />
 
             <div className="flex items-center gap-4">
               <button
+                className="group flex h-10 w-10 items-center justify-center rounded-2xl border border-slate-100 bg-slate-50 text-slate-500 shadow-sm transition-all hover:bg-blue-50 hover:text-blue-600 active:scale-90"
                 onClick={() => navigate('/responder-dashboard')}
-                className="group flex items-center justify-center w-10 h-10 bg-slate-50 text-slate-500 hover:bg-blue-50 hover:text-blue-600 rounded-2xl transition-all border border-slate-100 shadow-sm active:scale-90"
                 title="Back to Dashboard"
+                type="button"
               >
                 <svg
-                  className="w-5 h-5 transform group-hover:-translate-x-0.5 transition-transform"
+                  className="h-5 w-5 transform transition-transform group-hover:-translate-x-0.5"
                   fill="none"
-                  viewBox="0 0 24 24"
                   stroke="currentColor"
                   strokeWidth={3}
+                  viewBox="0 0 24 24"
                 >
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+                  <path d="M15 19l-7-7 7-7" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
               </button>
 
               <div>
-                <span className="text-[10px] font-black uppercase tracking-[0.2em] text-blue-600 opacity-60 block mb-0.5 leading-none">
+                <span className="mb-0.5 block text-[10px] font-black uppercase leading-none tracking-[0.2em] text-blue-600 opacity-60">
                   Field Documentation
                 </span>
-                <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-slate-900 leading-tight">
+                <h1 className="text-2xl font-black leading-tight tracking-tight text-slate-900 sm:text-3xl">
                   Incident Report Central
                 </h1>
               </div>
             </div>
 
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-t border-slate-100 pt-5">
-              <p className="text-sm text-slate-500 font-medium leading-relaxed max-w-lg">
+            <div className="flex flex-col justify-between gap-4 border-t border-slate-100 pt-5 sm:flex-row sm:items-center">
+              <p className="max-w-lg text-sm font-medium leading-relaxed text-slate-500">
                 Click any report row to view full details. Select only reports created within the last 24 hours and compile them into accomplishment reports.
               </p>
 
-              {selectedIds.length > 0 && (
+              {selectedIds.length > 0 ? (
                 <button
+                  className="inline-flex items-center justify-center rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-bold text-white shadow-sm transition-all hover:bg-blue-700 active:scale-95"
                   onClick={compileReports}
-                  className="inline-flex items-center justify-center px-5 py-2.5 rounded-xl text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 active:scale-95 shadow-sm transition-all"
+                  type="button"
                 >
                   Compile Reports ({selectedIds.length})
                 </button>
-              )}
+              ) : null}
             </div>
           </div>
         </div>
 
-        {reports.length > 0 && (
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 flex flex-col md:flex-row gap-4 justify-between items-center">
-            <div className="relative w-full md:max-w-md group">
-              <span className="absolute inset-y-0 left-0 flex items-center pl-3.5 pointer-events-none text-slate-400 group-focus-within:text-blue-600 transition-colors">
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                </svg>
-              </span>
-
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search report code, type, or location..."
-                className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 text-sm font-medium text-slate-800 placeholder-slate-400 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 focus:bg-white transition-all"
-              />
-
-              {searchQuery && (
-                <button
-                  onClick={() => setSearchQuery('')}
-                  className="absolute inset-y-0 right-0 flex items-center pr-3 text-slate-400 hover:text-slate-600"
-                >
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
-              )}
+        {reports.length > 0 ? (
+          <div className="space-y-3">
+            <div className="rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-800">
+              Logged-in team: {getTeamDisplayName(currentResponderTeam)}. You can only select and compile {getTeamDisplayName(currentResponderTeam)} reports.
             </div>
 
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full md:w-auto justify-end">
-              <div className="flex items-center gap-2 justify-end">
-                <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
-                  Hazard Type:
+            <div className="flex flex-col items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:flex-row">
+              <div className="group relative w-full md:max-w-md">
+                <span className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-slate-400 transition-colors group-focus-within:text-blue-600">
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+                    <path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
                 </span>
 
-                <select
-                  value={hazardFilter}
-                  onChange={(e) => setHazardFilter(e.target.value)}
-                  className="px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 outline-none"
-                >
-                  <option value="All">All</option>
-                  {hazardTypes.map((type) => (
-                    <option key={type} value={type}>
-                      {type}
-                    </option>
-                  ))}
-                </select>
+                <input
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-10 pr-4 text-sm font-medium text-slate-800 placeholder-slate-400 transition-all focus:border-blue-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search report code, type, or location..."
+                  type="text"
+                  value={searchQuery}
+                />
+
+                {searchQuery ? (
+                  <button
+                    className="absolute inset-y-0 right-0 flex items-center pr-3 text-slate-400 hover:text-slate-600"
+                    onClick={() => setSearchQuery('')}
+                    type="button"
+                  >
+                    <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                      <path d="M6 18L18 6M6 6l12 12" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </button>
+                ) : null}
               </div>
 
-              <div className="flex items-center gap-2 justify-end">
-                <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
-                  Sort Date:
-                </span>
+              <div className="flex w-full flex-col items-stretch justify-end gap-3 sm:flex-row sm:items-center md:w-auto">
+                <div className="flex items-center justify-end gap-2">
+                  <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                    Hazard Type:
+                  </span>
 
-                <button
-                  onClick={() => setSortOrder((prev) => (prev === 'desc' ? 'asc' : 'desc'))}
-                  className="inline-flex items-center gap-2 px-4 py-2 bg-slate-50 border border-slate-200 hover:border-slate-300 rounded-xl text-xs font-bold text-slate-700 hover:text-slate-900 transition-all shadow-sm active:scale-95"
-                >
-                  <span>{sortOrder === 'desc' ? 'Newest First' : 'Oldest First'}</span>
-                  <svg
-                    className={`w-4 h-4 text-slate-500 transition-transform duration-300 ${
-                      sortOrder === 'asc' ? 'rotate-180' : ''
-                    }`}
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                    strokeWidth={2.5}
+                  <select
+                    className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-xs font-bold text-slate-700 outline-none"
+                    onChange={(e) => setHazardFilter(e.target.value)}
+                    value={hazardFilter}
                   >
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                  </svg>
-                </button>
+                    <option value="All">All</option>
+                    {hazardTypes.map((type) => (
+                      <option key={type} value={type}>
+                        {type}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="flex items-center justify-end gap-2">
+                  <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                    Sort Date:
+                  </span>
+
+                  <button
+                    className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-xs font-bold text-slate-700 shadow-sm transition-all hover:border-slate-300 hover:text-slate-900 active:scale-95"
+                    onClick={() => setSortOrder((prev) => (prev === 'desc' ? 'asc' : 'desc'))}
+                    type="button"
+                  >
+                    <span>{sortOrder === 'desc' ? 'Newest First' : 'Oldest First'}</span>
+                    <svg
+                      className={`h-4 w-4 text-slate-500 transition-transform duration-300 ${sortOrder === 'asc' ? 'rotate-180' : ''}`}
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth={2.5}
+                      viewBox="0 0 24 24"
+                    >
+                      <path d="M19 9l-7 7-7-7" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </button>
+                </div>
               </div>
             </div>
           </div>
-        )}
+        ) : null}
 
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           {reports.length === 0 ? (
             <div className="p-16 text-center">
-              <div className="max-w-md mx-auto space-y-5">
+              <div className="mx-auto max-w-md space-y-5">
                 <h3 className="text-lg font-bold text-slate-900">No incident reports yet</h3>
-                <p className="text-sm text-slate-500 mt-1">Create your first incident report to display it here.</p>
+                <p className="mt-1 text-sm text-slate-500">Create your first incident report to display it here.</p>
 
                 <button
+                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-6 py-3 text-sm font-bold text-white shadow-sm transition-all hover:bg-blue-700 active:scale-95"
                   onClick={() => navigate('/create-report')}
-                  className="inline-flex items-center justify-center gap-2 bg-blue-600 text-white text-sm font-bold px-6 py-3 rounded-xl hover:bg-blue-700 active:scale-95 shadow-sm transition-all"
+                  type="button"
                 >
                   Create Report
                 </button>
@@ -319,105 +510,106 @@ const IncidentReportPage: FC = () => {
           ) : filteredAndSortedReports.length === 0 ? (
             <div className="p-12 text-center text-slate-500">
               <h4 className="text-sm font-bold text-slate-800">No results found</h4>
-              <p className="text-xs text-slate-400 mt-1">Try adjusting your search or hazard type filter.</p>
+              <p className="mt-1 text-xs text-slate-400">Try adjusting your search or hazard type filter.</p>
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead className="bg-slate-50/70 border-b border-slate-200/80">
+              <table className="w-full border-collapse text-left">
+                <thead className="border-b border-slate-200/80 bg-slate-50/70">
                   <tr>
-                    <th className="px-6 py-4 w-12">
+                    <th className="w-12 px-6 py-4">
                       <input
-                        type="checkbox"
                         checked={
-                          filteredAndSortedReports.filter((r) => isWithin24Hours(r.createdAt)).length > 0 &&
+                          filteredAndSortedReports.filter((r) => canSelectReport(r)).length > 0 &&
                           filteredAndSortedReports
-                            .filter((r) => isWithin24Hours(r.createdAt))
+                            .filter((r) => canSelectReport(r))
                             .every((r) => selectedIds.includes(r.id))
                         }
-                        onClick={(e) => e.stopPropagation()}
+                        className="h-4 w-4 rounded accent-blue-600 transition"
                         onChange={toggleSelectAll}
-                        className="w-4 h-4 accent-blue-600 rounded transition"
+                        onClick={(e) => e.stopPropagation()}
+                        type="checkbox"
                       />
                     </th>
-                    <th className="px-6 py-4 text-xs font-extrabold uppercase text-slate-500 tracking-wider">Report Code</th>
-                    <th className="px-6 py-4 text-xs font-extrabold uppercase text-slate-500 tracking-wider">Incident Code</th>
-                    <th className="px-6 py-4 text-xs font-extrabold uppercase text-slate-500 tracking-wider">Incident Type</th>
-                    <th className="px-6 py-4 text-xs font-extrabold uppercase text-slate-500 tracking-wider">Location</th>
-                    <th className="px-6 py-4 text-xs font-extrabold uppercase text-slate-500 tracking-wider">Date Recorded</th>
-                    <th className="px-6 py-4 text-xs font-extrabold uppercase text-slate-500 tracking-wider">Status</th>
-                    <th className="px-6 py-4 text-xs font-extrabold uppercase text-slate-500 tracking-wider">Selection</th>
+                    <th className="px-6 py-4 text-xs font-extrabold uppercase tracking-wider text-slate-500">Report Code</th>
+                    <th className="px-6 py-4 text-xs font-extrabold uppercase tracking-wider text-slate-500">Incident Code</th>
+                    <th className="px-6 py-4 text-xs font-extrabold uppercase tracking-wider text-slate-500">Incident Type</th>
+                    <th className="px-6 py-4 text-xs font-extrabold uppercase tracking-wider text-slate-500">Location</th>
+                    <th className="px-6 py-4 text-xs font-extrabold uppercase tracking-wider text-slate-500">Date Recorded</th>
+                    <th className="px-6 py-4 text-xs font-extrabold uppercase tracking-wider text-slate-500">Status</th>
+                    <th className="px-6 py-4 text-xs font-extrabold uppercase tracking-wider text-slate-500">Selection</th>
                   </tr>
                 </thead>
 
                 <tbody className="divide-y divide-slate-100">
                   {filteredAndSortedReports.map((report) => {
-                    const selectable = isWithin24Hours(report.createdAt)
+                    const selectable = canSelectReport(report)
+                    const statusValue = getStatusValue(report)
 
                     return (
                       <tr
+                        className={`group cursor-pointer transition-colors hover:bg-slate-50/80 ${!selectable ? 'opacity-60' : ''}`}
                         key={report.id}
                         onClick={() => setDetailsReport(report)}
-                        className={`hover:bg-slate-50/80 transition-colors group cursor-pointer ${
-                          !selectable ? 'opacity-60' : ''
-                        }`}
                         title="Click to view full details"
                       >
                         <td className="px-6 py-4">
                           <input
-                            type="checkbox"
                             checked={selectedIds.includes(report.id)}
-                            onClick={(e) => e.stopPropagation()}
-                            onChange={() => toggleSelect(report)}
+                            className="h-4 w-4 rounded accent-blue-600 transition disabled:cursor-not-allowed"
                             disabled={!selectable}
-                            title={
-                              selectable
-                                ? 'Select for accomplishment report'
-                                : 'Only reports within 24 hours can be selected'
-                            }
-                            className="w-4 h-4 accent-blue-600 rounded transition disabled:cursor-not-allowed"
+                            onChange={() => toggleSelect(report)}
+                            onClick={(e) => e.stopPropagation()}
+                            title={getSelectionRestrictionMessage(report)}
+                            type="checkbox"
                           />
                         </td>
 
-                        <td className="px-6 py-4 text-sm font-bold text-slate-900 font-mono tracking-tight group-hover:text-blue-600 transition-colors">
-                          {report.reportCode}
+                        <td className="px-6 py-4 font-mono text-sm font-bold tracking-tight text-slate-900 transition-colors group-hover:text-blue-600">
+                          {getReportCode(report)}
                         </td>
 
-                        <td className="px-6 py-4 text-sm text-slate-500 font-mono">
-                          {report.incidentCode}
+                        <td className="px-6 py-4 font-mono text-sm text-slate-500">
+                          {getIncidentCode(report)}
                         </td>
 
                         <td className="px-6 py-4">
-                          <span className={`inline-flex items-center text-[10px] font-extrabold tracking-wider uppercase px-2.5 py-0.5 border rounded-md ring-2 ${getIncidentBadgeStyle(report.incidentType)}`}>
-                            {report.incidentType}
+                          <span className={`inline-flex rounded-md border px-2.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wider ring-2 ${getIncidentBadgeStyle(getIncidentType(report))}`}>
+                            {getIncidentType(report)}
                           </span>
                         </td>
 
-                        <td className="px-6 py-4 text-sm text-slate-600 max-w-[200px] truncate font-medium">
-                          {report.location}
+                        <td className="max-w-[200px] truncate px-6 py-4 text-sm font-medium text-slate-600">
+                          {report.location || 'N/A'}
                         </td>
 
                         <td className="px-6 py-4 text-xs font-medium text-slate-500">
-                          {new Date(report.createdAt).toLocaleString(undefined, {
-                            dateStyle: 'medium',
-                            timeStyle: 'short',
-                          })}
+                          {getCreatedAt(report)
+                            ? new Date(getCreatedAt(report)).toLocaleString(undefined, {
+                                dateStyle: 'medium',
+                                timeStyle: 'short',
+                              })
+                            : 'N/A'}
                         </td>
 
                         <td className="px-6 py-4">
-                          <span className="inline-flex items-center text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100">
-                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1.5" />
-                            {report.status}
+                          <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-bold ${getStatusBadgeClass(statusValue)}`}>
+                            <span className={`mr-1.5 h-1.5 w-1.5 rounded-full ${getStatusDotClass(statusValue)}`} />
+                            {getStatusLabel(statusValue)}
                           </span>
                         </td>
 
                         <td className="px-6 py-4">
                           {selectable ? (
-                            <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-100 px-2 py-1 rounded-md">
+                            <span className="rounded-md border border-emerald-100 bg-emerald-50 px-2 py-1 text-[10px] font-bold text-emerald-700">
                               Available
                             </span>
+                          ) : !isReportOwnedByResponderTeam(report, currentResponderTeam) ? (
+                            <span className="rounded-md border border-red-100 bg-red-50 px-2 py-1 text-[10px] font-bold text-red-600">
+                              Team Locked
+                            </span>
                           ) : (
-                            <span className="text-[10px] font-bold text-slate-500 bg-slate-100 border border-slate-200 px-2 py-1 rounded-md">
+                            <span className="rounded-md border border-slate-200 bg-slate-100 px-2 py-1 text-[10px] font-bold text-slate-500">
                               Expired
                             </span>
                           )}
@@ -432,70 +624,71 @@ const IncidentReportPage: FC = () => {
         </div>
       </main>
 
-      {detailsReport && (
-        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-xl max-w-3xl w-full max-h-[85vh] overflow-hidden flex flex-col border border-slate-100">
-            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+      {detailsReport ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm">
+          <div className="flex max-h-[85vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-xl">
+            <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50 px-6 py-4">
               <div className="space-y-1">
                 <div className="flex items-center gap-2.5">
-                  <h2 className="text-lg font-black text-slate-900 tracking-tight font-mono">
-                    {detailsReport.reportCode}
+                  <h2 className="font-mono text-lg font-black tracking-tight text-slate-900">
+                    {getReportCode(detailsReport)}
                   </h2>
-                  <span className={`inline-flex items-center text-[9px] font-extrabold tracking-wider uppercase px-2 py-0.5 border rounded-md ring-1 ${getIncidentBadgeStyle(detailsReport.incidentType)}`}>
-                    {detailsReport.incidentType}
+                  <span className={`inline-flex rounded-md border px-2 py-0.5 text-[9px] font-extrabold uppercase tracking-wider ring-1 ${getIncidentBadgeStyle(getIncidentType(detailsReport))}`}>
+                    {getIncidentType(detailsReport)}
                   </span>
                 </div>
-                <p className="text-xs text-slate-400 font-medium">
+                <p className="text-xs font-medium text-slate-400">
                   Full incident operational tactical deployment logs
                 </p>
               </div>
 
               <button
+                className="rounded-md p-2 text-sm text-slate-400 transition-colors hover:bg-slate-200/60 hover:text-slate-600 active:scale-95"
                 onClick={() => setDetailsReport(null)}
-                className="p-2 text-sm text-slate-400 hover:text-slate-600 hover:bg-slate-200/60 rounded-md transition-colors active:scale-95"
                 title="Close Overview"
+                type="button"
               >
                 Close
               </button>
             </div>
 
-            <div className="p-6 overflow-y-auto space-y-6 text-slate-700">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4 bg-slate-50/60 p-4 rounded-xl border border-slate-100">
-                <DetailItem label="Incident Identifier Code" value={detailsReport.incidentCode} isMono />
-                <DetailItem label="Time of Occurrence" value={detailsReport.timeOccurred} />
-                <DetailItem label="Assigned Field Responders" value={detailsReport.responderTeam} />
-                <DetailItem label="Operation Live Status" value={detailsReport.status} isStatus />
+            <div className="space-y-6 overflow-y-auto p-6 text-slate-700">
+              <div className="grid grid-cols-1 gap-x-6 gap-y-4 rounded-xl border border-slate-100 bg-slate-50/60 p-4 sm:grid-cols-2">
+                <DetailItem label="Incident Identifier Code" value={getIncidentCode(detailsReport)} isMono />
+                <DetailItem label="Time of Occurrence" value={getTimeOccurred(detailsReport)} />
+                <DetailItem label="Assigned Field Responders" value={getResponderTeam(detailsReport)} />
+                <DetailItem label="Operation Live Status" value={getStatusValue(detailsReport)} isStatus />
               </div>
 
               <div className="space-y-1">
-                <span className="text-[10px] text-slate-400 block font-extrabold uppercase tracking-wider">
+                <span className="block text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
                   Deployment Area Zone
                 </span>
-                <div className="bg-slate-50/40 p-3 rounded-xl border border-slate-100">
+                <div className="rounded-xl border border-slate-100 bg-slate-50/40 p-3">
                   <p className="text-xs font-semibold text-slate-800">
-                    {detailsReport.location}
+                    {detailsReport.location || 'N/A'}
                   </p>
                 </div>
               </div>
 
               <div className="space-y-1">
-                <span className="text-[10px] text-slate-400 block font-extrabold uppercase tracking-wider">
+                <span className="block text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
                   Detailed Description Log
                 </span>
-                <div className="bg-slate-50/40 p-3.5 rounded-xl border border-slate-100">
-                  <p className="text-xs text-slate-600 leading-relaxed font-medium whitespace-pre-wrap">
+                <div className="rounded-xl border border-slate-100 bg-slate-50/40 p-3.5">
+                  <p className="whitespace-pre-wrap text-xs font-medium leading-relaxed text-slate-600">
                     {detailsReport.description || 'No specific descriptive log file submitted.'}
                   </p>
                 </div>
               </div>
 
               <div className="space-y-1">
-                <span className="text-[10px] text-slate-400 block font-extrabold uppercase tracking-wider">
+                <span className="block text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
                   Mitigation & Actions Executed
                 </span>
-                <div className="bg-blue-50/10 p-3.5 rounded-xl border border-blue-100/50">
-                  <p className="text-xs text-slate-700 leading-relaxed font-medium whitespace-pre-wrap">
-                    {detailsReport.actionTaken || 'No recorded data of triage mitigation steps.'}
+                <div className="rounded-xl border border-blue-100/50 bg-blue-50/10 p-3.5">
+                  <p className="whitespace-pre-wrap text-xs font-medium leading-relaxed text-slate-700">
+                    {getActionTaken(detailsReport) || 'No recorded data of triage mitigation steps.'}
                   </p>
                 </div>
               </div>
@@ -505,61 +698,64 @@ const IncidentReportPage: FC = () => {
                   <h3 className="text-xs font-black uppercase tracking-wider text-slate-700">
                     Victims Information Directory
                   </h3>
-                  <span className="text-xs font-bold px-2 py-0.5 bg-slate-100 rounded-md text-slate-600">
-                    {detailsReport.victimCount} Total
+                  <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-600">
+                    {getVictimCount(detailsReport)} Total
                   </span>
                 </div>
 
-                {detailsReport.victims.length === 0 ? (
-                  <p className="text-xs text-slate-400 font-medium italic">
+                {!detailsReport.victims || detailsReport.victims.length === 0 ? (
+                  <p className="text-xs font-medium italic text-slate-400">
                     No casualties or victim information files recorded for this catalog code.
                   </p>
                 ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     {detailsReport.victims.map((victim, index) => (
-                      <div key={index} className="border border-slate-200/80 rounded-xl p-4 bg-slate-50/50 space-y-3 shadow-inner">
+                      <div
+                        className="space-y-3 rounded-xl border border-slate-200/80 bg-slate-50/50 p-4 shadow-inner"
+                        key={index}
+                      >
                         <div className="flex items-center justify-between border-b border-slate-100 pb-1.5">
-                          <p className="font-extrabold text-xs text-slate-900 uppercase tracking-wide">
+                          <p className="text-xs font-extrabold uppercase tracking-wide text-slate-900">
                             Victim Profile #{index + 1}
                           </p>
-                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-slate-100 text-slate-700">
+                          <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-700">
                             {victim.condition || 'Status Unknown'}
                           </span>
                         </div>
 
                         <div className="grid grid-cols-2 gap-y-2 text-xs font-medium">
                           <div className="col-span-2">
-                            <span className="text-slate-400 text-[10px] block uppercase font-bold tracking-tight">
+                            <span className="block text-[10px] font-bold uppercase tracking-tight text-slate-400">
                               Full Name
                             </span>
-                            <span className="text-slate-800 font-semibold">
+                            <span className="font-semibold text-slate-800">
                               {victim.name || 'N/A'}
                             </span>
                           </div>
 
                           <div>
-                            <span className="text-slate-400 text-[10px] block uppercase font-bold tracking-tight">
+                            <span className="block text-[10px] font-bold uppercase tracking-tight text-slate-400">
                               Age
                             </span>
-                            <span className="text-slate-800 font-semibold">
+                            <span className="font-semibold text-slate-800">
                               {victim.age || 'N/A'} yrs old
                             </span>
                           </div>
 
                           <div>
-                            <span className="text-slate-400 text-[10px] block uppercase font-bold tracking-tight">
+                            <span className="block text-[10px] font-bold uppercase tracking-tight text-slate-400">
                               Biological Sex
                             </span>
-                            <span className="text-slate-800 font-semibold">
+                            <span className="font-semibold text-slate-800">
                               {victim.gender === 'M' ? 'Male' : victim.gender === 'F' ? 'Female' : 'N/A'}
                             </span>
                           </div>
 
                           <div className="col-span-2">
-                            <span className="text-slate-400 text-[10px] block uppercase font-bold tracking-tight">
+                            <span className="block text-[10px] font-bold uppercase tracking-tight text-slate-400">
                               Home Address Range
                             </span>
-                            <span className="text-slate-700 text-[11px] leading-tight block">
+                            <span className="block text-[11px] leading-tight text-slate-700">
                               {victim.address || 'N/A'}
                             </span>
                           </div>
@@ -571,18 +767,18 @@ const IncidentReportPage: FC = () => {
               </div>
             </div>
 
-            <div className="px-6 py-3 border-t border-slate-100 bg-slate-50 text-right">
+            <div className="border-t border-slate-100 bg-slate-50 px-6 py-3 text-right">
               <button
-                type="button"
+                className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-bold text-slate-600 shadow-sm transition-all hover:bg-slate-100 hover:text-slate-700 active:scale-95"
                 onClick={() => setDetailsReport(null)}
-                className="px-4 py-2 text-xs font-bold text-slate-600 hover:text-slate-700 bg-white hover:bg-slate-100 border border-slate-200 rounded-xl shadow-sm transition-all active:scale-95"
+                type="button"
               >
                 Dismiss Ledger Overview
               </button>
             </div>
           </div>
         </div>
-      )}
+      ) : null}
 
       <MobileNavBar />
     </div>
@@ -601,17 +797,17 @@ const DetailItem = ({
   isStatus?: boolean
 }) => (
   <div className="space-y-0.5">
-    <span className="text-[10px] text-slate-400 block font-extrabold uppercase tracking-wider">
+    <span className="block text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
       {label}
     </span>
 
     {isStatus ? (
-      <span className="inline-flex items-center font-bold text-xs text-emerald-600 mt-1">
-        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1.5" />
-        {value || 'N/A'}
+      <span className={`mt-1 inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-bold ${getStatusBadgeClass(String(value))}`}>
+        <span className={`mr-1.5 h-1.5 w-1.5 rounded-full ${getStatusDotClass(String(value))}`} />
+        {getStatusLabel(String(value))}
       </span>
     ) : (
-      <span className={`text-sm font-semibold text-slate-800 block ${isMono ? 'font-mono tracking-tight text-blue-600' : ''}`}>
+      <span className={`block text-sm font-semibold text-slate-800 ${isMono ? 'font-mono tracking-tight text-blue-600' : ''}`}>
         {value || 'N/A'}
       </span>
     )}

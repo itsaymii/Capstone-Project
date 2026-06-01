@@ -1,4 +1,3 @@
-import React from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { getCurrentUserProfile } from '../services/auth'
 
@@ -62,7 +61,7 @@ export function MobileNavBar() {
     <nav className="sm:hidden fixed bottom-0 left-0 right-0 bg-white/80 backdrop-blur-xl border-t border-slate-200/60 pb-safe shadow-[0_-8px_30px_rgb(0,0,0,0.04)] z-50 px-2">
       <div className="relative flex justify-between items-center h-16 max-w-md mx-auto px-2">
         
-        {navItems.map((item, index) => {
+        {navItems.map((item) => {
           // 1. Render the middle Floating Action Button
           if (item.isFloatingButton) {
             return (

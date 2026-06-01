@@ -93,6 +93,24 @@ def map_incident_type_to_severity(incident_type, victim_count):
     return 'low'
 
 
+def validate_lucena_coordinates(latitude, longitude):
+    if latitude is None or longitude is None:
+        raise serializers.ValidationError({
+            'latitude': 'Latitude is required.',
+            'longitude': 'Longitude is required.',
+        })
+
+    lat = float(latitude)
+    lng = float(longitude)
+
+    if not (13.89 <= lat <= 13.98 and 121.57 <= lng <= 121.69):
+        raise serializers.ValidationError({
+            'coordinates': 'Coordinates must be within Lucena City area.',
+        })
+
+    return lat, lng
+
+
 class HazardTypeSerializer(serializers.ModelSerializer):
     class Meta:
         model = HazardType
@@ -377,12 +395,15 @@ class IncidentReportSerializer(serializers.ModelSerializer):
     victims = VictimDetailSerializer(many=True, required=False)
 
     reportCode = serializers.CharField(source='report_code', read_only=True)
-    incidentCode = serializers.CharField(source='incident_code')
+    incidentCode = serializers.CharField(source='incident_code', read_only=True)
     timeOccurred = serializers.TimeField(source='time_occurred')
     incidentType = serializers.CharField(source='incident_type')
     responderTeam = serializers.CharField(source='responder_team')
     victimCount = serializers.IntegerField(source='victim_count', required=False)
     actionTaken = serializers.CharField(source='action_taken')
+    latitude = serializers.DecimalField(max_digits=9, decimal_places=6, required=True)
+    longitude = serializers.DecimalField(max_digits=9, decimal_places=6, required=True)
+    coordinates = serializers.SerializerMethodField()
     createdAt = serializers.DateTimeField(source='created_at', read_only=True)
 
     class Meta:
@@ -395,6 +416,9 @@ class IncidentReportSerializer(serializers.ModelSerializer):
             'incidentType',
             'responderTeam',
             'location',
+            'latitude',
+            'longitude',
+            'coordinates',
             'description',
             'victimCount',
             'victims',
@@ -403,6 +427,18 @@ class IncidentReportSerializer(serializers.ModelSerializer):
             'createdAt',
         ]
         read_only_fields = ['id', 'reportCode', 'createdAt']
+
+    def get_coordinates(self, obj):
+        return {
+            'lat': float(obj.latitude) if obj.latitude is not None else None,
+            'lng': float(obj.longitude) if obj.longitude is not None else None,
+        }
+
+    def validate(self, attrs):
+        latitude = attrs.get('latitude')
+        longitude = attrs.get('longitude')
+        validate_lucena_coordinates(latitude, longitude)
+        return attrs
 
     def create(self, validated_data):
         victims_data = validated_data.pop('victims', [])
@@ -432,7 +468,11 @@ class IncidentReportSerializer(serializers.ModelSerializer):
             defaults={'description': f'{hazard_name} generated from responder report'}
         )
 
-        lat, lng = get_lucena_coordinates(incident_report.location)
+        if incident_report.latitude is not None and incident_report.longitude is not None:
+            lat = incident_report.latitude
+            lng = incident_report.longitude
+        else:
+            lat, lng = get_lucena_coordinates(incident_report.location)
 
         now = timezone.localtime()
         occurred_time = incident_report.time_occurred
