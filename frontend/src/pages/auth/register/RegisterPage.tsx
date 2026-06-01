@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { ClipboardEvent, FormEvent, KeyboardEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { useNavigate } from 'react-router-dom'
-import { getCurrentUserProfile, requestRegisterOtp, verifyRegisterOtpCode } from '../../../services/auth'
+import { requestRegisterOtp, verifyRegisterOtpCode } from '../../../services/auth'
 
 interface RegisterPageProps {
   onRequestLogin?: () => void
@@ -167,9 +167,6 @@ export function RegisterPage({ onRequestLogin, onRegistered, modalMode = false }
   }
 
   function getPostRegistrationPath(): string {
-    const profile = getCurrentUserProfile()
-    const role = profile?.role
-
     // Newly registered users are citizens by default
     // Redirect to landing page for citizens
     return '/landing'

@@ -200,13 +200,14 @@ export function LandingPage() {
     setActiveModal(null)
 
     const currentUser = getCurrentUserProfile()
-    const hasDashboardSession = Boolean(
-      currentUser?.hasDashboardAccess || currentUser?.role === 'admin' || currentUser?.role === 'staff',
-    )
+    const isAdmin = Boolean(currentUser?.isAdmin || currentUser?.role === 'admin')
+    const isStaff = Boolean(currentUser?.isStaff || currentUser?.role === 'staff')
+    const hasDashboardSession = Boolean(currentUser?.hasDashboardAccess || isAdmin || isStaff)
 
     if (hasDashboardSession) {
       setPendingProtectedPath(null)
-      navigate('/admin-dashboard', {
+      const targetPath = isAdmin ? '/admin-dashboard' : isStaff ? '/responder-dashboard' : '/landing'
+      navigate(targetPath, {
         state: {
           loginSuccessMessage: 'Login successful. Welcome back to Lucena City DRRMO.',
         },

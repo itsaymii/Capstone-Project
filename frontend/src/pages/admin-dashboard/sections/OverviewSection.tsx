@@ -21,6 +21,7 @@ type OverviewSectionProps = {
 const dashboardStatusClasses = {
   active: 'border-red-700 bg-red-700 text-white',
   pending: 'border-amber-500 bg-amber-500 text-white',
+  approved: 'border-sky-700 bg-sky-700 text-white',
   resolved: 'border-emerald-700 bg-emerald-700 text-white',
 } as const
 
@@ -42,6 +43,7 @@ function getSeverityWeight(severity: HazardIncident['severity']): number {
 function getHazardUpdateStatus(incident: HazardIncident): string {
   if (incident.status === 'active') return `${incident.severity.toLowerCase()} priority incident`
   if (incident.status === 'pending') return 'Pending field verification'
+  if (incident.status === 'approved') return 'Approved and ready for response'
   return 'Recently resolved incident'
 }
 

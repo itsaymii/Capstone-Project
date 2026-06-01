@@ -223,18 +223,17 @@ export const ResponderReportsPage: FC = () => {
                     <th className="px-6 py-4 font-extrabold text-slate-500 text-xs uppercase tracking-wider">
                       Status
                     </th>
-                    <th className="px-6 py-4 text-right font-extrabold text-slate-500 text-xs uppercase tracking-wider">
-                      Actions
-                    </th>
                   </tr>
                 </thead>
 
                 <tbody className="divide-y divide-slate-100">
                   {filteredAndSortedReports.map((report) => (
-                    <tr
-                      key={report.id}
-                      className="hover:bg-slate-50/50 transition-colors group"
-                    >
+                      <tr
+                        key={report.id}
+                        onClick={() => setSelectedCompiled(report)}
+                        className="hover:bg-slate-50/80 transition-colors group cursor-pointer"
+                        title="Click to view accomplishment report"
+                      >
                       <td className="px-6 py-4 text-sm font-mono font-bold text-slate-900 group-hover:text-blue-600 transition-colors">
                         {report.compiledCode}
                       </td>
@@ -260,12 +259,6 @@ export const ResponderReportsPage: FC = () => {
                       </td>
 
                       <td className="px-6 py-4 text-right">
-                        <button
-                          onClick={() => setSelectedCompiled(report)}
-                          className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-bold text-blue-600 hover:text-blue-700 bg-blue-50 hover:bg-blue-100/70 border border-blue-100 rounded-xl transition-all active:scale-95 tracking-wide shadow-sm"
-                        >
-                          Details
-                        </button>
                       </td>
                     </tr>
                   ))}
