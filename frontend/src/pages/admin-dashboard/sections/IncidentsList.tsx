@@ -1,11 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { getIncidents, type BackendIncident } from '../../../services/incidents'
 
 export function IncidentsList() {
   const [incidents, setIncidents] = useState<BackendIncident[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [searchQuery, setSearchQuery] = useState('')
 
   useEffect(() => {
     let isMounted = true
@@ -37,22 +36,7 @@ export function IncidentsList() {
     }
   }, [])
 
-  const filteredIncidents = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase()
-    if (!query) return incidents
-
-    return incidents.filter((incident) =>
-      [
-        incident.reference_code,
-        incident.address,
-        incident.hazard_type?.name,
-        incident.description,
-        incident.severity_level,
-      ]
-        .filter(Boolean)
-        .some((value) => String(value).toLowerCase().includes(query)),
-    )
-  }, [incidents, searchQuery])
+  const filteredIncidents = incidents
 
   if (isLoading) {
     return (
@@ -72,24 +56,13 @@ export function IncidentsList() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-4">
-        <input
-          type="text"
-          placeholder="Search incidents..."
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          className="flex-1 px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-        />
-        <div className="text-sm text-slate-600">
-          {filteredIncidents.length} incident{filteredIncidents.length !== 1 ? 's' : ''}
-        </div>
+      <div className="text-sm text-slate-600">
+        {filteredIncidents.length} incident{filteredIncidents.length !== 1 ? 's' : ''}
       </div>
 
       {filteredIncidents.length === 0 ? (
         <div className="bg-slate-50 border border-slate-200 rounded-lg p-6 text-center">
-          <p className="text-slate-600">
-            {searchQuery ? 'No incidents found matching your search.' : 'No incidents available yet.'}
-          </p>
+          <p className="text-slate-600">No incidents available yet.</p>
         </div>
       ) : (
         <div className="space-y-3">

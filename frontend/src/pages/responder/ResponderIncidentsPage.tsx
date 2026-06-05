@@ -213,27 +213,41 @@ const IncidentReportPage: FC = () => {
     return () => window.clearInterval(intervalId)
   }, [fetchReports])
 
-  const isWithin24Hours = (createdAt: string) => {
+  const isWithinThreeDays = (createdAt: string) => {
     if (!createdAt) return false
 
     const reportTime = new Date(createdAt).getTime()
     const now = new Date().getTime()
-    const twentyFourHours = 24 * 60 * 60 * 1000
+    const threeDays = 3 * 24 * 60 * 60 * 1000
 
-    return Number.isFinite(reportTime) && now - reportTime <= twentyFourHours
+    return Number.isFinite(reportTime) && now - reportTime <= threeDays
   }
 
+  const isResponderTeamUnknown = (team: ResponderTeamCode) => team === 'unknown'
+
   const canSelectReport = (report: IncidentReport): boolean => {
-    return isWithin24Hours(getCreatedAt(report)) && isReportOwnedByResponderTeam(report, currentResponderTeam)
+    if (!isWithinThreeDays(getCreatedAt(report))) {
+      return false
+    }
+
+    if (isResponderTeamUnknown(currentResponderTeam)) {
+      return false
+    }
+
+    return isReportOwnedByResponderTeam(report, currentResponderTeam)
   }
 
   const getSelectionRestrictionMessage = (report: IncidentReport): string => {
+    if (isResponderTeamUnknown(currentResponderTeam)) {
+      return 'Your account has no assigned responder team. Select only your own team reports.'
+    }
+
     if (!isReportOwnedByResponderTeam(report, currentResponderTeam)) {
       return `Only ${getTeamDisplayName(currentResponderTeam)} reports can be selected by this account.`
     }
 
-    if (!isWithin24Hours(getCreatedAt(report))) {
-      return 'Only reports created within the last 24 hours can be selected.'
+    if (!isWithinThreeDays(getCreatedAt(report))) {
+      return 'Only reports created within the last 3 days can be selected.'
     }
 
     return 'Select for accomplishment report'
@@ -268,13 +282,18 @@ const IncidentReportPage: FC = () => {
   }, [reports, searchQuery, hazardFilter, sortOrder])
 
   const toggleSelect = (report: IncidentReport) => {
+    if (isResponderTeamUnknown(currentResponderTeam)) {
+      addNotification('Your account has no assigned responder team. Select only your own team reports.')
+      return
+    }
+
     if (!isReportOwnedByResponderTeam(report, currentResponderTeam)) {
       addNotification(`Only ${getTeamDisplayName(currentResponderTeam)} reports can be selected by this account.`)
       return
     }
 
-    if (!isWithin24Hours(getCreatedAt(report))) {
-      addNotification('Only reports created within the last 24 hours can be selected.')
+    if (!isWithinThreeDays(getCreatedAt(report))) {
+      addNotification('Only reports created within the last 3 days can be selected.')
       return
     }
 
@@ -286,10 +305,15 @@ const IncidentReportPage: FC = () => {
   }
 
   const toggleSelectAll = () => {
+    if (isResponderTeamUnknown(currentResponderTeam)) {
+      addNotification('Your account has no assigned responder team. Select only your own team reports.')
+      return
+    }
+
     const selectableReports = filteredAndSortedReports.filter((report) => canSelectReport(report))
 
     if (selectableReports.length === 0) {
-      addNotification(`No ${getTeamDisplayName(currentResponderTeam)} reports within the last 24 hours can be selected.`)
+      addNotification(`No ${getTeamDisplayName(currentResponderTeam)} reports within the last 3 days can be selected.`)
       return
     }
 
@@ -401,7 +425,9 @@ const IncidentReportPage: FC = () => {
         {!isLoading && reports.length > 0 ? (
           <div className="space-y-3">
             <div className="rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-800">
-              Logged-in team: {getTeamDisplayName(currentResponderTeam)}. You can only select and compile {getTeamDisplayName(currentResponderTeam)} reports.
+              {isResponderTeamUnknown(currentResponderTeam)
+                ? 'Team assignment not detected. You cannot select reports until your account is assigned to a team.'
+                : `Logged-in team: ${getTeamDisplayName(currentResponderTeam)}. You can select only ${getTeamDisplayName(currentResponderTeam)} reports created within the last 3 days.`}
             </div>
 
             <div className="flex flex-col items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:flex-row">

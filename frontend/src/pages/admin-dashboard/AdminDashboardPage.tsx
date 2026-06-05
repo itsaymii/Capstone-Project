@@ -1116,19 +1116,19 @@ export function AdminDashboardPage() {
 
       return record
     })
-  }, [approvedDashboardIncidentRecords, dashboardIncidentRecords])
+  }, [approvedDashboardIncidentRecords])
 
   const fireDashboardRecords = useMemo(
-    () => approvedDashboardIncidentRecords.filter((record) => getDashboardIncidentType(record) === 'Fire'),
-    [approvedDashboardIncidentRecords],
+    () => dashboardIncidentRecords.filter((record) => getDashboardIncidentType(record) === 'Fire'),
+    [dashboardIncidentRecords],
   )
 
   const accidentDashboardRecords = useMemo(
-    () => approvedDashboardIncidentRecords.filter((record) => getDashboardIncidentType(record) === 'Accident'),
-    [approvedDashboardIncidentRecords],
+    () => dashboardIncidentRecords.filter((record) => getDashboardIncidentType(record) === 'Accident'),
+    [dashboardIncidentRecords],
   )
 
-  const totalIncidentReportsCount = approvedDashboardIncidentRecords.length
+  const totalIncidentReportsCount = dashboardIncidentRecords.length
 
   const lucenaEarthquakeEvents = useMemo(
     () => filterLucenaEvents(filteredEarthquakeEvents),
@@ -1136,8 +1136,8 @@ export function AdminDashboardPage() {
   )
 
   const fireRiskScore = useMemo(
-    () => calculateDashboardFireRiskScore(approvedDashboardIncidentRecords),
-    [approvedDashboardIncidentRecords],
+    () => calculateDashboardFireRiskScore(dashboardIncidentRecords),
+    [dashboardIncidentRecords],
   )
 
   const earthquakeRiskScore = useMemo(
@@ -1215,22 +1215,22 @@ export function AdminDashboardPage() {
   ]
 
   const incidentTrendData = useMemo(
-    () => buildLastSevenDaysTrend(approvedDashboardIncidentRecords),
-    [approvedDashboardIncidentRecords],
+    () => buildLastSevenDaysTrend(dashboardIncidentRecords),
+    [dashboardIncidentRecords],
   )
 
   const incidentDistributionData = useMemo(
-    () => buildCountData(approvedDashboardIncidentRecords, getDashboardIncidentType),
-    [approvedDashboardIncidentRecords],
+    () => buildCountData(dashboardIncidentRecords, getDashboardIncidentType),
+    [dashboardIncidentRecords],
   )
 
   const topBarangayData = useMemo(
     () =>
       buildCountData(
-        approvedDashboardIncidentRecords.filter((record) => !isPlaceholderLocation(getDashboardLocation(record))),
+        dashboardIncidentRecords.filter((record) => !isPlaceholderLocation(getDashboardLocation(record))),
         getDashboardBarangay,
       ).slice(0, 5),
-    [approvedDashboardIncidentRecords],
+    [dashboardIncidentRecords],
   )
 
 

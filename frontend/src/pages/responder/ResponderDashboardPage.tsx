@@ -3,8 +3,7 @@ import type { FC, KeyboardEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { MobileNavBar } from '../../components/MobileNavBar'
 import { getCurrentUserProfile } from '../../services/auth'
-
-const REPORTS_KEY = 'responderIncidentReports'
+import { getIncidentReports } from '../../services/incidents'
 
 interface Incident {
   id: string
@@ -19,30 +18,6 @@ interface Incident {
   victims?: any[]
 }
 
-interface StoredIncidentReport {
-  id: string
-  reportCode: string
-  incidentCode: string
-  timeOccurred: string
-  incidentType: string
-  responderTeam: string
-  location: string
-  description: string
-  victimCount: number
-  victims: any[]
-  actionTaken: string
-  status: string
-  createdAt: string
-}
-
-const fallbackIncidents: Incident[] = [
-  { id: 'INC-001', type: 'Medical', location: 'Barangay 1, Main St', timeOccurred: '2:30 PM', status: 'Pending Report', victimCount: 2 },
-  { id: 'INC-002', type: 'RTC', location: 'Highway 1, Junction', timeOccurred: '3:15 PM', status: 'Pending Report', victimCount: 3 },
-  { id: 'INC-003', type: 'Fire', location: 'Barangay 3, Warehouse', timeOccurred: '1:45 PM', status: 'Completed', victimCount: 0 },
-  { id: 'INC-004', type: 'Hazmat', location: 'Industrial Zone', timeOccurred: '4:00 PM', status: 'Pending Report', victimCount: 1 },
-  { id: 'INC-005', type: 'Medical', location: 'Barangay 2, School', timeOccurred: '2:00 PM', status: 'Completed', victimCount: 1 },
-]
-
 const mapIncidentType = (type: string): Incident['type'] => {
   const lowerType = type.toLowerCase()
   if (lowerType.includes('medical') || lowerType.includes('ambulance')) return 'Medical'
@@ -55,30 +30,39 @@ export const ResponderDashboardPage: FC = () => {
   const navigate = useNavigate()
   const profile = getCurrentUserProfile()
 
-  const [recentIncidents, setRecentIncidents] = useState<Incident[]>(fallbackIncidents)
+  const [recentIncidents, setRecentIncidents] = useState<Incident[]>([])
   const [selectedIncident, setSelectedIncident] = useState<Incident | null>(null)
+  const [isLoadingReports, setIsLoadingReports] = useState(true)
+  const [reportError, setReportError] = useState<string | null>(null)
 
   useEffect(() => {
-    const storedReports: StoredIncidentReport[] = JSON.parse(
-      localStorage.getItem(REPORTS_KEY) || '[]'
-    )
+    async function loadIncidentReports() {
+      try {
+        const reports = await getIncidentReports()
 
-    if (storedReports.length > 0) {
-      const mappedReports: Incident[] = storedReports.slice(0, 5).map((report) => ({
-        id: report.incidentCode || report.reportCode,
-        type: mapIncidentType(report.incidentType),
-        location: report.location,
-        timeOccurred: report.timeOccurred,
-        status: 'Completed',
-        victimCount: report.victimCount || report.victims?.length || 0,
-        description: report.description,
-        responderTeam: report.responderTeam,
-        actionTaken: report.actionTaken,
-        victims: report.victims,
-      }))
+        const mappedReports: Incident[] = reports.slice(0, 5).map((report) => ({
+          id: report.incidentCode || report.reportCode || report.id,
+          type: mapIncidentType(report.incidentType || report.incident_type || ''),
+          location: report.location || 'Unknown location',
+          timeOccurred: report.timeOccurred || report.time_occurred || 'N/A',
+          status: report.status === 'approved' || report.status_update === 'approved' ? 'Completed' : 'Pending Report',
+          victimCount: report.victimCount || report.victim_count || report.victims?.length || 0,
+          description: report.description,
+          responderTeam: report.responderTeam || report.responder_team,
+          actionTaken: report.actionTaken || report.action_taken || '',
+          victims: report.victims || [],
+        }))
 
-      setRecentIncidents(mappedReports)
+        setRecentIncidents(mappedReports)
+      } catch (error) {
+        console.error('[ResponderDashboardPage] Failed to load incident reports:', error)
+        setReportError('Unable to load incident reports at this time.')
+      } finally {
+        setIsLoadingReports(false)
+      }
     }
+
+    void loadIncidentReports()
   }, [])
 
   const firstName =
@@ -94,6 +78,69 @@ export const ResponderDashboardPage: FC = () => {
       e.preventDefault()
       handleRowActivation(incident)
     }
+  }
+
+  const renderIncidentRow = (incident: Incident) => {
+    const typeStyle = getIncidentTypeConfig(incident.type)
+
+    return (
+      <div
+        key={incident.id}
+        role="button"
+        tabIndex={0}
+        onClick={() => handleRowActivation(incident)}
+        onKeyDown={(e) => handleRowKeyDown(e, incident)}
+        className="flex flex-col sm:flex-row sm:items-center justify-between p-5 px-6 gap-4 hover:bg-slate-50/50 transition-colors cursor-pointer focus:bg-slate-50/80 focus:outline-none group"
+      >
+        <div className="flex-1 min-w-0 flex items-start gap-3.5">
+          <div className={`p-2.5 rounded-xl border shrink-0 mt-0.5 ring-2 ${typeStyle?.wrapper}`}>
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              {typeStyle?.icon}
+            </svg>
+          </div>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <p className="font-bold text-sm text-slate-900 group-hover:text-blue-600 transition-colors font-mono">{incident.id}</p>
+              <span className="text-slate-300 text-xs hidden sm:inline">•</span>
+              <p className="text-xs font-semibold text-slate-400">{incident.timeOccurred}</p>
+              {incident.victimCount > 0 && (
+                <span className="text-[9px] font-extrabold bg-rose-50 border border-rose-100 text-rose-600 px-1.5 py-0.5 rounded uppercase tracking-wider">
+                  {incident.victimCount} Casualties
+                </span>
+              )}
+            </div>
+            <p className="text-xs font-medium text-slate-500 mt-1 truncate">{incident.location}</p>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between sm:justify-end gap-6 border-t border-slate-50 sm:border-t-0 pt-3 sm:pt-0">
+          <span className={`inline-flex items-center text-[9px] font-extrabold tracking-wider uppercase px-2.5 py-0.5 border rounded-md ring-2 ${typeStyle?.wrapper}`}>
+            {incident.type}
+          </span>
+
+          <div className="text-right sm:min-w-[120px]">
+            <span className={`inline-flex items-center text-xs font-bold ${incident.status === 'Pending Report' ? 'text-amber-600' : 'text-emerald-600'}`}>
+              <span className={`w-1.5 h-1.5 rounded-full mr-2 ${incident.status === 'Pending Report' ? 'bg-amber-500' : 'bg-emerald-500'}`}></span>
+              {incident.status}
+            </span>
+          </div>
+
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setSelectedIncident(incident)
+            }}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-blue-600 hover:text-blue-700 bg-blue-50 hover:bg-blue-100/70 border border-blue-100 rounded-xl transition-all active:scale-95 tracking-wide shadow-sm group/btn shrink-0"
+          >
+            <span>Details</span>
+            <svg className="w-3.5 h-3.5 transform group-hover/btn:translate-x-0.5 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    )
   }
 
   const getIncidentTypeConfig = (type: Incident['type']) => {
@@ -202,68 +249,15 @@ export const ResponderDashboardPage: FC = () => {
           </div>
 
           <div className="divide-y divide-slate-100">
-            {recentIncidents.slice(0, 5).map((incident) => {
-              const typeStyle = getIncidentTypeConfig(incident.type)
-
-              return (
-                <div
-                  key={incident.id}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => handleRowActivation(incident)}
-                  onKeyDown={(e) => handleRowKeyDown(e, incident)}
-                  className="flex flex-col sm:flex-row sm:items-center justify-between p-5 px-6 gap-4 hover:bg-slate-50/50 transition-colors cursor-pointer focus:bg-slate-50/80 focus:outline-none group"
-                >
-                  <div className="flex-1 min-w-0 flex items-start gap-3.5">
-                    <div className={`p-2.5 rounded-xl border shrink-0 mt-0.5 ring-2 ${typeStyle?.wrapper}`}>
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                        {typeStyle?.icon}
-                      </svg>
-                    </div>
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <p className="font-bold text-sm text-slate-900 group-hover:text-blue-600 transition-colors font-mono">{incident.id}</p>
-                        <span className="text-slate-300 text-xs hidden sm:inline">•</span>
-                        <p className="text-xs font-semibold text-slate-400">{incident.timeOccurred}</p>
-                        {incident.victimCount > 0 && (
-                          <span className="text-[9px] font-extrabold bg-rose-50 border border-rose-100 text-rose-600 px-1.5 py-0.5 rounded uppercase tracking-wider">
-                            {incident.victimCount} Casualties
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-xs font-medium text-slate-500 mt-1 truncate">{incident.location}</p>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-between sm:justify-end gap-6 border-t border-slate-50 sm:border-t-0 pt-3 sm:pt-0">
-                    <span className={`inline-flex items-center text-[9px] font-extrabold tracking-wider uppercase px-2.5 py-0.5 border rounded-md ring-2 ${typeStyle?.wrapper}`}>
-                      {incident.type}
-                    </span>
-
-                    <div className="text-right sm:min-w-[120px]">
-                      <span className={`inline-flex items-center text-xs font-bold ${incident.status === 'Pending Report' ? 'text-amber-600' : 'text-emerald-600'}`}>
-                        <span className={`w-1.5 h-1.5 rounded-full mr-2 ${incident.status === 'Pending Report' ? 'bg-amber-500' : 'bg-emerald-500'}`}></span>
-                        {incident.status}
-                      </span>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation() // Modang intercept para hindi tumalon ang page
-                        setSelectedIncident(incident)
-                      }}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-blue-600 hover:text-blue-700 bg-blue-50 hover:bg-blue-100/70 border border-blue-100 rounded-xl transition-all active:scale-95 tracking-wide shadow-sm group/btn shrink-0"
-                    >
-                      <span>Details</span>
-                      <svg className="w-3.5 h-3.5 transform group-hover/btn:translate-x-0.5 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
-                      </svg>
-                    </button>
-                  </div>
-                </div>
-              )
-            })}
+            {isLoadingReports ? (
+              <div className="p-6 text-slate-500">Loading incident feed...</div>
+            ) : reportError ? (
+              <div className="p-6 text-red-700">{reportError}</div>
+            ) : recentIncidents.length === 0 ? (
+              <div className="p-6 text-slate-500">No incident reports available.</div>
+            ) : (
+              recentIncidents.slice(0, 5).map(renderIncidentRow)
+            )}
           </div>
 
           <div className="border-t border-slate-100 bg-slate-50/50">

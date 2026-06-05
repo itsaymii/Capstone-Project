@@ -1,6 +1,5 @@
 import random
-from datetime import timedelta, time, datetime
-from decimal import Decimal
+from datetime import datetime, time
 
 from django.core.management.base import BaseCommand
 from django.utils import timezone
@@ -72,7 +71,7 @@ LOCATION_COORDINATES = {
     'Barangay 1, Lucena City': (13.9389702, 121.6124776),
     'Barangay 2, Lucena City': (13.939363479614258, 121.6145248413086),
     'Barangay 3, Lucena City': (13.9374033, 121.6122379),
-    'Barangay 4, Lucena City': (13.9368604, 13.9368604),
+    'Barangay 4, Lucena City': (13.9368604, 121.6128604),
     'Barangay 5, Lucena City': (13.935468, 121.6116846),
     'Barangay 6, Lucena City': (13.9342259, 121.6139289),
     'Barangay 7, Lucena City': (13.9332718, 121.6118396),
@@ -125,7 +124,6 @@ ACTIONS = [
     'Transferred patient to receiving medical facility.',
     'Performed initial triage and documented patient condition.',
 ]
-
 
 INCIDENT_DESCRIPTIONS = {
     'RCA': [
@@ -186,24 +184,46 @@ def get_randomized_coordinates(location):
     return latitude, longitude
 
 
+def get_random_created_at(start_year, end_year):
+    random_year = random.randint(start_year, end_year)
+
+    random_date = datetime(
+        year=random_year,
+        month=random.randint(1, 12),
+        day=random.randint(1, 28),
+        hour=random.randint(0, 23),
+        minute=random.randint(0, 59),
+        second=random.randint(0, 59),
+    )
+
+    return timezone.make_aware(random_date)
 
 
 class Command(BaseCommand):
-    help = 'Generate incident reports only with clean descriptions, victim details, and approved admin incidents. No accomplishment reports are generated.'
+    help = 'Generate pending incident reports from selected years. No approved reports and no accomplishment reports are generated.'
 
     def add_arguments(self, parser):
         parser.add_argument('--count', type=int, default=50)
-        parser.add_argument('--days', type=int, default=60)
         parser.add_argument('--clear', action='store_true')
+        parser.add_argument('--start-year', type=int, default=2020)
+        parser.add_argument('--end-year', type=int, default=2026)
 
     def handle(self, *args, **options):
         count = options['count']
-        days = options['days']
         should_clear = options['clear']
+        start_year = options['start_year']
+        end_year = options['end_year']
+
+        if start_year > end_year:
+            self.stdout.write(
+                self.style.ERROR('Invalid year range. start-year must be less than or equal to end-year.')
+            )
+            return
 
         User = get_user_model()
 
         responders = list(User.objects.filter(is_staff=True))
+
         if not responders:
             responder = User.objects.create_user(
                 username='field_responder',
@@ -218,28 +238,24 @@ class Command(BaseCommand):
             AccomplishmentReport.objects.all().delete()
             VictimDetail.objects.all().delete()
             IncidentReport.objects.all().delete()
-            # Detail records (FireDetails, VehicularAccident, etc.) and Incident records
-            # will be cascade-deleted via foreign key constraints
 
-        self.stdout.write(self.style.WARNING(f'Generating {count} complete incident report records...'))
-
-        created_reports = []
-        now = timezone.now()
-        start_date = now - timedelta(days=days)
+        self.stdout.write(
+            self.style.WARNING(
+                f'Generating {count} pending incident report records from {start_year} to {end_year}...'
+            )
+        )
 
         with transaction.atomic():
             for index in range(count):
-                created_at = start_date + timedelta(
-                    days=random.randint(0, days),
-                    hours=random.randint(0, 23),
-                    minutes=random.randint(0, 59),
-                )
+                created_at = get_random_created_at(start_year, end_year)
 
                 incident_type = random.choice(INCIDENT_TYPES)
                 victim_count = random.randint(0, 4)
                 location = random.choice(LOCATIONS)
                 latitude, longitude = get_randomized_coordinates(location)
-                incident_code = f'INC-{created_at.year}-{index + 1:03d}'
+
+                incident_code = f'INC-{created_at.year}-{index + 1:04d}'
+
                 occurred_time = time(
                     hour=random.randint(0, 23),
                     minute=random.randint(0, 59),
@@ -256,16 +272,16 @@ class Command(BaseCommand):
                     description=get_incident_description(incident_type, location),
                     victim_count=victim_count,
                     action_taken=random.choice(ACTIONS),
-                    status=random.choice(['Submitted', 'Pending', 'Approved']),
+
+                    # Keep all generated reports pending.
+                    # This prevents approved incidents from being plotted immediately.
+                    status='Pending',
+
                     created_by=random.choice(responders),
                 )
 
                 IncidentReport.objects.filter(id=report.id).update(created_at=created_at)
                 report.created_at = created_at
-
-                # Note: Incident creation is now handled by the post_save signal in signals.py
-                # when report.status == 'Approved'. Do not create Incident manually here
-                # to avoid UNIQUE constraint violations on reference_code.
 
                 for _ in range(victim_count):
                     VictimDetail.objects.create(
@@ -277,15 +293,11 @@ class Command(BaseCommand):
                         condition=random.choice(CONDITIONS),
                     )
 
-                created_reports.append(report)
-
-        approved_count = IncidentReport.objects.filter(status='Approved').count()
-
         self.stdout.write(
             self.style.SUCCESS(
-                f'✅ Successfully generated {count} incident reports, '
-                f'{VictimDetail.objects.count()} victim details, '
-                f'Approved reports: {approved_count}. '
-                f'Note: Incidents are created automatically by the signal when reports are approved.'
+                f'Successfully generated {count} pending incident reports from {start_year} to {end_year}. '
+                f'{VictimDetail.objects.count()} victim details created. '
+                f'Approved reports: 0. '
+                f'All generated reports require manual admin approval.'
             )
         )
