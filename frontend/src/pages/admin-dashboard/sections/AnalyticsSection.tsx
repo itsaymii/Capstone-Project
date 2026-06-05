@@ -1,4 +1,5 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { getEvacuationCenters } from '../../../services/api'
 import type { HazardIncident, HazardType, IncidentStatus } from '../../../data/adminOperations'
 import type { EarthquakeEvent } from '../../../services/earthquakes'
 import { glassPanelClass, glassPanelSoftClass } from './constants'
@@ -181,6 +182,11 @@ function getReportDate(report: HazardIncident): Date {
   return Number.isNaN(parsed.getTime()) ? new Date() : parsed
 }
 
+function getEarthquakeEventDate(event: EarthquakeEvent): Date {
+  const parsed = new Date(event.rawTimestamp)
+  return Number.isNaN(parsed.getTime()) ? new Date() : parsed
+}
+
 function getMonthLabel(date: Date): string {
   return date.toLocaleDateString(undefined, { month: 'short' })
 }
@@ -339,7 +345,7 @@ function MultiLineTrendChart({ items }: { items: TrendItem[] }) {
     { key: 'total' as const, label: 'Total', color: '#1d4ed8', points: getPoints('total') },
     { key: 'fire' as const, label: 'Fire', color: '#ef4444', points: getPoints('fire') },
     { key: 'accident' as const, label: 'Accident', color: '#3b82f6', points: getPoints('accident') },
-    { key: 'earthquake' as const, label: 'Earthquake API', color: '#10b981', points: getPoints('earthquake') },
+    { key: 'earthquake' as const, label: 'Earthquake', color: '#10b981', points: getPoints('earthquake') },
   ]
 
   return (
@@ -926,19 +932,122 @@ function getAnalyticsIncidentType(report: HazardIncident): 'Fire' | 'Accident' |
 export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSectionProps) {
   const analyticsReports = useMemo(() => getUniqueAnalyticsReports(reports), [reports])
 
-  const totalIncidentReports = analyticsReports.length
-  const earthquakeApiCount = earthquakeEvents.length
+  const [selectedYear, setSelectedYear] = useState<string | null>(null)
+  const [selectedMonth, setSelectedMonth] = useState<string | null>(null)
+  const [evacuationCenterCount, setEvacuationCenterCount] = useState<number | null>(null)
+  const [evacuationCenterError, setEvacuationCenterError] = useState<string | null>(null)
+
+  const filteredEarthquakeEvents = useMemo(() => {
+    let result = earthquakeEvents
+
+    if (selectedYear) {
+      result = result.filter((event) => getEarthquakeEventDate(event).getFullYear().toString() === selectedYear)
+    }
+
+    if (selectedMonth && selectedYear) {
+      result = result.filter((event) => {
+        const date = getEarthquakeEventDate(event)
+        return (
+          date.getFullYear().toString() === selectedYear &&
+          (date.getMonth() + 1).toString().padStart(2, '0') === selectedMonth
+        )
+      })
+    }
+
+    return result
+  }, [earthquakeEvents, selectedYear, selectedMonth])
+
+  const availableYears = useMemo(() => {
+    const years = new Set<string>()
+
+    analyticsReports.forEach((report) => {
+      const date = getReportDate(report)
+      years.add(date.getFullYear().toString())
+    })
+
+    filteredEarthquakeEvents.forEach((event) => {
+      const date = getEarthquakeEventDate(event)
+      years.add(date.getFullYear().toString())
+    })
+
+    return Array.from(years).sort((a, b) => Number(b) - Number(a))
+  }, [analyticsReports, earthquakeEvents, selectedYear, selectedMonth])
+
+  const availableMonths = useMemo(() => {
+    if (!selectedYear) return []
+    const months = new Set<string>()
+
+    analyticsReports.forEach((report) => {
+      const date = getReportDate(report)
+      if (date.getFullYear().toString() === selectedYear) {
+        months.add((date.getMonth() + 1).toString().padStart(2, '0'))
+      }
+    })
+
+    filteredEarthquakeEvents.forEach((event) => {
+      const date = getEarthquakeEventDate(event)
+      if (date.getFullYear().toString() === selectedYear) {
+        months.add((date.getMonth() + 1).toString().padStart(2, '0'))
+      }
+    })
+
+    return Array.from(months)
+      .sort()
+      .reverse()
+  }, [analyticsReports, earthquakeEvents, selectedYear])
+
+  const filteredReports = useMemo(() => {
+    let result = analyticsReports
+
+    if (selectedYear) {
+      result = result.filter((report) => getReportDate(report).getFullYear().toString() === selectedYear)
+    }
+
+    if (selectedMonth && selectedYear) {
+      result = result.filter((report) => {
+        const date = getReportDate(report)
+        return (
+          date.getFullYear().toString() === selectedYear &&
+          (date.getMonth() + 1).toString().padStart(2, '0') === selectedMonth
+        )
+      })
+    }
+
+    return result
+  }, [analyticsReports, selectedYear, selectedMonth])
+
+  const totalIncidentReports = filteredReports.length
+  const earthquakeApiCount = filteredEarthquakeEvents.length
   const totalRecords = totalIncidentReports + earthquakeApiCount
 
-  const activeCount = analyticsReports.filter((report) => report.status === 'active').length
-  const pendingCount = analyticsReports.filter((report) => report.status === 'pending').length
+  useEffect(() => {
+    let active = true
 
-  const fireCount = analyticsReports.filter((report) => getAnalyticsIncidentType(report) === 'Fire').length
-  const accidentCount = analyticsReports.filter((report) => getAnalyticsIncidentType(report) === 'Accident').length
-  const earthquakeReportCount = analyticsReports.filter((report) => getAnalyticsIncidentType(report) === 'Earthquake').length
+    void getEvacuationCenters()
+      .then((centers) => {
+        if (!active) return
+        setEvacuationCenterCount(centers.length)
+      })
+      .catch(() => {
+        if (!active) return
+        setEvacuationCenterCount(0)
+        setEvacuationCenterError('Unable to load evacuation resources data.')
+      })
+
+    return () => {
+      active = false
+    }
+  }, [])
+
+  const activeCount = filteredReports.filter((report) => report.status === 'active').length
+  const pendingCount = filteredReports.filter((report) => report.status === 'pending').length
+
+  const fireCount = filteredReports.filter((report) => getAnalyticsIncidentType(report) === 'Fire').length
+  const accidentCount = filteredReports.filter((report) => getAnalyticsIncidentType(report) === 'Accident').length
+  const earthquakeReportCount = filteredReports.filter((report) => getAnalyticsIncidentType(report) === 'Earthquake').length
   const earthquakeTotalCount = earthquakeReportCount + earthquakeApiCount
 
-  const highPriorityCount = analyticsReports.filter(
+  const highPriorityCount = filteredReports.filter(
     (report) => report.severity === 'High' || report.severity === 'Critical',
   ).length
 
@@ -946,19 +1055,19 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
 
   const averageSeverity =
     totalIncidentReports > 0
-      ? analyticsReports.reduce((total, report) => total + getSeverityWeight(report.severity), 0) /
+      ? filteredReports.reduce((total, report) => total + getSeverityWeight(report.severity), 0) /
         totalIncidentReports
       : 0
 
-  const recentEarthquake30Days = earthquakeEvents.filter(
-    (event) => event.rawTimestamp >= Date.now() - 30 * 24 * 60 * 60 * 1000,
+  const recentEarthquake30Days = filteredEarthquakeEvents.filter(
+    (event) => getEarthquakeEventDate(event).getTime() >= Date.now() - 30 * 24 * 60 * 60 * 1000,
   ).length
 
-  const significantEarthquakes = earthquakeEvents.filter((event) => event.magnitude >= 4).length
-  const maxEarthquakeMagnitude = earthquakeEvents.reduce((max, event) => Math.max(max, event.magnitude), 0)
+  const significantEarthquakes = filteredEarthquakeEvents.filter((event) => event.magnitude >= 4).length
+  const maxEarthquakeMagnitude = filteredEarthquakeEvents.reduce((max, event) => Math.max(max, event.magnitude), 0)
   const averageEarthquakeMagnitude =
-    earthquakeEvents.length > 0
-      ? earthquakeEvents.reduce((sum, event) => sum + event.magnitude, 0) / earthquakeEvents.length
+    filteredEarthquakeEvents.length > 0
+      ? filteredEarthquakeEvents.reduce((sum, event) => sum + event.magnitude, 0) / filteredEarthquakeEvents.length
       : 0
 
   const riskScore = Math.min(
@@ -985,7 +1094,7 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
         color: hazardColors.AC,
       },
       {
-        label: 'Earthquake API + Reports',
+        label: 'Earthquake',
         value: earthquakeTotalCount,
         color: hazardColors.EQ,
       },
@@ -997,25 +1106,25 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
     () =>
       (['active', 'pending', 'approved', 'resolved'] as IncidentStatus[]).map((status) => ({
         label: statusLabels[status],
-        value: analyticsReports.filter((report) => report.status === status).length,
+        value: filteredReports.filter((report) => report.status === status).length,
       })),
-    [analyticsReports],
+    [filteredReports],
   )
 
   const severityDistribution = useMemo(
     () =>
       (['Low', 'Moderate', 'High', 'Critical'] as HazardIncident['severity'][]).map((severity) => ({
         label: severity,
-        value: analyticsReports.filter((report) => report.severity === severity).length,
+        value: filteredReports.filter((report) => report.severity === severity).length,
       })),
-    [analyticsReports],
+    [filteredReports],
   )
 
   const responseTimeData = useMemo(() => {
     const buckets = ['12AM - 6AM', '6AM - 12PM', '12PM - 6PM', '6PM - 12AM']
 
     return buckets.map((bucket) => {
-      const incidents = analyticsReports.filter((report) => getPeakHourBucket(parseIncidentHour(report.time)) === bucket)
+      const incidents = filteredReports.filter((report) => getPeakHourBucket(parseIncidentHour(report.time)) === bucket)
       const estimatedMinutes =
         bucket === '6AM - 12PM'
           ? 14
@@ -1031,12 +1140,12 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
         helper: `${estimatedMinutes} min estimated response`,
       }
     })
-  }, [analyticsReports])
+  }, [filteredReports])
 
   const averageResponseMinutes = useMemo(() => {
     if (totalIncidentReports === 0) return 0
 
-    const totalMinutes = analyticsReports.reduce((sum, report) => {
+    const totalMinutes = filteredReports.reduce((sum, report) => {
       const bucket = getPeakHourBucket(parseIncidentHour(report.time))
       if (bucket === '6AM - 12PM') return sum + 14
       if (bucket === '12PM - 6PM') return sum + 18
@@ -1045,12 +1154,12 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
     }, 0)
 
     return Math.round(totalMinutes / totalIncidentReports)
-  }, [analyticsReports, totalIncidentReports])
+  }, [filteredReports, totalIncidentReports])
 
   const barangayRiskData = useMemo(() => {
     const map = new Map<string, RiskLocation>()
 
-    analyticsReports.forEach((report) => {
+    filteredReports.forEach((report) => {
       const location = getLocationName(report.location)
       const current = map.get(location) || {
         location,
@@ -1080,7 +1189,7 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
       map.set(location, current)
     })
 
-    earthquakeEvents.slice(0, 60).forEach((event) => {
+    filteredEarthquakeEvents.slice(0, 60).forEach((event) => {
       const location = event.place || 'Near Quezon Region'
       const current = map.get(location) || {
         location,
@@ -1112,13 +1221,13 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
       }))
       .sort((a, b) => b.score - a.score)
       .slice(0, 6)
-  }, [earthquakeEvents, analyticsReports])
+  }, [filteredEarthquakeEvents, filteredReports])
 
   const evacuationStats = useMemo(() => {
-    const criticalCount = analyticsReports.filter((report) => report.severity === 'Critical').length
-    const highCount = analyticsReports.filter((report) => report.severity === 'High').length
-    const moderateCount = analyticsReports.filter((report) => report.severity === 'Moderate').length
-    const earthquakeWatch = earthquakeEvents.filter((event) => event.magnitude >= 4).length + earthquakeReportCount
+    const criticalCount = filteredReports.filter((report) => report.severity === 'Critical').length
+    const highCount = filteredReports.filter((report) => report.severity === 'High').length
+    const moderateCount = filteredReports.filter((report) => report.severity === 'Moderate').length
+    const earthquakeWatch = filteredEarthquakeEvents.filter((event) => event.magnitude >= 4).length + earthquakeReportCount
 
     return [
       {
@@ -1152,37 +1261,93 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
         color: '#f59e0b',
       },
     ]
-  }, [earthquakeEvents, earthquakeReportCount, analyticsReports, totalRecords])
+  }, [filteredEarthquakeEvents, earthquakeReportCount, filteredReports, totalRecords])
+
+  const evacuationResourceComparison = useMemo<ChartItem[]>(() => {
+    const available = evacuationCenterCount ?? 0
+    const totalUrgentNeed = filteredReports.filter((report) => report.severity === 'Critical' || report.severity === 'High').length
+
+    return [
+      {
+        label: 'Evacuation centers available',
+        value: available,
+        helper:
+          evacuationCenterCount === null
+            ? 'Loading evacuation resources data...'
+            : 'Registered centers from the resources app',
+        color: '#2563eb',
+      },
+      {
+        label: 'Immediate evacuation need',
+        value: filteredReports.filter((report) => report.severity === 'Critical').length,
+        helper: 'Critical evacuation alerts in analytics',
+        color: '#dc2626',
+      },
+      {
+        label: 'Standby evacuation need',
+        value: filteredReports.filter((report) => report.severity === 'High').length,
+        helper: 'High evacuation alerts in analytics',
+        color: '#f97316',
+      },
+      {
+        label: 'Total urgent evacuation alerts',
+        value: Math.max(1, totalUrgentNeed),
+        helper: 'Critical + High severity alerts',
+        color: '#8b5cf6',
+      },
+    ]
+  }, [filteredReports, evacuationCenterCount])
 
   const monthlyTrend = useMemo<TrendItem[]>(() => {
-    const months = Array.from({ length: 6 }, (_, index) => {
-      const date = new Date()
-      date.setMonth(date.getMonth() - (5 - index))
-      return {
-        label: getMonthLabel(date),
-        month: date.getMonth(),
-        year: date.getFullYear(),
-      }
-    })
+    const sourceDates = [
+      ...filteredReports.map((report) => getReportDate(report)),
+      ...filteredEarthquakeEvents.map((event) => getEarthquakeEventDate(event)),
+    ].filter((date) => !Number.isNaN(date.getTime()))
+
+    let months: Array<{ label: string; month: number; year: number }> = []
+
+    if (selectedYear) {
+      const year = Number(selectedYear)
+      const monthIndexes = selectedMonth
+        ? [Number(selectedMonth) - 1]
+        : Array.from({ length: 12 }, (_, index) => index)
+
+      months = monthIndexes.map((month) => ({
+        label: getMonthLabel(new Date(year, month, 1)),
+        month,
+        year,
+      }))
+    } else if (sourceDates.length > 0) {
+      const latestDate = sourceDates.reduce((latest, date) => (date > latest ? date : latest), sourceDates[0])
+
+      months = Array.from({ length: 6 }, (_, index) => {
+        const date = new Date(latestDate.getFullYear(), latestDate.getMonth() - (5 - index), 1)
+        return {
+          label: `${getMonthLabel(date)} ${date.getFullYear()}`,
+          month: date.getMonth(),
+          year: date.getFullYear(),
+        }
+      })
+    }
 
     return months.map((monthInfo) => {
-      const fire = analyticsReports.filter((report) => {
+      const fire = filteredReports.filter((report) => {
         const date = getReportDate(report)
         return getAnalyticsIncidentType(report) === 'Fire' && date.getMonth() === monthInfo.month && date.getFullYear() === monthInfo.year
       }).length
 
-      const accident = analyticsReports.filter((report) => {
+      const accident = filteredReports.filter((report) => {
         const date = getReportDate(report)
         return getAnalyticsIncidentType(report) === 'Accident' && date.getMonth() === monthInfo.month && date.getFullYear() === monthInfo.year
       }).length
 
-      const earthquakeReports = analyticsReports.filter((report) => {
+      const earthquakeReports = filteredReports.filter((report) => {
         const date = getReportDate(report)
         return getAnalyticsIncidentType(report) === 'Earthquake' && date.getMonth() === monthInfo.month && date.getFullYear() === monthInfo.year
       }).length
 
-      const apiEarthquakes = earthquakeEvents.filter((event) => {
-        const date = new Date(event.rawTimestamp)
+      const apiEarthquakes = filteredEarthquakeEvents.filter((event) => {
+        const date = getEarthquakeEventDate(event)
         return date.getMonth() === monthInfo.month && date.getFullYear() === monthInfo.year
       }).length
 
@@ -1196,31 +1361,31 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
         total: fire + accident + earthquake,
       }
     })
-  }, [earthquakeEvents, analyticsReports])
+  }, [filteredEarthquakeEvents, filteredReports, selectedMonth, selectedYear])
 
   const earthquakeAnalytics = useMemo(() => {
     const magnitudeDistribution: ChartItem[] = [
       {
         label: 'Magnitude 1.0 - 2.9',
-        value: earthquakeEvents.filter((event) => event.magnitude < 3).length,
+        value: filteredEarthquakeEvents.filter((event) => event.magnitude < 3).length,
         color: '#86efac',
         helper: 'Low intensity tremors',
       },
       {
         label: 'Magnitude 3.0 - 3.9',
-        value: earthquakeEvents.filter((event) => event.magnitude >= 3 && event.magnitude < 4).length,
+        value: filteredEarthquakeEvents.filter((event) => event.magnitude >= 3 && event.magnitude < 4).length,
         color: '#22c55e',
         helper: 'Felt but usually minor',
       },
       {
         label: 'Magnitude 4.0 - 4.9',
-        value: earthquakeEvents.filter((event) => event.magnitude >= 4 && event.magnitude < 5).length,
+        value: filteredEarthquakeEvents.filter((event) => event.magnitude >= 4 && event.magnitude < 5).length,
         color: '#f59e0b',
         helper: 'Moderate shaking watch',
       },
       {
         label: 'Magnitude 5.0+',
-        value: earthquakeEvents.filter((event) => event.magnitude >= 5).length,
+        value: filteredEarthquakeEvents.filter((event) => event.magnitude >= 5).length,
         color: '#ef4444',
         helper: 'High impact monitoring',
       },
@@ -1228,7 +1393,7 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
 
     const hotspotMap = new Map<string, number>()
 
-    earthquakeEvents.forEach((event) => {
+    filteredEarthquakeEvents.forEach((event) => {
       const location = event.place || 'Near Quezon Region'
       hotspotMap.set(location, (hotspotMap.get(location) || 0) + 1)
     })
@@ -1255,7 +1420,7 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
   }, [
     averageEarthquakeMagnitude,
     earthquakeApiCount,
-    earthquakeEvents,
+    filteredEarthquakeEvents,
     maxEarthquakeMagnitude,
     recentEarthquake30Days,
     significantEarthquakes,
@@ -1287,7 +1452,7 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
     {
       title: 'Next Month Projection',
       value: projectedNextMonth,
-      note: `${forecastDirection} trend based on incident reports and earthquake API movement.`,
+      note: `${forecastDirection} trend based on incident reports and earthquake movement.`,
       tone: getRiskTone(riskScore),
     },
     {
@@ -1313,8 +1478,8 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
       value: getRiskLabel(percent(recentEarthquake30Days + significantEarthquakes, Math.max(earthquakeApiCount, 1))),
       note:
         earthquakeApiCount > 0
-          ? 'Live earthquake API data is included in risk scoring and evacuation standby.'
-          : 'No live earthquake API records detected.',
+          ? 'Live earthquake data is included in risk scoring and evacuation standby.'
+          : 'No live earthquake records detected.',
       tone: getRiskTone(percent(recentEarthquake30Days + significantEarthquakes, Math.max(earthquakeApiCount, 1))),
     },
   ]
@@ -1332,7 +1497,7 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
                 DRRMO Analytics and Predictive Intelligence
               </h2>
               <p className="mt-3 text-sm leading-relaxed text-slate-600">
-                Professional analytics view for incident reports and live earthquake API data:
+                Professional analytics view for incident reports and live earthquake data:
                 trends, disaster type analysis, earthquake monitoring, response performance,
                 barangay risk, evacuation readiness, heat/risk mapping, forecasting, and severity distribution.
               </p>
@@ -1347,10 +1512,79 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
             </div>
           </div>
 
+          <div className="mt-6 flex flex-wrap gap-4 lg:items-end">
+            <div className="flex flex-col gap-2">
+              <label htmlFor="year-select" className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600">
+                Filter by Year
+              </label>
+              <select
+                id="year-select"
+                value={selectedYear ?? ''}
+                onChange={(e) => {
+                  setSelectedYear(e.target.value || null)
+                  setSelectedMonth(null)
+                }}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-900 transition hover:border-slate-400"
+              >
+                <option value="">All Years</option>
+                {availableYears.map((year) => (
+                  <option key={year} value={year}>
+                    {year}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {selectedYear && availableMonths.length > 0 && (
+              <div className="flex flex-col gap-2">
+                <label htmlFor="month-select" className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600">
+                  Filter by Month
+                </label>
+                <select
+                  id="month-select"
+                  value={selectedMonth ?? ''}
+                  onChange={(e) => setSelectedMonth(e.target.value || null)}
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-900 transition hover:border-slate-400"
+                >
+                  <option value="">All Months in {selectedYear}</option>
+                  {availableMonths.map((month) => {
+                    const monthNum = parseInt(month, 10)
+                    const monthName = new Date(2026, monthNum - 1).toLocaleString('default', { month: 'long' })
+                    return (
+                      <option key={month} value={month}>
+                        {monthName}
+                      </option>
+                    )
+                  })}
+                </select>
+              </div>
+            )}
+
+            {(selectedYear || selectedMonth) && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedYear(null)
+                  setSelectedMonth(null)
+                }}
+                className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+              >
+                Clear Filters
+              </button>
+            )}
+
+            {selectedYear || selectedMonth ? (
+              <p className="text-sm font-medium text-slate-600">
+                Showing{selectedYear ? ` ${selectedYear}` : ''}
+                {selectedMonth ? ` - ${new Date(2026, parseInt(selectedMonth, 10) - 1).toLocaleString('default', { month: 'long' })}` : ''}
+              </p>
+            ) : null}
+          </div>
+
           <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
             <AnalyticsMetricCard
               accentClass="border-t-blue-600"
-              helper={`${totalIncidentReports} reports + ${earthquakeApiCount} live earthquake API events.`}
+              helper={`${totalIncidentReports} reports + ${earthquakeApiCount} live earthquake events.`}
               label="Total Records"
               value={totalRecords}
             />
@@ -1384,7 +1618,7 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
         <div className={`${glassPanelClass} p-5 sm:p-6`}>
           <SectionHeader
             badge="Line Chart"
-            description="Monthly trend comparing Fire, Accident, live Earthquake API events, and total movement."
+            description="Monthly trend comparing Fire, Accident, live Earthquake events, and total movement."
             eyebrow="Incident Trends"
             title="Incident Trends by Year / Month"
           />
@@ -1407,7 +1641,7 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
         <div className={`${glassPanelClass} p-5 sm:p-6`}>
           <SectionHeader
             badge="USGS API"
-            description="Dedicated earthquake analytics from the live earthquake API, including magnitude distribution, hotspots, and recent seismic activity."
+            description="Dedicated earthquake analytics from the live earthquake, including magnitude distribution, hotspots, and recent seismic activity."
             eyebrow="Earthquake Monitoring Analytics"
             title="Earthquake Monitoring Analytics"
           />
@@ -1416,7 +1650,7 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
             <AnalyticsMetricCard
               accentClass="border-t-emerald-600"
               helper="Live earthquake events from the API feed."
-              label="API Events"
+              label="Earthquake Events"
               value={earthquakeAnalytics.total}
             />
             <AnalyticsMetricCard
@@ -1509,6 +1743,26 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
             title="Evacuation Statistics"
           />
           <HorizontalBarChart items={evacuationStats} />
+        </div>
+
+        <div className={`${glassPanelClass} p-5 sm:p-6`}>
+          <SectionHeader
+            badge="Resources Comparison"
+            description="Compare evacuation statistics against the evacuation center resources available in the resources map."
+            eyebrow="Evacuation Resource Comparison"
+            title="Evacuation Resource Comparison"
+          />
+          <HorizontalBarChart items={evacuationResourceComparison} emptyText="No evacuation resource comparison data available yet." />
+          {evacuationCenterError ? (
+            <p className="mt-4 text-sm text-rose-600">{evacuationCenterError}</p>
+          ) : null}
+          {evacuationCenterCount !== null ? (
+            <p className="mt-4 text-sm text-slate-500">
+              {evacuationCenterCount >= analyticsReports.filter((report) => report.severity === 'Critical' || report.severity === 'High').length
+                ? 'Evacuation resource centers are currently equal to or greater than urgent analytics alerts.'
+                : 'Evacuation needs currently exceed the number of resource centers; review resource coverage.'}
+            </p>
+          ) : null}
         </div>
 
         <div className={`${glassPanelClass} p-5 sm:p-6`}>

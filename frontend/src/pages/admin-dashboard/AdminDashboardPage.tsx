@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { AdminSidebar } from '../../components/AdminSidebar'
 import {
-  hazardIncidents,
   mapBackendIncidentToHazardIncident,
   type HazardIncident,
   type HazardType,
@@ -837,7 +836,7 @@ export function AdminDashboardPage() {
   const [activeSection, setActiveSection] = useState<WorkspaceSection>(() =>
     getWorkspaceSection(searchParams.get('section')),
   )
-  const [reports, setReports] = useState<HazardIncident[]>(() => hazardIncidents)
+  const [reports, setReports] = useState<HazardIncident[]>(() => [])
   const [responderReports, setResponderReports] = useState<any[]>([])
   const [mapFilter, setMapFilter] = useState<MapFilter>('EQ')
   const [notifications, setNotifications] = useState<NotificationItem[]>(() => getNotifications())
@@ -867,7 +866,7 @@ export function AdminDashboardPage() {
 
       if (!isMountedRef.current) return
 
-      setReports(hazardIncidents)
+      setReports([])
       setResponderReports([])
     }
   }, [])
@@ -1117,19 +1116,19 @@ export function AdminDashboardPage() {
 
       return record
     })
-  }, [approvedDashboardIncidentRecords, dashboardIncidentRecords])
+  }, [approvedDashboardIncidentRecords])
 
   const fireDashboardRecords = useMemo(
-    () => approvedDashboardIncidentRecords.filter((record) => getDashboardIncidentType(record) === 'Fire'),
-    [approvedDashboardIncidentRecords],
+    () => dashboardIncidentRecords.filter((record) => getDashboardIncidentType(record) === 'Fire'),
+    [dashboardIncidentRecords],
   )
 
   const accidentDashboardRecords = useMemo(
-    () => approvedDashboardIncidentRecords.filter((record) => getDashboardIncidentType(record) === 'Accident'),
-    [approvedDashboardIncidentRecords],
+    () => dashboardIncidentRecords.filter((record) => getDashboardIncidentType(record) === 'Accident'),
+    [dashboardIncidentRecords],
   )
 
-  const totalIncidentReportsCount = approvedDashboardIncidentRecords.length
+  const totalIncidentReportsCount = dashboardIncidentRecords.length
 
   const lucenaEarthquakeEvents = useMemo(
     () => filterLucenaEvents(filteredEarthquakeEvents),
@@ -1137,8 +1136,8 @@ export function AdminDashboardPage() {
   )
 
   const fireRiskScore = useMemo(
-    () => calculateDashboardFireRiskScore(approvedDashboardIncidentRecords),
-    [approvedDashboardIncidentRecords],
+    () => calculateDashboardFireRiskScore(dashboardIncidentRecords),
+    [dashboardIncidentRecords],
   )
 
   const earthquakeRiskScore = useMemo(
@@ -1216,22 +1215,22 @@ export function AdminDashboardPage() {
   ]
 
   const incidentTrendData = useMemo(
-    () => buildLastSevenDaysTrend(approvedDashboardIncidentRecords),
-    [approvedDashboardIncidentRecords],
+    () => buildLastSevenDaysTrend(dashboardIncidentRecords),
+    [dashboardIncidentRecords],
   )
 
   const incidentDistributionData = useMemo(
-    () => buildCountData(approvedDashboardIncidentRecords, getDashboardIncidentType),
-    [approvedDashboardIncidentRecords],
+    () => buildCountData(dashboardIncidentRecords, getDashboardIncidentType),
+    [dashboardIncidentRecords],
   )
 
   const topBarangayData = useMemo(
     () =>
       buildCountData(
-        approvedDashboardIncidentRecords.filter((record) => !isPlaceholderLocation(getDashboardLocation(record))),
+        dashboardIncidentRecords.filter((record) => !isPlaceholderLocation(getDashboardLocation(record))),
         getDashboardBarangay,
       ).slice(0, 5),
-    [approvedDashboardIncidentRecords],
+    [dashboardIncidentRecords],
   )
 
 

@@ -56,32 +56,7 @@ type IncidentItem = {
   magnitude?: number
 }
 
-const mockIncidents: IncidentItem[] = [
-  {
-    title: 'Building Fire - Commercial District',
-    time: '7:15 AM',
-    status: 'pending',
-    color: hazardColors.FR,
-    code: 'FR',
-    location: 'Commercial District, Lucena City',
-    severity: 'High',
-    responseTeam: 'BFP Lucena Station 1',
-    description: 'Active fire response ongoing.',
-    coordinates: [13.934, 121.621],
-  },
-  {
-    title: 'Multi-vehicle Accident - Highway',
-    time: '9:00 AM',
-    status: 'pending',
-    color: hazardColors.AC,
-    code: 'AC',
-    location: 'Pan-Philippine Highway, Lucena City',
-    severity: 'Moderate',
-    responseTeam: 'Traffic and Rescue Coordination',
-    description: 'Lane obstruction in place. Clearing and medical triage underway.',
-    coordinates: [13.926, 121.609],
-  },
-]
+const mockIncidents: IncidentItem[] = []
 
 type IncidentTypeFilter = 'EQ' | 'FR' | 'AC'
 
@@ -259,7 +234,10 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
   const [eqLastRefreshed, setEqLastRefreshed] = useState<Date | null>(null)
   const [eqSearchQuery, setEqSearchQuery] = useState('')
 
-  const allMappedIncidents = useMemo(() => [...backendIncidents, ...mockIncidents], [backendIncidents])
+  const allMappedIncidents = useMemo(
+    () => (isAdminVariant ? backendIncidents : [...backendIncidents, ...mockIncidents]),
+    [backendIncidents, isAdminVariant],
+  )
 
   const filteredIncidents = useMemo(
     () => allMappedIncidents.filter((incident) => incident.code === selectedType),
@@ -483,36 +461,90 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
         map.fitBounds(lucenaBounds, { padding: [18, 18] })
       }
 
-      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '&copy; OpenStreetMap contributors',
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+        attribution: '&copy; OpenStreetMap &copy; CARTO',
       }).addTo(map)
 
       if (barangayLayer) {
-        const barangayPane = map.createPane('barangay-pane')
-        barangayPane.style.zIndex = '410'
+        const barangayPane = map.getPane('barangay-pane') ?? map.createPane('barangay-pane')
+        barangayPane.style.zIndex = '330'
+        barangayPane.style.pointerEvents = 'auto'
 
-        L.geoJSON(barangayLayer, {
+        const barangayBorderColors = [
+          '#2563eb',
+          '#059669',
+          '#d97706',
+          '#7c3aed',
+          '#dc2626',
+          '#0891b2',
+          '#9333ea',
+          '#16a34a',
+          '#db2777',
+          '#0f766e',
+        ]
+
+        function getBarangayName(feature?: GeoJSON.Feature<GeoJSON.Geometry, Record<string, unknown>>): string {
+          return String(
+            feature?.properties?.barangay_name ??
+              feature?.properties?.brgy_name ??
+              feature?.properties?.name ??
+              'Unknown Barangay',
+          )
+        }
+
+        function getBarangayColor(feature?: GeoJSON.Feature<GeoJSON.Geometry, Record<string, unknown>>): string {
+          const barangayName = getBarangayName(feature)
+
+          let hash = 0
+          for (let index = 0; index < barangayName.length; index += 1) {
+            hash = barangayName.charCodeAt(index) + ((hash << 5) - hash)
+          }
+
+          return barangayBorderColors[Math.abs(hash) % barangayBorderColors.length]
+        }
+
+        const barangayGeoJson = L.geoJSON(barangayLayer, {
           pane: 'barangay-pane',
-          style: () => ({
-            color: '#0f172a',
-            weight: 1.2,
-            opacity: 0.88,
-            fillOpacity: 0,
-            dashArray: '5 6',
+          interactive: true,
+          style: (feature) => ({
+            color: getBarangayColor(feature),
+            weight: 0.9,
+            opacity: 0.76,
+            fillColor: getBarangayColor(feature),
+            fillOpacity: 0.01,
+            lineJoin: 'round',
+            lineCap: 'round',
           }),
           onEachFeature: (feature, layer) => {
-            const barangayName =
-              (feature.properties?.barangay_name as string) ??
-              (feature.properties?.brgy_name as string) ??
-              'Unknown Barangay'
+            const barangayName = getBarangayName(feature)
 
-            layer.bindTooltip(`<strong>${barangayName}</strong>`, {
+            layer.bindTooltip(barangayName, {
               sticky: true,
-              direction: 'auto',
-              opacity: 0.98,
+              direction: 'top',
+              opacity: 0.95,
+              className: 'barangay-hover-tooltip',
+            })
+
+            layer.on({
+              mouseover: (event) => {
+                const target = event.target as L.Path
+                target.setStyle({
+                  color: getBarangayColor(feature),
+                  weight: 2.1,
+                  opacity: 1,
+                  fillColor: getBarangayColor(feature),
+                  fillOpacity: 0.08,
+                })
+                target.bringToFront()
+              },
+              mouseout: () => {
+                barangayGeoJson.resetStyle(layer)
+              },
             })
           },
-        }).addTo(map)
+        })
+
+        barangayGeoJson.addTo(map)
       }
 
       if (isEqView) {
@@ -865,10 +897,10 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
                             {filteredEarthquakeIncidentCards.map((incident) => (
                               <article
                                 className={`rounded-xl p-3 ${
-                                  isAdminVariant
-                                    ? 'border border-slate-700 bg-[#1d2230]'
-                                    : 'border border-slate-200 bg-[#fbfdff]'
-                                }`}
+                              isAdminVariant
+                                ? 'border border-slate-700 bg-[#1d2230]'
+                                : 'border border-slate-200 bg-[#fbfdff]'
+                            }`}
                                 key={`${incident.title}-${incident.time}`}
                               >
                                 <div className="flex items-start justify-between gap-2">
