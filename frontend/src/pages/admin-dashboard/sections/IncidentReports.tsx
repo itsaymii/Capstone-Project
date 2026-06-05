@@ -3,9 +3,10 @@ import { getIncidentReports, type IncidentReport } from '../../../services/incid
 
 type ReportStatus = 'pending' | 'approved'
 type DateGrouping = 'weekly' | 'monthly' | 'yearly'
-type TeamFilter = 'Alpha' | 'Charlie' | 'Bravo'
+type TeamFilter = 'All' | 'Alpha' | 'Charlie' | 'Bravo'
 
 const TEAM_NAMES: Record<TeamFilter, string> = {
+  'All': 'All Teams',
   'Alpha': 'Alpha Responder Squad',
   'Bravo': 'Bravo Rescue Team',
   'Charlie': 'Charlie Medical Unit',
@@ -37,6 +38,19 @@ function getIncidentType(report: IncidentReport): string {
 
 function getResponderTeam(report: IncidentReport): string {
   return report.responderTeam || report.responder_team || 'Responder Team'
+}
+
+function getResponderTeamKey(report: IncidentReport): TeamFilter | 'Unknown' {
+  const raw = String(getResponderTeam(report)).trim().toLowerCase()
+
+  if (raw.includes('alpha')) return 'Alpha'
+  if (raw.includes('bravo')) return 'Bravo'
+  if (raw.includes('charlie')) return 'Charlie'
+  if (raw.includes('rescue') && raw.includes('team')) return 'Bravo'
+  if (raw.includes('medical') || raw.includes('unit')) return 'Charlie'
+  if (raw.includes('squad')) return 'Alpha'
+
+  return 'Unknown'
 }
 
 function getReportBarangay(report: IncidentReport): string {
@@ -98,7 +112,7 @@ export function IncidentReports() {
   const [isLoading, setIsLoading] = useState(true)
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [dateGrouping, setDateGrouping] = useState<DateGrouping>('weekly')
-  const [teamFilter, setTeamFilter] = useState<TeamFilter>('Alpha')
+  const [teamFilter, setTeamFilter] = useState<TeamFilter>('All')
 
   useEffect(() => {
     let isMounted = true
@@ -156,9 +170,11 @@ export function IncidentReports() {
   }, [reports, searchQuery])
 
   const sortedFilteredReports = useMemo(() => {
-    const fullTeamName = TEAM_NAMES[teamFilter]
     return [...filteredReports]
-      .filter((report) => getResponderTeam(report) === fullTeamName)
+      .filter((report) => {
+        if (teamFilter === 'All') return true
+        return getResponderTeamKey(report) === teamFilter
+      })
       .sort((left, right) => compareResponderTeams(getResponderTeam(left), getResponderTeam(right)))
   }, [filteredReports, teamFilter])
 
@@ -418,6 +434,7 @@ export function IncidentReports() {
                 onChange={(event) => setTeamFilter(event.target.value as TeamFilter)}
                 value={teamFilter}
               >
+                <option value="All">All Teams</option>
                 <option value="Alpha">Alpha Responder Squad</option>
                 <option value="Charlie">Charlie Medical Unit</option>
                 <option value="Bravo">Bravo Rescue Team</option>
