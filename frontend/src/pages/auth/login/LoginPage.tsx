@@ -57,20 +57,33 @@ export function LoginPage({ onRequestRegister, onRequestAdminLogin: _onRequestAd
 
   const otpInputRefs = useRef<Array<HTMLInputElement | null>>([])
 
-  function getPostLoginPath(): string {
+  function getPostLoginPath(overrideProfile?: { role?: string; isAdmin?: boolean; isStaff?: boolean; hasDashboardAccess?: boolean }): string {
     const redirectPath = (location.state as { from?: string } | null)?.from
-    const profile = getCurrentUserProfile()
-    const hasDashboardSession = Boolean(profile?.hasDashboardAccess || profile?.role === 'admin' || profile?.role === 'staff')
+    const profile = overrideProfile ?? getCurrentUserProfile()
 
-    if (hasDashboardSession) {
-      if (redirectPath?.startsWith('/admin')) {
-        return redirectPath
-      }
+    const role = profile?.role
+    const isAdmin = profile?.isAdmin
+    const isStaff = profile?.isStaff
+    const hasDashboardAccess = profile?.hasDashboardAccess
 
+    // Strict role-based routing: prefer explicit role fields, but also support boolean flags
+    // Admin users ALWAYS go to admin dashboard
+    if (role === 'admin' || isAdmin) {
       return '/admin-dashboard'
     }
 
-    if (redirectPath && !redirectPath.startsWith('/admin')) {
+    // Staff users ALWAYS go to the responder dashboard
+    if (role === 'staff' || isStaff) {
+      return '/responder-dashboard'
+    }
+
+    // Fallback: if profile has dashboard access but no explicit role flags, assume responder role
+    if (hasDashboardAccess) {
+      return '/responder-dashboard'
+    }
+
+    // Citizens: Respect previous redirect if it's safe, otherwise landing page
+    if (redirectPath && !redirectPath.startsWith('/admin') && !redirectPath.startsWith('/responder')) {
       return redirectPath
     }
 
@@ -312,7 +325,7 @@ export function LoginPage({ onRequestRegister, onRequestAdminLogin: _onRequestAd
           return
         }
 
-        navigate(getPostLoginPath(), {
+        navigate(getPostLoginPath(result.user), {
           state: {
             loginSuccessMessage: result.message ?? 'Welcome back to Lucena City DRRMO.',
           },
@@ -356,9 +369,9 @@ export function LoginPage({ onRequestRegister, onRequestAdminLogin: _onRequestAd
         return
       }
 
-      navigate(getPostLoginPath(), {
+      navigate(getPostLoginPath(result.user), {
         state: {
-          loginSuccessMessage: result.message ?? 'Welcome back to Lucena City DRRMO.',
+            loginSuccessMessage: result.message ?? 'Welcome back to Lucena City DRRMO.',
         },
       })
     }, 900)
