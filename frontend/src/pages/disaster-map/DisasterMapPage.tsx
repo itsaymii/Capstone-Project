@@ -56,32 +56,7 @@ type IncidentItem = {
   magnitude?: number
 }
 
-const mockIncidents: IncidentItem[] = [
-  {
-    title: 'Building Fire - Commercial District',
-    time: '7:15 AM',
-    status: 'pending',
-    color: hazardColors.FR,
-    code: 'FR',
-    location: 'Commercial District, Lucena City',
-    severity: 'High',
-    responseTeam: 'BFP Lucena Station 1',
-    description: 'Active fire response ongoing.',
-    coordinates: [13.934, 121.621],
-  },
-  {
-    title: 'Multi-vehicle Accident - Highway',
-    time: '9:00 AM',
-    status: 'pending',
-    color: hazardColors.AC,
-    code: 'AC',
-    location: 'Pan-Philippine Highway, Lucena City',
-    severity: 'Moderate',
-    responseTeam: 'Traffic and Rescue Coordination',
-    description: 'Lane obstruction in place. Clearing and medical triage underway.',
-    coordinates: [13.926, 121.609],
-  },
-]
+const mockIncidents: IncidentItem[] = []
 
 type IncidentTypeFilter = 'EQ' | 'FR' | 'AC'
 
@@ -259,7 +234,10 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
   const [eqLastRefreshed, setEqLastRefreshed] = useState<Date | null>(null)
   const [eqSearchQuery, setEqSearchQuery] = useState('')
 
-  const allMappedIncidents = useMemo(() => [...backendIncidents, ...mockIncidents], [backendIncidents])
+  const allMappedIncidents = useMemo(
+    () => (isAdminVariant ? backendIncidents : [...backendIncidents, ...mockIncidents]),
+    [backendIncidents, isAdminVariant],
+  )
 
   const filteredIncidents = useMemo(
     () => allMappedIncidents.filter((incident) => incident.code === selectedType),
