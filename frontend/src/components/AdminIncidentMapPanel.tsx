@@ -35,7 +35,7 @@ type MapIncident = {
   title: string
   time: string
   status: ReportReviewStatus
-  code: 'FR' | 'AC'
+  code: HazardType
   incidentTypeLabel: string
   location: string
   severity: 'Low' | 'Moderate' | 'High' | 'Critical'
@@ -258,7 +258,11 @@ function mapReportToIncident(report: IncidentReport): MapIncident {
   const incidentTypeLabel = getReportIncidentType(report) || 'Incident Report'
   const incidentType = incidentTypeLabel.toLowerCase()
 
-  const code: MapIncident['code'] = incidentType.includes('fire') ? 'FR' : 'AC'
+  const code: MapIncident['code'] = incidentType.includes('fire')
+    ? 'FR'
+    : incidentType.includes('earthquake')
+      ? 'EQ'
+      : 'AC'
   const victimCount = getVictimCount(report)
   const location = report.location || 'Lucena City'
 
@@ -603,7 +607,9 @@ export function AdminIncidentMapPanel({
 
   const incidentCounts = useMemo(
     () => ({
-      EQ: earthquakeEvents.length,
+      EQ:
+        earthquakeEvents.length +
+        incidentReports.filter((incident) => incident.code === 'EQ' && incident.status === 'approved').length,
       FR: incidentReports.filter((incident) => incident.code === 'FR' && incident.status === 'approved').length,
       AC: incidentReports.filter((incident) => incident.code === 'AC' && incident.status === 'approved').length,
     }),
