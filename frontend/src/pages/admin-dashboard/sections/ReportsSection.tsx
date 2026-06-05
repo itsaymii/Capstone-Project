@@ -29,11 +29,25 @@ type UnifiedHazardReportRow = {
   dateValue: string
 }
 
+type ResponderReport = {
+  id: string
+  reportCode?: string
+  incidentCode?: string
+  incidentType?: string
+  responderTeam?: string
+  location?: string
+  actionTaken?: string
+  createdAt?: string
+  status?: string
+}
+
 type ReportsSectionProps = {
   reports: HazardIncident[]
+  responderReports: ResponderReport[]
   earthquakeEvents: EarthquakeEvent[]
   earthquakeFeedStatus: 'loading' | 'ready' | 'error'
   earthquakeLastUpdated: Date | null
+  searchQuery: string
 }
 
 function getEarthquakeSeverity(magnitude: number): HazardIncident['severity'] {
@@ -85,14 +99,8 @@ function getAlertLevelFromSeverity(severity: HazardIncident['severity']): string
 function getEarthquakeStatus(event: EarthquakeEvent): string {
   const hoursSinceEvent = (Date.now() - event.rawTimestamp) / (1000 * 60 * 60)
 
-  if (event.magnitude >= 4.5 || hoursSinceEvent <= 24) {
-    return 'Active monitoring'
-  }
-
-  if (event.magnitude >= 3.5 || hoursSinceEvent <= 72) {
-    return 'Field review'
-  }
-
+  if (event.magnitude >= 4.5 || hoursSinceEvent <= 24) return 'Active monitoring'
+  if (event.magnitude >= 3.5 || hoursSinceEvent <= 72) return 'Field review'
   return 'Logged'
 }
 
@@ -107,21 +115,14 @@ function escapeHtmlCell(value: string): string {
 
 function parseClockTimeLabel(label: string): { hours: number; minutes: number } {
   const match = label.trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i)
-  if (!match) {
-    return { hours: 8, minutes: 0 }
-  }
+  if (!match) return { hours: 8, minutes: 0 }
 
   let hours = Number(match[1])
   const minutes = Number(match[2])
   const meridiem = match[3].toUpperCase()
 
-  if (meridiem === 'PM' && hours !== 12) {
-    hours += 12
-  }
-
-  if (meridiem === 'AM' && hours === 12) {
-    hours = 0
-  }
+  if (meridiem === 'PM' && hours !== 12) hours += 12
+  if (meridiem === 'AM' && hours === 12) hours = 0
 
   return { hours, minutes }
 }
@@ -135,9 +136,7 @@ function buildIncidentDateValue(timeLabel: string, dayOffset: number): string {
 
 function formatReportDateTime(value: string): string {
   const parsedDate = new Date(value)
-  if (Number.isNaN(parsedDate.getTime())) {
-    return value
-  }
+  if (Number.isNaN(parsedDate.getTime())) return value || '-'
 
   return parsedDate.toLocaleString(undefined, {
     year: 'numeric',
@@ -165,74 +164,38 @@ const unifiedHazardReportColumns: ReportTableColumn<UnifiedHazardReportRow>[] = 
 
 export function ReportsSection({
   reports,
+  responderReports,
   earthquakeEvents,
   earthquakeFeedStatus,
   earthquakeLastUpdated,
+  searchQuery,
 }: ReportsSectionProps) {
   const [reportStartDate, setReportStartDate] = useState('')
   const [reportEndDate, setReportEndDate] = useState('')
   const [reportHazardFilter, setReportHazardFilter] = useState<ReportHazardFilter>('all')
   const [reportLocationFilter, setReportLocationFilter] = useState('')
 
+  const normalizedDashboardSearchQuery = searchQuery.trim().toLowerCase()
   const normalizedReportLocationFilter = reportLocationFilter.trim().toLowerCase()
   const isDateFilterActive = Boolean(reportStartDate || reportEndDate)
 
   const localHazardReportRows = useMemo<UnifiedHazardReportRow[]>(() => {
-    const fireCauseLookup: Record<string, string> = {
-      'fire-commercial': 'Electrical overload',
-      'fire-barangay-10': 'Unattended cooking flame',
-      'fire-industrial': 'Chemical ignition in storage area',
-    }
-    const accidentCauseLookup: Record<string, string> = {
-      'acc-highway': 'Multi-vehicle collision',
-      'acc-diversion': 'Road collision during peak traffic',
-    }
-
     return reports.filter((incident) => incident.code !== 'EQ').map((incident, index) => {
       const hazardCode: 'FR' | 'EQ' | 'AC' = incident.code
       const dateValue = buildIncidentDateValue(incident.time, index)
-      const riskLevel =
-        incident.severity === 'Low'
-          ? 'Low'
-          : incident.severity === 'Moderate'
-            ? 'Medium'
-            : incident.severity === 'High'
-              ? 'High'
-              : 'Critical'
-      const impactLevel =
-        incident.severity === 'Low'
-          ? 'Minimal'
-          : incident.severity === 'Moderate'
-            ? 'Localized'
-            : incident.severity === 'High'
-              ? 'Significant'
-              : 'Severe'
-      const alertLevel =
-        incident.severity === 'Low'
-          ? 'Advisory'
-          : incident.severity === 'Moderate'
-            ? 'Watch'
-            : incident.severity === 'High'
-              ? 'Warning'
-              : 'Emergency'
 
       return {
         reportId: `RPT-${String(index + 1).padStart(3, '0')}`,
-        reportType: incident.code === 'FR' ? 'Fire' : incident.code === 'EQ' ? 'Earthquake' : 'Accident',
+        reportType: incident.code === 'FR' ? 'Fire' : 'Accident',
         location: incident.location,
         dateTime: formatReportDateTime(dateValue),
         responseTeam: incident.responseTeam,
         magnitude: '-',
-        cause:
-          incident.code === 'FR'
-            ? fireCauseLookup[incident.id] ?? 'Under investigation'
-            : incident.code === 'AC'
-              ? accidentCauseLookup[incident.id] ?? 'Traffic investigation ongoing'
-              : '-',
-        impactLevel,
-        riskLevel,
-        alertLevel,
-        sentVia: index % 2 === 0 ? 'SMS' : 'Email',
+        cause: incident.description || 'Under investigation',
+        impactLevel: getImpactLevelFromSeverity(incident.severity),
+        riskLevel: getRiskLevelFromSeverity(incident.severity),
+        alertLevel: getAlertLevelFromSeverity(incident.severity),
+        sentVia: 'Admin',
         status: incident.status,
         hazardCode,
         locationKey: incident.location,
@@ -268,23 +231,55 @@ export function ReportsSection({
       })
   }, [earthquakeEvents])
 
+  const responderReportRows = useMemo<UnifiedHazardReportRow[]>(() => {
+    return responderReports.map((report) => {
+      const type = (report.incidentType || '').toLowerCase()
+
+      let hazardCode: 'FR' | 'EQ' | 'AC' = 'AC'
+      if (type.includes('fire')) hazardCode = 'FR'
+      if (type.includes('earthquake')) hazardCode = 'EQ'
+
+      return {
+        reportId: report.reportCode || report.incidentCode || report.id,
+        reportType: report.incidentType || 'Responder Report',
+        location: report.location || '-',
+        dateTime: formatReportDateTime(report.createdAt || ''),
+        responseTeam: report.responderTeam || '-',
+        magnitude: '-',
+        cause: report.actionTaken || '-',
+        impactLevel: 'Responder',
+        riskLevel: 'Responder',
+        alertLevel: 'Responder',
+        sentVia: 'Responder',
+        status: report.status || 'Submitted',
+        hazardCode,
+        locationKey: report.location || '',
+        dateValue: report.createdAt || '',
+      }
+    })
+  }, [responderReports])
+
   const unifiedHazardReportRows = useMemo(
-    () => [...earthquakeReportRows, ...localHazardReportRows],
-    [earthquakeReportRows, localHazardReportRows],
+    () => [...earthquakeReportRows, ...localHazardReportRows, ...responderReportRows],
+    [earthquakeReportRows, localHazardReportRows, responderReportRows],
   )
 
   function matchesReportDateRange(dateValue?: string): boolean {
     if (!dateValue) return true
+
     const parsedDate = new Date(dateValue)
     if (Number.isNaN(parsedDate.getTime())) return true
+
     if (reportStartDate) {
       const startDate = new Date(`${reportStartDate}T00:00:00`)
       if (parsedDate < startDate) return false
     }
+
     if (reportEndDate) {
       const endDate = new Date(`${reportEndDate}T23:59:59.999`)
       if (parsedDate > endDate) return false
     }
+
     return true
   }
 
@@ -298,16 +293,43 @@ export function ReportsSection({
     return (locationValue || '').toLowerCase().includes(normalizedReportLocationFilter)
   }
 
+  function matchesDashboardSearch(row: UnifiedHazardReportRow): boolean {
+    if (!normalizedDashboardSearchQuery) return true
+
+    return [
+      row.reportId,
+      row.reportType,
+      row.location,
+      row.dateTime,
+      row.responseTeam,
+      row.magnitude,
+      row.cause,
+      row.impactLevel,
+      row.riskLevel,
+      row.alertLevel,
+      row.sentVia,
+      row.status,
+    ].some((value) => value.toLowerCase().includes(normalizedDashboardSearchQuery))
+  }
+
   const filteredUnifiedHazardReportRows = useMemo(
     () =>
       unifiedHazardReportRows.filter(
         (row) =>
           matchesReportHazard(row.hazardCode) &&
           matchesReportLocation(row.locationKey) &&
+          matchesDashboardSearch(row) &&
           matchesReportDateRange(row.dateValue),
       ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [unifiedHazardReportRows, reportHazardFilter, normalizedReportLocationFilter, reportStartDate, reportEndDate],
+    [
+      unifiedHazardReportRows,
+      reportHazardFilter,
+      normalizedReportLocationFilter,
+      normalizedDashboardSearchQuery,
+      reportStartDate,
+      reportEndDate,
+    ],
   )
 
   const visibleReportLabel = `${filteredUnifiedHazardReportRows.length} of ${unifiedHazardReportRows.length} records visible`
@@ -325,9 +347,7 @@ export function ReportsSection({
     rows: T[],
   ): void {
     const escapeCsvValue = (value: string) => {
-      if (/[",\n]/.test(value)) {
-        return `"${value.replace(/"/g, '""')}"`
-      }
+      if (/[",\n]/.test(value)) return `"${value.replace(/"/g, '""')}"`
       return value
     }
 
@@ -389,6 +409,7 @@ export function ReportsSection({
         </body>
       </html>
     `)
+
     printWindow.document.close()
     printWindow.focus()
     printWindow.print()
@@ -412,6 +433,7 @@ export function ReportsSection({
             <h3 className="text-lg font-semibold text-slate-900">{title}</h3>
             <p className="mt-1 text-sm text-slate-600">{description}</p>
           </div>
+
           <div className="flex flex-wrap gap-2">
             <button
               className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-700 transition hover:bg-slate-50"
@@ -420,6 +442,7 @@ export function ReportsSection({
             >
               Print / Save PDF
             </button>
+
             <button
               className="rounded-xl border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-emerald-700 transition hover:bg-emerald-100"
               onClick={() => downloadReportTableAsCsv(exportFileName, columns, rows)}
@@ -437,7 +460,11 @@ export function ReportsSection({
                 {columns.map((column) => (
                   <th
                     className={`px-4 py-3.5 text-xs font-semibold uppercase tracking-[0.14em] text-slate-500 ${
-                      column.align === 'right' ? 'text-right' : column.align === 'center' ? 'text-center' : 'text-left'
+                      column.align === 'right'
+                        ? 'text-right'
+                        : column.align === 'center'
+                          ? 'text-center'
+                          : 'text-left'
                     }`}
                     key={String(column.key)}
                   >
@@ -446,6 +473,7 @@ export function ReportsSection({
                 ))}
               </tr>
             </thead>
+
             <tbody className="divide-y divide-slate-200 bg-white">
               {rows.length > 0 ? (
                 rows.map((row, index) => (
@@ -453,7 +481,11 @@ export function ReportsSection({
                     {columns.map((column) => (
                       <td
                         className={`px-4 py-4 align-top text-slate-700 ${
-                          column.align === 'right' ? 'text-right' : column.align === 'center' ? 'text-center' : 'text-left'
+                          column.align === 'right'
+                            ? 'text-right'
+                            : column.align === 'center'
+                              ? 'text-center'
+                              : 'text-left'
                         }`}
                         key={String(column.key)}
                       >
@@ -485,8 +517,9 @@ export function ReportsSection({
               <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Reports Desk</p>
               <h2 className="mt-1 text-2xl font-bold text-slate-900">Unified Hazard Report Table</h2>
               <p className="mt-2 max-w-3xl text-sm leading-relaxed text-slate-600">
-                Fire and accident records remain local for now, while earthquake rows pull live Quezon-region events from the available USGS API.
+                Fire, accident, earthquake, and responder-submitted reports are combined in one admin report table.
               </p>
+
               <div className="mt-3 flex flex-wrap items-center gap-2 text-xs font-medium">
                 <span
                   className={`rounded-full px-3 py-1 ${
@@ -503,14 +536,19 @@ export function ReportsSection({
                       ? 'Earthquake feed unavailable'
                       : `${earthquakeEvents.length} live earthquake rows loaded`}
                 </span>
+
+                <span className="rounded-full bg-blue-100 px-3 py-1 text-blue-700">
+                  {responderReports.length} responder report rows loaded
+                </span>
+
                 {earthquakeLastUpdated ? (
                   <span className="text-slate-500">
                     Updated {earthquakeLastUpdated.toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' })}
                   </span>
                 ) : null}
-                <span className="text-slate-500">Default view shows all records. Date filters only narrow the list after you pick a start or end date.</span>
               </div>
             </div>
+
             <button
               className="rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
               onClick={resetReportFilters}
@@ -530,6 +568,7 @@ export function ReportsSection({
                 value={reportStartDate}
               />
             </label>
+
             <label className="grid gap-2 text-sm font-medium text-slate-700">
               End date (optional)
               <input
@@ -539,6 +578,7 @@ export function ReportsSection({
                 value={reportEndDate}
               />
             </label>
+
             <label className="grid gap-2 text-sm font-medium text-slate-700">
               Type
               <select
@@ -549,9 +589,10 @@ export function ReportsSection({
                 <option value="all">All types</option>
                 <option value="FR">Fire</option>
                 <option value="EQ">Earthquake</option>
-                <option value="AC">Accident</option>
+                <option value="AC">Accident / Other</option>
               </select>
             </label>
+
             <label className="grid gap-2 text-sm font-medium text-slate-700">
               Location / Barangay
               <input
@@ -576,7 +617,7 @@ export function ReportsSection({
 
         {renderReportTable({
           title: 'Hazard Incident Master Table',
-          description: 'Combined admin report table for earthquake, fire, and accident records with print and export support.',
+          description: 'Combined admin report table for earthquake, fire, accident, and responder-submitted records with print and export support.',
           columns: unifiedHazardReportColumns,
           rows: filteredUnifiedHazardReportRows,
           emptyMessage: 'No hazard report rows match the current filters.',

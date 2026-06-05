@@ -15,10 +15,15 @@ from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.csrf import csrf_exempt
 from rest_framework import status
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
-from .models import AccountProfile, OneTimePassword, ensure_account_profile, get_user_role, user_bypasses_login_otp, user_has_dashboard_access
+from .models import (
+	user_bypasses_login_otp, get_user_role, AccountProfile, OneTimePassword,
+	ensure_account_profile, user_has_dashboard_access
+)
+from .permissions import IsAdminOrStaff
+from incidents.models import Incident, HazardType
 
 
 OTP_EXPIRY_MINUTES = 3
@@ -27,6 +32,7 @@ OTP_RECENT_LOGIN_BYPASS_MINUTES = 5
 
 
 def _coerce_bool(value, default: bool = False) -> bool:
+	"""Normalize mixed payload values into a predictable boolean."""
 	if isinstance(value, bool):
 		return value
 
@@ -44,24 +50,29 @@ def _coerce_bool(value, default: bool = False) -> bool:
 
 
 def _get_user_full_name(user: User) -> str:
+	"""Return a display-friendly full name, falling back to username."""
 	full_name = f"{user.first_name} {user.last_name}".strip()
 	return full_name or user.username
 
 
 def _serialize_user(user: User, fallback_identifier: str = '') -> dict:
+	"""Shape authenticated user data for frontend responses."""
 	role = get_user_role(user)
 	contact_value = (user.email or '').strip() or fallback_identifier or user.username
 	return {
 		'fullName': _get_user_full_name(user),
 		'email': contact_value,
 		'role': role,
-		'isAdmin': role == AccountProfile.ROLE_ADMIN,
-		'isStaff': role == AccountProfile.ROLE_STAFF,
+		# Prefer explicit Django flags when available so frontend routing
+		# works even if AccountProfile hasn't been synchronized.
+		'isAdmin': bool(user.is_superuser) or role == AccountProfile.ROLE_ADMIN,
+		'isStaff': bool(user.is_staff) or role == AccountProfile.ROLE_STAFF,
 		'hasDashboardAccess': user_has_dashboard_access(user),
 	}
 
 
 def _build_login_success_response(request, user: User, fallback_identifier: str) -> Response:
+	"""Build a consistent login response and refresh the CSRF token."""
 	response = Response(
 		{
 			'message': 'Login successful.',
@@ -73,10 +84,13 @@ def _build_login_success_response(request, user: User, fallback_identifier: str)
 
 
 def _generate_otp_code() -> str:
+	"""Generate a six-digit OTP code."""
 	return ''.join(str(random.randint(0, 9)) for _ in range(6))
 
-
+	
 def _send_otp_email(email: str, code: str, purpose: str) -> None:
+	# """Send the OTP email using configurable subject and body templates."""
+	"""Send the OTP email using configurable subject and body templates."""
 	action_label = (
 		'registration'
 		if purpose == OneTimePassword.PURPOSE_REGISTER
@@ -113,6 +127,8 @@ def _send_otp_email(email: str, code: str, purpose: str) -> None:
 
 
 def _create_otp(email: str, purpose: str, payload: dict | None = None) -> str:
+	# """Persist a hashed OTP record and return the plain code for delivery."""
+	"""Persist a hashed OTP record and return the plain code for delivery."""
 	code = _generate_otp_code()
 	OneTimePassword.objects.create(
 		email=email,
@@ -125,6 +141,8 @@ def _create_otp(email: str, purpose: str, payload: dict | None = None) -> str:
 
 
 def _get_valid_otp(email: str, purpose: str) -> OneTimePassword | None:
+	# """Fetch the latest unused OTP that is still within its validity window."""
+	"""Fetch the latest unused OTP that is still within its validity window."""
 	return (
 		OneTimePassword.objects.filter(
 			email__iexact=email,
@@ -138,6 +156,8 @@ def _get_valid_otp(email: str, purpose: str) -> OneTimePassword | None:
 
 
 def _get_recent_otp_request(email: str, purpose: str) -> OneTimePassword | None:
+	# """Return a recently issued OTP to enforce resend cooldown rules."""
+	"""Return a recently issued OTP to enforce resend cooldown rules."""
 	return (
 		OneTimePassword.objects.filter(
 			email__iexact=email,
@@ -150,6 +170,8 @@ def _get_recent_otp_request(email: str, purpose: str) -> OneTimePassword | None:
 
 
 def _get_retry_after_seconds(otp_record: OneTimePassword) -> int:
+	# """Compute the remaining resend cooldown for an OTP request."""
+	"""Compute the remaining resend cooldown for an OTP request."""
 	elapsed_seconds = (timezone.now() - otp_record.created_at).total_seconds()
 	remaining = OTP_RESEND_COOLDOWN_SECONDS - elapsed_seconds
 	if remaining <= 0:
@@ -158,6 +180,8 @@ def _get_retry_after_seconds(otp_record: OneTimePassword) -> int:
 
 
 def _is_encoded_password(password_value: str) -> bool:
+	# """Detect whether a stored password already uses Django's hashed format."""
+	"""Detect whether a stored password already uses Django's hashed format."""
 	try:
 		identify_hasher(password_value)
 		return True
@@ -166,6 +190,8 @@ def _is_encoded_password(password_value: str) -> bool:
 
 
 def _has_recent_verified_login_otp(email: str, user_id: int) -> bool:
+	# """Allow a short login grace period after a successful OTP verification."""
+	"""Allow a short login grace period after a successful OTP verification."""
 	recent_verified_otps = OneTimePassword.objects.filter(
 		email__iexact=email,
 		purpose=OneTimePassword.PURPOSE_LOGIN,
@@ -181,7 +207,18 @@ def _has_recent_verified_login_otp(email: str, user_id: int) -> bool:
 
 
 @api_view(['GET'])
+@authentication_classes([])
+@permission_classes([AllowAny])
+def api_root(request):
+	"""Root API endpoint."""
+	return Response({'message': 'API Server is running', 'status': 'ok'})
+
+
+@api_view(['GET'])
+@authentication_classes([])
+@permission_classes([AllowAny])
 def test_connection(request):
+	"""Health-check endpoint used to verify backend connectivity."""
 	return Response({'message': 'Backend connected successfully'})
 
 
@@ -190,6 +227,7 @@ def test_connection(request):
 @authentication_classes([])
 @permission_classes([AllowAny])
 def issue_csrf_cookie(request):
+	"""Issue a CSRF cookie so frontend requests can establish a trusted session."""
 	get_token(request)
 	return Response({'message': 'CSRF cookie set successfully.'}, status=status.HTTP_200_OK)
 
@@ -199,6 +237,8 @@ def issue_csrf_cookie(request):
 @authentication_classes([])
 @permission_classes([AllowAny])
 def register_user(request):
+	# """Start registration by validating input and emailing a verification OTP."""
+	"""Start registration by validating input and emailing a verification OTP."""
 	full_name = (request.data.get('fullName') or '').strip()
 	email = (request.data.get('email') or '').strip().lower()
 	username = (request.data.get('username') or '').strip().lower()
@@ -232,6 +272,7 @@ def register_user(request):
 			status=status.HTTP_429_TOO_MANY_REQUESTS,
 		)
 
+	# Store registration data temporarily until the OTP has been verified.
 	otp_code = _create_otp(
 		email=email,
 		purpose=OneTimePassword.PURPOSE_REGISTER,
@@ -255,6 +296,8 @@ def register_user(request):
 @authentication_classes([])
 @permission_classes([AllowAny])
 def verify_register_otp(request):
+	# """Complete registration after validating the submitted OTP."""
+	"""Complete registration after validating the submitted OTP."""
 	email = (request.data.get('email') or '').strip().lower()
 	otp = (request.data.get('otp') or '').strip()
 
@@ -285,16 +328,17 @@ def verify_register_otp(request):
 	user.save()
 	ensure_account_profile(user, default_role=AccountProfile.ROLE_CITIZEN)
 
+	# Mark the OTP as consumed so it cannot be replayed.
 	otp_record.is_used = True
 	otp_record.save(update_fields=['is_used'])
 
+	# Automatically log the user in after successful registration
+	login(request, user)
+
 	return Response(
 		{
-			'message': 'Registration successful! Welcome to Lucena City DRRMO. You can now log in using your verified account.',
-			'user': {
-				'fullName': user.first_name or user.username,
-				'email': user.email,
-			},
+			'message': 'Registration successful! Welcome to Lucena City DRRMO.',
+			'user': _serialize_user(user, fallback_identifier=email),
 		},
 		status=status.HTTP_201_CREATED,
 	)
@@ -305,7 +349,9 @@ def verify_register_otp(request):
 @authentication_classes([])
 @permission_classes([AllowAny])
 def login_user(request):
-	identifier = (request.data.get('email') or request.data.get('identifier') or '').strip().lower()
+	# """Authenticate a user and trigger OTP verification when policy requires it."""
+	"""Authenticate a user and trigger OTP verification when policy requires it."""
+	identifier = (request.data.get('email') or request.data.get('username') or request.data.get('identifier') or '').strip().lower()
 	password = request.data.get('password') or ''
 	force_otp = _coerce_bool(request.data.get('forceOtp'), default=True)
 
@@ -314,17 +360,21 @@ def login_user(request):
 
 	account = User.objects.filter(Q(email__iexact=identifier) | Q(username__iexact=identifier)).first()
 	if not account:
-		return Response({'error': 'Invalid email/username or password.'}, status=status.HTTP_400_BAD_REQUEST)
+		print(f"DEBUG: No account found for identifier: {identifier}")
+		return Response({'error': 'Invalid email/username or password.'}, status=status.HTTP_401_UNAUTHORIZED)
 
 	user = authenticate(request, username=account.username, password=password)
+	# Upgrade any legacy plain-text password record on successful login.
 	if not user and account.password and not _is_encoded_password(account.password):
 		if account.password == password:
+			print(f"DEBUG: Upgrading legacy password for: {account.username}")
 			account.set_password(password)
 			account.save(update_fields=['password'])
 			user = authenticate(request, username=account.username, password=password)
 
 	if not user:
-		return Response({'error': 'Invalid email/username or password.'}, status=status.HTTP_400_BAD_REQUEST)
+		print(f"DEBUG: Authentication failed for user: {account.username}")
+		return Response({'error': 'Invalid email/username or password.'}, status=status.HTTP_401_UNAUTHORIZED)
 
 	if not user.is_active:
 		return Response({'error': 'This account is inactive.'}, status=status.HTTP_403_FORBIDDEN)
@@ -388,6 +438,9 @@ def login_user(request):
 @authentication_classes([])
 @permission_classes([AllowAny])
 def verify_login_otp(request):
+
+	# """Finish the login flow after validating the one-time password."""
+	"""Finish the login flow after validating the one-time password."""
 	email = (request.data.get('email') or '').strip().lower()
 	otp = (request.data.get('otp') or '').strip()
 
@@ -403,6 +456,7 @@ def verify_login_otp(request):
 	if not user:
 		return Response({'error': 'User account not found.'}, status=status.HTTP_400_BAD_REQUEST)
 
+	# A verified OTP should only be accepted once.
 	otp_record.is_used = True
 	otp_record.save(update_fields=['is_used'])
 	login(request, user)
@@ -417,6 +471,7 @@ def verify_login_otp(request):
 @authentication_classes([])
 @permission_classes([AllowAny])
 def request_password_reset(request):
+	"""Start password reset by sending a reset OTP to the user's email."""
 	email = (request.data.get('email') or '').strip().lower()
 
 	if not email:
@@ -467,6 +522,7 @@ def request_password_reset(request):
 @authentication_classes([])
 @permission_classes([AllowAny])
 def confirm_password_reset(request):
+	"""Reset the account password after a valid reset OTP is confirmed."""
 	email = (request.data.get('email') or '').strip().lower()
 	otp = (request.data.get('otp') or '').strip()
 	new_password = request.data.get('newPassword') or ''
@@ -489,8 +545,63 @@ def confirm_password_reset(request):
 	user.set_password(new_password)
 	user.save(update_fields=['password'])
 
+	# Consume the OTP after the password has been updated successfully.
 	otp_record.is_used = True
 	otp_record.save(update_fields=['is_used'])
 
 	return Response({'message': 'Password reset successful. You can now log in with your new password.'}, status=status.HTTP_200_OK)
 
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def create_incident_report(request):
+	"""Endpoint for citizens to submit a new incident report."""
+	data = request.data
+	try:
+		# Map incidentType string to a HazardType record
+		hazard_name = data.get('incidentType') or 'General'
+		hazard_type, _ = HazardType.objects.get_or_create(name=hazard_name)
+
+		# Normalize severity to match Incident model choices (low, moderate, high, critical)
+		severity = (data.get('severity') or 'moderate').lower()
+		if severity == 'medium':
+			severity = 'moderate'
+
+		# Create the actual Incident record in the incidents app
+		report = Incident.objects.create(
+			reported_by=request.user,
+			hazard_type=hazard_type,
+			incident_datetime=timezone.now(),
+			description=data.get('description') or '',
+			latitude=data.get('latitude') or 0,
+			longitude=data.get('longitude') or 0,
+			severity_level=severity,
+			status='reported'
+		)
+		return Response({
+			'message': 'Report submitted successfully.',
+			'id': str(report.id),
+			'reference_code': report.reference_code
+		}, status=status.HTTP_201_CREATED)
+	except Exception as e:
+		return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['GET'])
+@permission_classes([IsAdminOrStaff])
+def list_incident_reports(request):
+	"""Endpoint for responders to view all submitted incident reports."""
+	reports = Incident.objects.all().order_by('-date_reported')
+	payload = [{
+		'id': str(r.id),
+		'reference_code': r.reference_code,
+		'reporter': r.reported_by.username if r.reported_by else 'Anonymous',
+		'incidentType': r.hazard_type.name,
+		'description': r.description,
+		'latitude': float(r.latitude),
+		'longitude': float(r.longitude),
+		'severity': r.severity_level,
+		'status': r.status,
+		'createdAt': r.date_reported
+	} for r in reports]
+	return Response({'reports': payload}, status=status.HTTP_200_OK)

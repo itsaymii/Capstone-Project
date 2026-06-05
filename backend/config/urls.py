@@ -17,8 +17,19 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import include, path
 from rest_framework.authtoken.views import obtain_auth_token
+from rest_framework.response import Response
+from rest_framework.decorators import api_view, authentication_classes, permission_classes
+from rest_framework.permissions import AllowAny
+
+@api_view(['GET'])
+@authentication_classes([])
+@permission_classes([AllowAny])
+def api_root(request):
+    """Root API endpoint."""
+    return Response({'message': 'Disaster Vision API Server', 'status': 'running'})
 
 urlpatterns = [
+    path('', api_root, name='api-root'),
     path('admin/', admin.site.urls),
     path('api/token/', obtain_auth_token, name='api-token'),
     path('accounts/', include('accounts.urls')),

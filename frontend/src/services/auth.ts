@@ -44,6 +44,7 @@ type AuthResult = {
   retryAfterSeconds?: number
   otpEmail?: string
   skipOtp?: boolean
+  user?: SessionUser
 }
 
 const AUTH_KEY = 'drms-auth'
@@ -203,6 +204,28 @@ export async function verifyRegisterOtpCode(email: string, otp: string): Promise
 
   try {
     const response = await verifyRegisterOtp({ email: normalizedEmail, otp: trimmedOtp })
+    
+    // If response contains user data, automatically log the user in
+    if (response.user) {
+      persistAuthenticatedSession(
+        {
+          fullName: response.user.fullName,
+          email: response.user.email,
+          role: response.user.role,
+          isAdmin: response.user.isAdmin,
+          isStaff: response.user.isStaff,
+          hasDashboardAccess: response.user.hasDashboardAccess,
+        },
+        false, // Don't persist to localStorage for new users, use sessionStorage
+      )
+      addNotification('Registration completed successfully. Welcome!')
+      return {
+        success: true,
+        message: response.message,
+        skipOtp: true, // Indicate automatic login
+      }
+    }
+    
     addNotification('Registration completed successfully.')
     return {
       success: true,
@@ -266,6 +289,14 @@ export async function requestLoginOtp(
         message: response.message ?? 'Login successful.',
         otpEmail: response.user.email,
         skipOtp: true,
+        user: {
+          fullName: response.user.fullName,
+          email: response.user.email,
+          role: response.user.role,
+          isAdmin: response.user.isAdmin,
+          isStaff: response.user.isStaff,
+          hasDashboardAccess: response.user.hasDashboardAccess,
+        },
       }
     }
 
@@ -329,6 +360,14 @@ export async function verifyLoginOtpCode(payload: {
     return {
       success: true,
       message: response.message ?? 'Login successful.',
+      user: {
+        fullName: response.user.fullName,
+        email: response.user.email,
+        role: response.user.role,
+        isAdmin: response.user.isAdmin,
+        isStaff: response.user.isStaff,
+        hasDashboardAccess: response.user.hasDashboardAccess,
+      },
     }
   } catch (error) {
     const parsedError = parseApiError(error, 'Unable to verify OTP.')

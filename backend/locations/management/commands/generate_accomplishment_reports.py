@@ -1,226 +1,387 @@
-# backend/management/commands/generate_accomplishment_reports.py
 import random
-import uuid
-from datetime import timedelta
+from datetime import timedelta, time, datetime
+from decimal import Decimal
+
 from django.core.management.base import BaseCommand
 from django.utils import timezone
 from django.db import transaction
+from django.contrib.auth import get_user_model
 from faker import Faker
-from decimal import Decimal
 
-from locations.models import Barangay
-from incidents.models import HazardType, Incident, VehicularAccident, MedicalEmergency, FireDetails, ResponderReport
-# from resources.models import Volunteer
+from incidents.models import (
+    HazardType,
+    Incident,
+    IncidentReport,
+    VictimDetail,
+    AccomplishmentReport,
+    FireDetails,
+    VehicularAccident,
+    CrimeReport,
+    MedicalEmergency,
+    DrowningIncident,
+)
 
-# Philippine-aware Faker
-fake = Faker('fil_PH')  # Fallback to English for medical terms
+fake = Faker('fil_PH')
 
-TEAMS = ['ALPHA', 'BRAVO', 'CHARLIE', 'DELTA']
-RESPONDERS = [
-    "MENARD B. ATANACIO", "CARLOS MENDOZA", "BANJO PAULO",
-    "DARWIN SOLOMON", "CYRIL HOLGADO", "GIOVANNI BUNCHA",
-    "MARBIEN DE JUAN II", "ANGELO CARLOS GLORIOSO", "HENRY JALLA"
+INCIDENT_TYPES = [
+    'RCA',
+    'Fire Incident',
+    'Crime Against Person/Property',
+    'Medical Emergency',
+    'Ambulance Assistance',
+    'Stand-by Medical Team',
+    'Drowning',
 ]
-HOSPITALS = ["Quezon Medical Center (QMC)", "Lucena City Hospital", "St. Luke's Lucena", "Home/Refused Transfer"]
-VEHICLES = ["Motorcycle", "Tricycle", "E-bike", "Pick-up Hilux", "Sedan", "Jeepney", "Bus"]
-INJURIES = [
-    "Contusion on Head", "Fractured Right Knee Cap", "Aberasion on Arms", 
-    "Laceration on Forehead", "Sprained Ankle", "Minor Burns", "Concussion Suspected",
-    "Chest Pain", "Difficulty Breathing", "Heat Exhaustion"
+
+TEAMS = [
+    'Alpha Responder Squad',
+    'Bravo Rescue Team',
+    'Charlie Medical Unit',
+    'Delta Emergency Response',
 ]
+
+LOCATIONS = [
+    'Barangay 1, Lucena City',
+    'Barangay 2, Lucena City',
+    'Barangay 3, Lucena City',
+    'Barangay 4, Lucena City',
+    'Barangay 5, Lucena City',
+    'Barangay 6, Lucena City',
+    'Barangay 7, Lucena City',
+    'Barangay 8, Lucena City',
+    'Barangay 9, Lucena City',
+    'Barangay 10, Lucena City',
+    'Barangay 11, Lucena City',
+    'Dalahican Road, Lucena City',
+    'Diversion Road, Lucena City',
+    'Quezon Avenue, Lucena City',
+    'Tayabas Road, Lucena City',
+    'Ibabang Dupay, Lucena City',
+    'Gulang-Gulang, Lucena City',
+    'Ilayang Iyam, Lucena City',
+    'Ibabang Iyam, Lucena City',
+    'Mayao Crossing, Lucena City',
+    'Mayao Kanluran, Lucena City',
+    'Mayao Silangan, Lucena City',
+    'Cotta, Lucena City',
+    'Bocohan, Lucena City',
+    'Isabang, Lucena City',
+    'Market View, Lucena City',
+    'Domoit, Lucena City',
+]
+
+LOCATION_COORDINATES = {
+    'Barangay 1, Lucena City': (13.9346, 121.6122),
+    'Barangay 2, Lucena City': (13.9361, 121.6135),
+    'Barangay 3, Lucena City': (13.9375, 121.6148),
+    'Barangay 4, Lucena City': (13.9389, 121.6162),
+    'Barangay 5, Lucena City': (13.9403, 121.6176),
+    'Barangay 6, Lucena City': (13.9417, 121.6190),
+    'Barangay 7, Lucena City': (13.9431, 121.6204),
+    'Barangay 8, Lucena City': (13.9445, 121.6218),
+    'Barangay 9, Lucena City': (13.9459, 121.6232),
+    'Barangay 10, Lucena City': (13.9473, 121.6246),
+    'Barangay 11, Lucena City': (13.9480, 121.6255),
+    'Dalahican Road, Lucena City': (13.9147, 121.6502),
+    'Diversion Road, Lucena City': (13.9180, 121.6260),
+    'Quezon Avenue, Lucena City': (13.9390, 121.6170),
+    'Tayabas Road, Lucena City': (13.9303, 121.6352),
+    'Ibabang Dupay, Lucena City': (13.9206, 121.6066),
+    'Gulang-Gulang, Lucena City': (13.9494, 121.5986),
+    'Ilayang Iyam, Lucena City': (13.9530, 121.6159),
+    'Ibabang Iyam, Lucena City': (13.9362, 121.6082),
+    'Mayao Crossing, Lucena City': (13.9089, 121.5857),
+    'Mayao Kanluran, Lucena City': (13.9001, 121.5741),
+    'Mayao Silangan, Lucena City': (13.9029, 121.5994),
+    'Cotta, Lucena City': (13.9330, 121.6279),
+    'Bocohan, Lucena City': (13.9482, 121.6094),
+    'Isabang, Lucena City': (13.9718, 121.5821),
+    'Market View, Lucena City': (13.9338, 121.6161),
+    'Domoit, Lucena City': (13.9742, 121.6018),
+}
+
+CONDITIONS = [
+    'Conscious and oriented',
+    'Minor abrasion',
+    'Laceration on arm',
+    'Complaining of chest pain',
+    'Difficulty breathing',
+    'Suspected fracture',
+    'Dizziness',
+    'Weakness',
+    'Transported to hospital',
+]
+
 ACTIONS = [
-    "First aid management, splinting and transported to {hospital}",
-    "Oxygen administration, IV fluid started, transported to {hospital}",
-    "Wound cleaning, bandaging, patient refused hospital transfer",
-    "CPR initiated, ROSC achieved, transported to {hospital}",
-    "Triage completed, minor injuries treated on-site"
+    'Provided first aid and monitored vital signs.',
+    'Cleaned wound and applied sterile dressing.',
+    'Assisted patient and coordinated transport.',
+    'Conducted scene assessment and secured the area.',
+    'Provided oxygen support and continuous monitoring.',
+    'Transferred patient to receiving medical facility.',
+    'Performed initial triage and documented patient condition.',
 ]
+
+
+def get_randomized_coordinates(location):
+    base_lat, base_lng = LOCATION_COORDINATES.get(location, (13.9414, 121.6236))
+
+    latitude = round(base_lat + random.uniform(-0.0018, 0.0018), 6)
+    longitude = round(base_lng + random.uniform(-0.0018, 0.0018), 6)
+
+    latitude = min(max(latitude, 13.89), 13.98)
+    longitude = min(max(longitude, 121.57), 121.69)
+
+    return latitude, longitude
+
+
+def get_hazard_name(incident_type):
+    lower = incident_type.lower()
+
+    if 'fire' in lower:
+        return 'Fire'
+    if 'rca' in lower or 'vehicular' in lower or 'accident' in lower:
+        return 'Vehicular Accident'
+    if 'crime' in lower:
+        return 'Crime'
+    if 'medical' in lower or 'ambulance' in lower or 'stand-by' in lower:
+        return 'Medical Emergency'
+    if 'drowning' in lower:
+        return 'Drowning'
+
+    return 'Medical Emergency'
+
+
+def get_severity(incident_type, victim_count):
+    lower = incident_type.lower()
+
+    if victim_count >= 4:
+        return 'critical'
+    if victim_count >= 2:
+        return 'high'
+    if 'fire' in lower or 'crime' in lower or 'drowning' in lower:
+        return 'moderate'
+    if victim_count > 0:
+        return 'moderate'
+
+    return 'low'
+
+
+def get_impact(victim_count):
+    if victim_count >= 4:
+        return 'major'
+    if victim_count >= 2:
+        return 'minor'
+    return 'minimal'
+
+
+def create_incident_details(incident, incident_type, victim_count):
+    lower = incident_type.lower()
+
+    if 'fire' in lower:
+        FireDetails.objects.get_or_create(
+            incident=incident,
+            defaults={
+                'cause': 'Generated demo data',
+                'damage_estimate': None,
+                'casualties': 0,
+                'injuries': victim_count,
+                'structures_affected': random.randint(1, 3),
+            },
+        )
+        return
+
+    if 'rca' in lower or 'vehicular' in lower or 'accident' in lower:
+        VehicularAccident.objects.get_or_create(
+            incident=incident,
+            defaults={
+                'vehicles_involved': random.randint(1, 4),
+                'casualties': 0,
+                'injuries': victim_count,
+                'cause': 'Generated demo data',
+                'vehicle_types': random.choice(['Motorcycle', 'Car', 'Tricycle', 'Van']),
+            },
+        )
+        return
+
+    if 'crime' in lower:
+        CrimeReport.objects.get_or_create(
+            incident=incident,
+            defaults={
+                'crime_type': incident_type,
+                'suspects': random.randint(0, 3),
+                'victims': victim_count,
+                'arrested': random.choice([True, False]),
+                'case_status': 'under_investigation',
+            },
+        )
+        return
+
+    if 'medical' in lower or 'ambulance' in lower or 'stand-by' in lower:
+        MedicalEmergency.objects.get_or_create(
+            incident=incident,
+            defaults={
+                'patient_count': max(victim_count, 1),
+                'emergency_type': incident_type,
+                'transported': random.randint(0, max(victim_count, 1)),
+                'hospital': random.choice(['Lucena United Doctors Hospital', 'Quezon Medical Center', '']),
+            },
+        )
+        return
+
+    if 'drowning' in lower:
+        DrowningIncident.objects.get_or_create(
+            incident=incident,
+            defaults={
+                'victims': max(victim_count, 1),
+                'rescued': random.randint(0, max(victim_count, 1)),
+                'fatalities': 0,
+                'water_body': 'Generated demo location',
+            },
+        )
+
 
 class Command(BaseCommand):
-    help = 'Generate ~1000 realistic accomplishment report entries based on real DRRMO templates'
+    help = 'Generate complete demo data: IncidentReport, VictimDetail, AccomplishmentReport, Incident, related hazard details, latitude, and longitude.'
 
     def add_arguments(self, parser):
-        parser.add_argument('--count', type=int, default=1000, help='Number of reports to generate')
-        parser.add_argument('--days', type=int, default=180, help='Spread over X days')
-        parser.add_argument('--export-daily', action='store_true', help='Export daily accomplishment reports as text files')
+        parser.add_argument('--count', type=int, default=50)
+        parser.add_argument('--days', type=int, default=60)
+        parser.add_argument('--compile', type=int, default=10)
+        parser.add_argument('--clear', action='store_true')
 
     def handle(self, *args, **options):
         count = options['count']
         days = options['days']
-        export = options['export_daily']
+        compile_count = options['compile']
+        should_clear = options['clear']
 
-        self.stdout.write(f'📊 Generating {count} reports over {days} days...')
-        
-        # Load existing data
-        barangays = list(Barangay.objects.all())
-        if not barangays:
-            self.stdout.write(self.style.ERROR(' No barangays found. Run import_barangays first.'))
-            return
-            
-        hazards = HazardType.objects.filter(name__in=[
-            'Vehicular Accident', 'Medical Emergency', 'Fire', 'Crime', 'Drowning'
-        ])
-        if hazards.count() < 3:
-            self.stdout.write(self.style.WARNING('⚠️  Creating missing hazard types...'))
-            for name in ['Vehicular Accident', 'Medical Emergency', 'Fire', 'Crime', 'Drowning']:
-                HazardType.objects.get_or_create(name=name)
-            hazards = HazardType.objects.filter(name__in=[name for name in ['Vehicular Accident', 'Medical Emergency', 'Fire', 'Crime', 'Drowning']])
-
-        self.stdout.write('⏳ Generating records (this may take 10-20 seconds)...')
-
-        # Ensure we have staff users to assign as responders
-        from django.contrib.auth import get_user_model
         User = get_user_model()
-        responder_pool = list(User.objects.filter(is_staff=True))
-        if not responder_pool:
-            # Create a default responder account if none exist
-            u = User.objects.create_user('field_responder', 'responder@drms.local', 'Demo1234!', is_staff=True)
-            responder_pool = [u]
+
+        responders = list(User.objects.filter(is_staff=True))
+        if not responders:
+            responder = User.objects.create_user(
+                username='field_responder',
+                email='responder@example.com',
+                password='Demo1234!',
+                is_staff=True,
+            )
+            responders = [responder]
+
+        if should_clear:
+            self.stdout.write(self.style.WARNING('Clearing old generated data...'))
+            AccomplishmentReport.objects.all().delete()
+            VictimDetail.objects.all().delete()
+            IncidentReport.objects.all().delete()
+
+            FireDetails.objects.all().delete()
+            VehicularAccident.objects.all().delete()
+            CrimeReport.objects.all().delete()
+            MedicalEmergency.objects.all().delete()
+            DrowningIncident.objects.all().delete()
+            Incident.objects.all().delete()
+
+        self.stdout.write(f'Generating {count} complete incident report records...')
+
+        created_reports = []
+        now = timezone.now()
+        start_date = now - timedelta(days=days)
 
         with transaction.atomic():
-            incidents = []
-            details = []
-            reports = []
-            
-            start_date = timezone.now() - timedelta(days=days)
-            
-            for i in range(count):
-                # Realistic time distribution (more incidents 18:00-22:00)
-                day_offset = random.randint(0, days-1)
-                hour = random.choices(range(24), weights=[
-                    1,1,1,1,1,2,  # 00-05
-                    3,4,5,4,3,2,  # 06-11
-                    2,3,4,5,6,7,  # 12-17
-                    8,9,8,7,6,5   # 18-23
-                ])[0]
-                minute = random.randint(0, 59)
-                incident_time = start_date + timedelta(days=day_offset, hours=hour, minutes=minute)
-                
-                brgy = random.choice(barangays)
-                lat = float(brgy.latitude) + random.uniform(-0.008, 0.008)
-                lng = float(brgy.longitude) + random.uniform(-0.008, 0.008)
-                
-                # Hazard type distribution
-                hazard = random.choices(hazards, weights=[40, 35, 10, 8, 7])[0]
-                
-                # Severity & status
-                severity = random.choices(['low', 'moderate', 'high', 'critical'], weights=[45, 35, 15, 5])[0]
-                status = random.choices(['resolved', 'contained', 'ongoing', 'reported'], weights=[50, 25, 15, 10])[0]
-                
-                # Victim/Condition
-                victim_name = fake.name()
-                victim_age = random.randint(2, 85)
-                victim_sex = random.choice(['M', 'F'])
-                injury = random.choice(INJURIES)
-                hospital = random.choice(HOSPITALS)
-                action = random.choice(ACTIONS).format(hospital=hospital)
-                
-                # Create Incident
-                inc_uuid = uuid.uuid4()
-                incidents.append(Incident(
-                    id=inc_uuid,
-                    hazard_type=hazard,
-                    latitude=Decimal(str(round(lat, 6))),
-                    longitude=Decimal(str(round(lng, 6))),
-                    address=f"{fake.street_address()}, {brgy.name}",
-                    barangay=brgy,
-                    incident_datetime=incident_time,
-                    severity_level=severity,
-                    status=status,
-                    impact_level=random.choice(['minimal', 'minor', 'major', 'severe']),
-                    description=f"{hazard.name}: {victim_name}, {victim_age}y/o {victim_sex}. {injury}. {action}",
-                    date_reported=incident_time,
-                    reported_by=None  # Leave blank for dummy data
-                ))
-                
-                # Create Detail Records
-                if hazard.name == 'Vehicular Accident':
-                    details.append(VehicularAccident(
-                        id=uuid.uuid4(),
-                        incident_id=inc_uuid,
-                        vehicles_involved=random.randint(1, 4),
-                        casualties=random.randint(0, 2),
-                        injuries=random.randint(1, 5),
-                        vehicle_types=", ".join(random.sample(VEHICLES, random.randint(1, 2))),
-                        cause=random.choice(["Reckless driving", "Wet road", "Mechanical failure", "Pedestrian crossing"])
-                    ))
-                elif hazard.name == 'Medical Emergency':
-                    details.append(MedicalEmergency(
-                        id=uuid.uuid4(),
-                        incident_id=inc_uuid,
-                        patient_count=random.randint(1, 3),
-                        emergency_type=random.choice(["Cardiac", "Respiratory", "Trauma", "Heat-related", "Diabetic"]),
-                        transported=1 if "transported" in action.lower() else 0,
-                        hospital=hospital if "transported" in action.lower() else ""
-                    ))
-                elif hazard.name == 'Fire':
-                    details.append(FireDetails(
-                        id=uuid.uuid4(),
-                        incident_id=inc_uuid,
-                        cause=random.choice(["Electrical", "Unattended cooking", "Arson suspected", "Chemical"]),
-                        casualties=0,
-                        injuries=random.randint(0, 3),
-                        structures_affected=random.randint(1, 3)
-                    ))
-                
-                # Responder Report
-                reports.append(ResponderReport(
-                    id=uuid.uuid4(),
-                    incident_id=inc_uuid,
-                    responder=random.choice(responder_pool),  # Placeholder
-                    report_time=incident_time + timedelta(minutes=random.randint(5, 45)),
-                    report_text=f"Victim: {victim_name}, {victim_age}y/o {victim_sex}. Condition: {injury}. Address: {brgy.name}.",
-                    action_taken=action,
-                    status_update=status,
-                    media_url=""
-                ))
-            
-            # Bulk insert for performance
-            Incident.objects.bulk_create(incidents)
-            if details:
-                # Group by model type for bulk_create
-                from django.contrib.contenttypes.models import ContentType
-                # Simplified: just create in batches
-                for d in details:
-                    d.save()  # Fallback since bulk_create with OneToOne is tricky
-            ResponderReport.objects.bulk_create(reports)
-            
-        self.stdout.write(self.style.SUCCESS(f'✅ Generated {count} accomplishment report entries.'))
-        
-        if export:
-            self.export_daily_reports(days)
+            for index in range(count):
+                created_at = start_date + timedelta(
+                    days=random.randint(0, days),
+                    hours=random.randint(0, 23),
+                    minutes=random.randint(0, 59),
+                )
 
-    def export_daily_reports(self, days):
-        """Optional: Group incidents by day and export as text accomplishment reports"""
-        from datetime import date
-        import os
-        
-        os.makedirs('accomplishment_reports', exist_ok=True)
-        start_date = timezone.now() - timedelta(days=days)
-        
-        for day_offset in range(days):
-            current_date = (start_date + timedelta(days=day_offset)).date()
-            incidents = Incident.objects.filter(incident_datetime__date=current_date).order_by('incident_datetime')
-            
-            if not incidents.exists():
-                continue
-                
-            team = random.choice(TEAMS)
-            filename = f"accomplishment_reports/EOD_{current_date}_Team{team}.txt"
-            
-            with open(filename, 'w', encoding='utf-8') as f:
-                f.write(f"ACCOMPLISHMENT REPORT\n")
-                f.write(f"TEAM: {team} | DATE: {current_date} | TIME: 0800H - 0800H\n")
-                f.write(f"FOR: JANET V. GENDRANO\n\n")
-                f.write(f"RESPONDED TO: {'✓' if incidents.filter(hazard_type__name='Vehicular Accident').exists() else '□'} RCA  ")
-                f.write(f"{'✓' if incidents.filter(hazard_type__name='Fire').exists() else '□'} FIRE  ")
-                f.write(f"{'✓' if incidents.filter(hazard_type__name='Medical Emergency').exists() else '□'} MEDICAL\n\n")
-                
-                for inc in incidents:
-                    time_str = inc.incident_datetime.strftime("%H%M") + "H"
-                    f.write(f"[{time_str}] {inc.hazard_type.name.upper()}\n")
-                    f.write(f"  Loc: {inc.address}\n")
-                    f.write(f"  Desc: {inc.description[:100]}...\n")
-                    f.write(f"  Status: {inc.severity_level.upper()} | {inc.status.upper()}\n\n")
-                    
-            self.stdout.write(f"📄 Exported: {filename}")
+                incident_type = random.choice(INCIDENT_TYPES)
+                victim_count = random.randint(0, 4)
+                location = random.choice(LOCATIONS)
+                latitude, longitude = get_randomized_coordinates(location)
+                incident_code = f'INC-{created_at.year}-{index + 1:03d}'
+                occurred_time = time(
+                    hour=random.randint(0, 23),
+                    minute=random.randint(0, 59),
+                )
+
+                report = IncidentReport.objects.create(
+                    incident_code=incident_code,
+                    time_occurred=occurred_time,
+                    incident_type=incident_type,
+                    responder_team=random.choice(TEAMS),
+                    location=location,
+                    latitude=latitude,
+                    longitude=longitude,
+                    description=f'{incident_type} reported at {location}. {fake.sentence()}',
+                    victim_count=victim_count,
+                    action_taken=random.choice(ACTIONS),
+                    status=random.choice(['Submitted', 'Pending', 'Approved']),
+                    created_by=random.choice(responders),
+                )
+
+                IncidentReport.objects.filter(id=report.id).update(created_at=created_at)
+                report.created_at = created_at
+
+                hazard_name = get_hazard_name(incident_type)
+                hazard_type, _ = HazardType.objects.get_or_create(
+                    name=hazard_name,
+                    defaults={'description': f'{hazard_name} generated from demo data'},
+                )
+
+                incident_datetime = timezone.make_aware(
+                    datetime.combine(created_at.date(), occurred_time)
+                )
+
+                incident = Incident.objects.create(
+                    reference_code=incident_code,
+                    hazard_type=hazard_type,
+                    latitude=Decimal(str(latitude)),
+                    longitude=Decimal(str(longitude)),
+                    address=location,
+                    reported_by=report.created_by,
+                    incident_datetime=incident_datetime,
+                    severity_level=get_severity(incident_type, victim_count),
+                    status='verified' if report.status == 'Approved' else 'reported',
+                    impact_level=get_impact(victim_count),
+                    description=report.description,
+                )
+
+                create_incident_details(incident, incident_type, victim_count)
+
+                for _ in range(victim_count):
+                    VictimDetail.objects.create(
+                        incident_report=report,
+                        name=fake.name(),
+                        age=str(random.randint(1, 85)),
+                        gender=random.choice(['M', 'F']),
+                        address=random.choice(LOCATIONS),
+                        condition=random.choice(CONDITIONS),
+                    )
+
+                created_reports.append(report)
+
+            if created_reports:
+                for _ in range(min(compile_count, max(1, count // 3))):
+                    batch_size = random.randint(1, min(5, len(created_reports)))
+                    selected_reports = random.sample(created_reports, batch_size)
+
+                    accomplishment = AccomplishmentReport.objects.create(
+                        title='Accomplishment Report',
+                        total_reports=len(selected_reports),
+                        status='Compiled',
+                        compiled_by=random.choice(responders),
+                    )
+                    accomplishment.incident_reports.set(selected_reports)
+
+        approved_count = IncidentReport.objects.filter(status='Approved').count()
+
+        self.stdout.write(
+            self.style.SUCCESS(
+                f'Successfully generated {count} incident reports, '
+                f'{Incident.objects.count()} admin incidents, '
+                f'{VictimDetail.objects.count()} victim details, '
+                f'{AccomplishmentReport.objects.count()} accomplishment reports. '
+                f'Approved reports: {approved_count}.'
+            )
+        )
