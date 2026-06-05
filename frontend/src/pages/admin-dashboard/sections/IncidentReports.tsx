@@ -5,6 +5,12 @@ type ReportStatus = 'pending' | 'approved'
 type DateGrouping = 'weekly' | 'monthly' | 'yearly'
 type TeamFilter = 'Alpha' | 'Charlie' | 'Bravo'
 
+const TEAM_NAMES: Record<TeamFilter, string> = {
+  'Alpha': 'Alpha Responder Squad',
+  'Bravo': 'Bravo Rescue Team',
+  'Charlie': 'Charlie Medical Unit',
+}
+
 function normalizeStatus(status?: string): ReportStatus {
   const value = String(status || '').trim().toLowerCase()
 
@@ -150,8 +156,9 @@ export function IncidentReports() {
   }, [reports, searchQuery])
 
   const sortedFilteredReports = useMemo(() => {
+    const fullTeamName = TEAM_NAMES[teamFilter]
     return [...filteredReports]
-      .filter((report) => getResponderTeam(report) === teamFilter)
+      .filter((report) => getResponderTeam(report) === fullTeamName)
       .sort((left, right) => compareResponderTeams(getResponderTeam(left), getResponderTeam(right)))
   }, [filteredReports, teamFilter])
 
@@ -411,9 +418,9 @@ export function IncidentReports() {
                 onChange={(event) => setTeamFilter(event.target.value as TeamFilter)}
                 value={teamFilter}
               >
-                <option value="Alpha">Alpha</option>
-                <option value="Charlie">Charlie</option>
-                <option value="Bravo">Bravo</option>
+                <option value="Alpha">Alpha Responder Squad</option>
+                <option value="Charlie">Charlie Medical Unit</option>
+                <option value="Bravo">Bravo Rescue Team</option>
               </select>
             </label>
           </div>

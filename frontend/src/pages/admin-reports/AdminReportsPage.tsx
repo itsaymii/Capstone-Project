@@ -2,9 +2,9 @@ import { useEffect, useMemo, useState } from 'react'
 import { jsPDF } from 'jspdf'
 import { AdminSidebar } from '../../components/AdminSidebar'
 import {
-  hazardIncidents,
   hazardMeta,
   incidentStatusClasses,
+  mapBackendIncidentToHazardIncident,
   type HazardIncident,
   type IncidentStatus,
 } from '../../data/adminOperations'
@@ -12,6 +12,7 @@ import {
   fetchQuezonRegionEarthquakes,
   type EarthquakeEvent,
 } from '../../services/earthquakes'
+import { getIncidents } from '../../services/incidents'
 
 type ReportFilter = 'all' | IncidentStatus
 type PdfAction = 'save' | 'print'
@@ -54,12 +55,36 @@ function getEarthquakeDescription(event: EarthquakeEvent): string {
 }
 
 export function AdminReportsPage() {
-  const [reports, setReports] = useState<HazardIncident[]>(() =>
-    hazardIncidents.filter((report) => report.code !== 'EQ'),
-  )
+  const [reports, setReports] = useState<HazardIncident[]>([])
   const [selectedFilter, setSelectedFilter] = useState<ReportFilter>('all')
   const [earthquakeReports, setEarthquakeReports] = useState<HazardIncident[]>([])
   const [earthquakeFeedStatus, setEarthquakeFeedStatus] = useState<'loading' | 'ready' | 'error'>('loading')
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadReports(): Promise<void> {
+      try {
+        const backendIncidents = await getIncidents()
+        if (cancelled) return
+
+        const mappedReports = backendIncidents
+          .map(mapBackendIncidentToHazardIncident)
+          .filter((report) => report.code !== 'EQ')
+
+        setReports(mappedReports)
+      } catch (error) {
+        if (cancelled) return
+        console.error('[AdminReportsPage] Failed to load backend reports:', error)
+        setReports([])
+      }
+    }
+
+    void loadReports()
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     let cancelled = false

@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { AdminSidebar } from '../../components/AdminSidebar'
 import {
-  hazardIncidents,
   mapBackendIncidentToHazardIncident,
   type HazardIncident,
   type HazardType,
@@ -837,7 +836,7 @@ export function AdminDashboardPage() {
   const [activeSection, setActiveSection] = useState<WorkspaceSection>(() =>
     getWorkspaceSection(searchParams.get('section')),
   )
-  const [reports, setReports] = useState<HazardIncident[]>(() => hazardIncidents)
+  const [reports, setReports] = useState<HazardIncident[]>(() => [])
   const [responderReports, setResponderReports] = useState<any[]>([])
   const [mapFilter, setMapFilter] = useState<MapFilter>('EQ')
   const [notifications, setNotifications] = useState<NotificationItem[]>(() => getNotifications())
@@ -867,7 +866,7 @@ export function AdminDashboardPage() {
 
       if (!isMountedRef.current) return
 
-      setReports(hazardIncidents)
+      setReports([])
       setResponderReports([])
     }
   }, [])

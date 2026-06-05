@@ -457,7 +457,8 @@ class IncidentReportSerializer(serializers.ModelSerializer):
                 **victim,
             )
 
-        self.create_admin_incident(incident_report, request)
+        # NOTE: Incident creation is deferred to post_save signal.
+        # Incidents are created only when status transitions to 'Approved'.
 
         return incident_report
 
@@ -589,16 +590,28 @@ class AccomplishmentReportSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         report_ids = validated_data.pop('reportIds', [])
         request = self.context.get('request')
+        # Only allow reports that were submitted by responder users (non-dashboard roles)
+        from accounts.models import AccountProfile
+        eligible_reports = IncidentReport.objects.filter(
+            id__in=report_ids,
+            created_by__isnull=False,
+        ).exclude(created_by__account_profile__role__in=[
+            AccountProfile.ROLE_ADMIN, AccountProfile.ROLE_STAFF
+        ])
 
-        reports = IncidentReport.objects.filter(id__in=report_ids)
+        # If any requested report ids are not eligible, raise a validation error
+        if eligible_reports.count() != len(report_ids):
+            raise serializers.ValidationError(
+                "Only responder-submitted reports can be compiled into an Accomplishment Report."
+            )
 
         accomplishment = AccomplishmentReport.objects.create(
             title=validated_data.get('title', 'Accomplishment Report'),
-            total_reports=reports.count(),
+            total_reports=eligible_reports.count(),
             status=validated_data.get('status', 'Compiled'),
             compiled_by=request.user if request and request.user.is_authenticated else None,
         )
 
-        accomplishment.incident_reports.set(reports)
+        accomplishment.incident_reports.set(eligible_reports)
 
         return accomplishment

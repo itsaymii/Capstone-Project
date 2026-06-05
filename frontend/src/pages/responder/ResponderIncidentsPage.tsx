@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { FC } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { MobileNavBar } from '../../components/MobileNavBar'
@@ -161,7 +161,6 @@ function getTeamDisplayName(team: ResponderTeamCode): string {
 
 function isReportOwnedByResponderTeam(report: IncidentReport, team: ResponderTeamCode): boolean {
   if (team === 'unknown') return false
-
   return normalizeTeamValue(getResponderTeam(report)) === team
 }
 
@@ -176,6 +175,7 @@ const IncidentReportPage: FC = () => {
   const [searchQuery, setSearchQuery] = useState('')
   const [sortOrder, setSortOrder] = useState<'desc' | 'asc'>('desc')
   const [hazardFilter, setHazardFilter] = useState('All')
+  const [isLoading, setIsLoading] = useState(true)
 
   const fetchReports = useCallback(async (showError = true) => {
     try {
@@ -188,15 +188,18 @@ const IncidentReportPage: FC = () => {
       }
 
       const data = await response.json()
-      const reportsData = Array.isArray(data) ? data : data.results || []
+      const reportsData: IncidentReport[] = Array.isArray(data) ? data : data.results || []
 
       setReports(reportsData)
     } catch (error) {
       console.error('Error fetching incident reports:', error)
+      setReports([])
 
       if (showError) {
-        addNotification('Failed to load incident reports.')
+        addNotification('Failed to load real incident reports from backend.')
       }
+    } finally {
+      setIsLoading(false)
     }
   }, [])
 
@@ -236,29 +239,33 @@ const IncidentReportPage: FC = () => {
     return 'Select for accomplishment report'
   }
 
-  const hazardTypes = Array.from(new Set(reports.map((report) => getIncidentType(report))))
+  const hazardTypes = useMemo(() => {
+    return Array.from(new Set(reports.map((report) => getIncidentType(report)).filter(Boolean)))
+  }, [reports])
 
-  const filteredAndSortedReports = reports
-    .filter((report) => {
-      const query = searchQuery.toLowerCase()
-      const location = report.location || ''
+  const filteredAndSortedReports = useMemo(() => {
+    return reports
+      .filter((report) => {
+        const query = searchQuery.toLowerCase()
+        const location = report.location || ''
 
-      const matchesSearch =
-        getReportCode(report).toLowerCase().includes(query) ||
-        getIncidentCode(report).toLowerCase().includes(query) ||
-        getIncidentType(report).toLowerCase().includes(query) ||
-        location.toLowerCase().includes(query)
+        const matchesSearch =
+          getReportCode(report).toLowerCase().includes(query) ||
+          getIncidentCode(report).toLowerCase().includes(query) ||
+          getIncidentType(report).toLowerCase().includes(query) ||
+          location.toLowerCase().includes(query)
 
-      const matchesHazard = hazardFilter === 'All' || getIncidentType(report) === hazardFilter
+        const matchesHazard = hazardFilter === 'All' || getIncidentType(report) === hazardFilter
 
-      return matchesSearch && matchesHazard
-    })
-    .sort((a, b) => {
-      const dateA = new Date(getCreatedAt(a)).getTime()
-      const dateB = new Date(getCreatedAt(b)).getTime()
+        return matchesSearch && matchesHazard
+      })
+      .sort((a, b) => {
+        const dateA = new Date(getCreatedAt(a)).getTime()
+        const dateB = new Date(getCreatedAt(b)).getTime()
 
-      return sortOrder === 'desc' ? dateB - dateA : dateA - dateB
-    })
+        return sortOrder === 'desc' ? dateB - dateA : dateA - dateB
+      })
+  }, [reports, searchQuery, hazardFilter, sortOrder])
 
   const toggleSelect = (report: IncidentReport) => {
     if (!isReportOwnedByResponderTeam(report, currentResponderTeam)) {
@@ -298,23 +305,9 @@ const IncidentReportPage: FC = () => {
 
   const compileReports = async () => {
     const selectedReports = reports.filter((report) => selectedIds.includes(report.id))
-    const invalidTeamReports = selectedReports.filter(
-      (report) => !isReportOwnedByResponderTeam(report, currentResponderTeam),
-    )
 
     if (selectedReports.length === 0) {
       addNotification('Please select at least one report.')
-      return
-    }
-
-    if (invalidTeamReports.length > 0) {
-      addNotification(`You can only compile ${getTeamDisplayName(currentResponderTeam)} reports.`)
-      setSelectedIds((current) =>
-        current.filter((id) => {
-          const report = reports.find((item) => item.id === id)
-          return report ? isReportOwnedByResponderTeam(report, currentResponderTeam) : false
-        }),
-      )
       return
     }
 
@@ -351,7 +344,9 @@ const IncidentReportPage: FC = () => {
 
     if (lower.includes('med')) return 'bg-rose-50 text-rose-700 border-rose-100 ring-rose-500/10'
     if (lower.includes('fire')) return 'bg-orange-50 text-orange-700 border-orange-100 ring-orange-500/10'
-    if (lower.includes('rtc') || lower.includes('vehic')) return 'bg-amber-50 text-amber-700 border-amber-100 ring-amber-500/10'
+    if (lower.includes('rtc') || lower.includes('vehic') || lower.includes('accident')) {
+      return 'bg-amber-50 text-amber-700 border-amber-100 ring-amber-500/10'
+    }
 
     return 'bg-purple-50 text-purple-700 border-purple-100 ring-purple-500/10'
   }
@@ -370,13 +365,7 @@ const IncidentReportPage: FC = () => {
                 title="Back to Dashboard"
                 type="button"
               >
-                <svg
-                  className="h-5 w-5 transform transition-transform group-hover:-translate-x-0.5"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth={3}
-                  viewBox="0 0 24 24"
-                >
+                <svg className="h-5 w-5 transform transition-transform group-hover:-translate-x-0.5" fill="none" stroke="currentColor" strokeWidth={3} viewBox="0 0 24 24">
                   <path d="M15 19l-7-7 7-7" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
               </button>
@@ -393,7 +382,7 @@ const IncidentReportPage: FC = () => {
 
             <div className="flex flex-col justify-between gap-4 border-t border-slate-100 pt-5 sm:flex-row sm:items-center">
               <p className="max-w-lg text-sm font-medium leading-relaxed text-slate-500">
-                Click any report row to view full details. Select only reports created within the last 24 hours and compile them into accomplishment reports.
+                Real incident reports from the backend will appear here. No static or mock table data is used.
               </p>
 
               {selectedIds.length > 0 ? (
@@ -409,90 +398,54 @@ const IncidentReportPage: FC = () => {
           </div>
         </div>
 
-        {reports.length > 0 ? (
+        {!isLoading && reports.length > 0 ? (
           <div className="space-y-3">
             <div className="rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-800">
               Logged-in team: {getTeamDisplayName(currentResponderTeam)}. You can only select and compile {getTeamDisplayName(currentResponderTeam)} reports.
             </div>
 
             <div className="flex flex-col items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:flex-row">
-              <div className="group relative w-full md:max-w-md">
-                <span className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-slate-400 transition-colors group-focus-within:text-blue-600">
-                  <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
-                    <path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                </span>
-
-                <input
-                  className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-10 pr-4 text-sm font-medium text-slate-800 placeholder-slate-400 transition-all focus:border-blue-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Search report code, type, or location..."
-                  type="text"
-                  value={searchQuery}
-                />
-
-                {searchQuery ? (
-                  <button
-                    className="absolute inset-y-0 right-0 flex items-center pr-3 text-slate-400 hover:text-slate-600"
-                    onClick={() => setSearchQuery('')}
-                    type="button"
-                  >
-                    <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                      <path d="M6 18L18 6M6 6l12 12" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                  </button>
-                ) : null}
-              </div>
+              <input
+                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm font-medium text-slate-800 placeholder-slate-400 transition-all focus:border-blue-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 md:max-w-md"
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search report code, type, or location..."
+                type="text"
+                value={searchQuery}
+              />
 
               <div className="flex w-full flex-col items-stretch justify-end gap-3 sm:flex-row sm:items-center md:w-auto">
-                <div className="flex items-center justify-end gap-2">
-                  <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                    Hazard Type:
-                  </span>
+                <select
+                  className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-xs font-bold text-slate-700 outline-none"
+                  onChange={(e) => setHazardFilter(e.target.value)}
+                  value={hazardFilter}
+                >
+                  <option value="All">All</option>
+                  {hazardTypes.map((type) => (
+                    <option key={type} value={type}>
+                      {type}
+                    </option>
+                  ))}
+                </select>
 
-                  <select
-                    className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-xs font-bold text-slate-700 outline-none"
-                    onChange={(e) => setHazardFilter(e.target.value)}
-                    value={hazardFilter}
-                  >
-                    <option value="All">All</option>
-                    {hazardTypes.map((type) => (
-                      <option key={type} value={type}>
-                        {type}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="flex items-center justify-end gap-2">
-                  <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                    Sort Date:
-                  </span>
-
-                  <button
-                    className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-xs font-bold text-slate-700 shadow-sm transition-all hover:border-slate-300 hover:text-slate-900 active:scale-95"
-                    onClick={() => setSortOrder((prev) => (prev === 'desc' ? 'asc' : 'desc'))}
-                    type="button"
-                  >
-                    <span>{sortOrder === 'desc' ? 'Newest First' : 'Oldest First'}</span>
-                    <svg
-                      className={`h-4 w-4 text-slate-500 transition-transform duration-300 ${sortOrder === 'asc' ? 'rotate-180' : ''}`}
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth={2.5}
-                      viewBox="0 0 24 24"
-                    >
-                      <path d="M19 9l-7 7-7-7" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                  </button>
-                </div>
+                <button
+                  className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-xs font-bold text-slate-700 shadow-sm transition-all hover:border-slate-300 hover:text-slate-900 active:scale-95"
+                  onClick={() => setSortOrder((prev) => (prev === 'desc' ? 'asc' : 'desc'))}
+                  type="button"
+                >
+                  {sortOrder === 'desc' ? 'Newest First' : 'Oldest First'}
+                </button>
               </div>
             </div>
           </div>
         ) : null}
 
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          {reports.length === 0 ? (
+          {isLoading ? (
+            <div className="p-16 text-center">
+              <h3 className="text-lg font-bold text-slate-900">Loading real incident reports...</h3>
+              <p className="mt-1 text-sm text-slate-500">Please wait while data is being fetched from backend.</p>
+            </div>
+          ) : reports.length === 0 ? (
             <div className="p-16 text-center">
               <div className="mx-auto max-w-md space-y-5">
                 <h3 className="text-lg font-bold text-slate-900">No incident reports yet</h3>
@@ -521,9 +474,7 @@ const IncidentReportPage: FC = () => {
                       <input
                         checked={
                           filteredAndSortedReports.filter((r) => canSelectReport(r)).length > 0 &&
-                          filteredAndSortedReports
-                            .filter((r) => canSelectReport(r))
-                            .every((r) => selectedIds.includes(r.id))
+                          filteredAndSortedReports.filter((r) => canSelectReport(r)).every((r) => selectedIds.includes(r.id))
                         }
                         className="h-4 w-4 rounded accent-blue-600 transition"
                         onChange={toggleSelectAll}
@@ -638,7 +589,7 @@ const IncidentReportPage: FC = () => {
                   </span>
                 </div>
                 <p className="text-xs font-medium text-slate-400">
-                  Full incident operational tactical deployment logs
+                  Full incident operational details
                 </p>
               </div>
 
@@ -677,7 +628,7 @@ const IncidentReportPage: FC = () => {
                 </span>
                 <div className="rounded-xl border border-slate-100 bg-slate-50/40 p-3.5">
                   <p className="whitespace-pre-wrap text-xs font-medium leading-relaxed text-slate-600">
-                    {detailsReport.description || 'No specific descriptive log file submitted.'}
+                    {detailsReport.description || 'No specific descriptive log submitted.'}
                   </p>
                 </div>
               </div>
@@ -688,7 +639,7 @@ const IncidentReportPage: FC = () => {
                 </span>
                 <div className="rounded-xl border border-blue-100/50 bg-blue-50/10 p-3.5">
                   <p className="whitespace-pre-wrap text-xs font-medium leading-relaxed text-slate-700">
-                    {getActionTaken(detailsReport) || 'No recorded data of triage mitigation steps.'}
+                    {getActionTaken(detailsReport) || 'No recorded action taken.'}
                   </p>
                 </div>
               </div>
@@ -705,23 +656,15 @@ const IncidentReportPage: FC = () => {
 
                 {!detailsReport.victims || detailsReport.victims.length === 0 ? (
                   <p className="text-xs font-medium italic text-slate-400">
-                    No casualties or victim information files recorded for this catalog code.
+                    No casualties or victim information recorded.
                   </p>
                 ) : (
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     {detailsReport.victims.map((victim, index) => (
-                      <div
-                        className="space-y-3 rounded-xl border border-slate-200/80 bg-slate-50/50 p-4 shadow-inner"
-                        key={index}
-                      >
-                        <div className="flex items-center justify-between border-b border-slate-100 pb-1.5">
-                          <p className="text-xs font-extrabold uppercase tracking-wide text-slate-900">
-                            Victim Profile #{index + 1}
-                          </p>
-                          <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-700">
-                            {victim.condition || 'Status Unknown'}
-                          </span>
-                        </div>
+                      <div className="space-y-3 rounded-xl border border-slate-200/80 bg-slate-50/50 p-4 shadow-inner" key={index}>
+                        <p className="text-xs font-extrabold uppercase tracking-wide text-slate-900">
+                          Victim Profile #{index + 1}
+                        </p>
 
                         <div className="grid grid-cols-2 gap-y-2 text-xs font-medium">
                           <div className="col-span-2">
@@ -738,13 +681,13 @@ const IncidentReportPage: FC = () => {
                               Age
                             </span>
                             <span className="font-semibold text-slate-800">
-                              {victim.age || 'N/A'} yrs old
+                              {victim.age || 'N/A'}
                             </span>
                           </div>
 
                           <div>
                             <span className="block text-[10px] font-bold uppercase tracking-tight text-slate-400">
-                              Biological Sex
+                              Gender
                             </span>
                             <span className="font-semibold text-slate-800">
                               {victim.gender === 'M' ? 'Male' : victim.gender === 'F' ? 'Female' : 'N/A'}
@@ -753,10 +696,19 @@ const IncidentReportPage: FC = () => {
 
                           <div className="col-span-2">
                             <span className="block text-[10px] font-bold uppercase tracking-tight text-slate-400">
-                              Home Address Range
+                              Address
                             </span>
                             <span className="block text-[11px] leading-tight text-slate-700">
                               {victim.address || 'N/A'}
+                            </span>
+                          </div>
+
+                          <div className="col-span-2">
+                            <span className="block text-[10px] font-bold uppercase tracking-tight text-slate-400">
+                              Condition
+                            </span>
+                            <span className="block text-[11px] leading-tight text-slate-700">
+                              {victim.condition || 'N/A'}
                             </span>
                           </div>
                         </div>
@@ -773,7 +725,7 @@ const IncidentReportPage: FC = () => {
                 onClick={() => setDetailsReport(null)}
                 type="button"
               >
-                Dismiss Ledger Overview
+                Close
               </button>
             </div>
           </div>
