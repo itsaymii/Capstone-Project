@@ -13,6 +13,7 @@ import {
 const mainLinks = [
   { to: '/landing', label: 'Home' },
   { to: '/disaster-map', label: 'Disaster Map' },
+  { to: '/evacuation', label: 'Evacuation' },
   { to: '/simulation', label: 'Simulation' },
 ]
 

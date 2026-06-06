@@ -2,63 +2,66 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import L, { type LatLngBoundsExpression } from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import 'leaflet.heat'
-import type { HazardIncident, HazardType } from '../data/adminOperations'
+import confetti from 'canvas-confetti'
+import type { HazardType } from '../data/adminOperations'
+import {
+  getIncidentReports,
+  updateIncidentReportStatus,
+  type IncidentReport,
+} from '../services/incidents'
 import {
   type EarthquakeEvent,
-  type FaultLineFeatureCollection,
   type HeatPoint,
-  fetchQuezonFaultLines,
   fetchQuezonRegionEarthquakes,
   toHeatPoints,
 } from '../services/earthquakes'
 
 type IncidentMapFilter = HazardType
-type ReportableHazardType = Extract<HazardType, 'FR' | 'AC'>
-type IncidentSeverity = HazardIncident['severity']
-
-type AccidentVictimEntry = {
-  id: string
-  name: string
-  age: string
-  address: string
-  condition: string
-}
-
-type FireFormState = {
-  title: string
-  location: string
-  responseTeam: string
-  severity: IncidentSeverity
-  description: string
-  latitude: string
-  longitude: string
-}
-
-type AccidentFormState = {
-  accidentType: string
-  address: string
-  actionTaken: string
-  severity: IncidentSeverity
-  latitude: string
-  longitude: string
-  victims: AccidentVictimEntry[]
-}
-
-type NewIncidentInput = {
-  code: ReportableHazardType
-  title: string
-  location: string
-  responseTeam: string
-  severity: IncidentSeverity
-  description: string
-  coordinates: [number, number]
-}
+type ReportReviewStatus = 'pending' | 'approved'
+type OperationalStatus = 'On-going' | 'Resolved'
 
 type AdminIncidentMapPanelProps = {
-  incidents: HazardIncident[]
+  incidents?: unknown[]
   selectedType: IncidentMapFilter
   onSelectType: (filter: IncidentMapFilter) => void
-  onCreateIncident: (incident: NewIncidentInput) => void
+  onCreateIncident?: unknown
+  onIncidentReportApproved?: () => void
+}
+
+type MapIncident = {
+  id: string
+  title: string
+  time: string
+  status: ReportReviewStatus
+  code: HazardType
+  incidentTypeLabel: string
+  location: string
+  severity: 'Low' | 'Moderate' | 'High' | 'Critical'
+  operationalStatus: OperationalStatus
+  responseTeam: string
+  description: string
+  coordinates: [number, number]
+  victims: IncidentReport['victims']
+  rawReport: IncidentReport
+  isNew: boolean
+}
+
+type EditableIncident = {
+  incidentTypeLabel: string
+  location: string
+  severity: 'Low' | 'Moderate' | 'High' | 'Critical'
+  operationalStatus: OperationalStatus
+  responseTeam: string
+  description: string
+  latitude: string
+  longitude: string
+}
+
+type ApprovalSuccessModal = {
+  open: boolean
+  title: string
+  message: string
+  reportTitle: string
 }
 
 const lucenaBounds: LatLngBoundsExpression = [
@@ -71,14 +74,11 @@ const philippinesBounds: LatLngBoundsExpression = [
   [21.5, 127.5],
 ]
 
-/** Lucena City / southern Quezon Province view — tightly focused area for the EQ heatmap. */
 const quezonRegionBounds: LatLngBoundsExpression = [
   [13.72, 121.3],
   [14.12, 121.92],
 ]
 
-const lucenaCityCenter: [number, number] = [13.94, 121.62]
-const nearestFaultLinesLimit = 5
 
 const hazardColors: Record<HazardType, string> = {
   EQ: '#4ade80',
@@ -92,132 +92,523 @@ const hazardTypeMeta: Record<HazardType, { label: string; color: string }> = {
   AC: { label: 'Accident', color: hazardColors.AC },
 }
 
+const reviewStatusClass: Record<ReportReviewStatus, string> = {
+  pending: 'border border-amber-200 bg-amber-50 text-amber-800',
+  approved: 'border border-emerald-200 bg-emerald-50 text-emerald-800',
+}
+
+function getNormalizedStatusText(status?: string): string {
+  return String(status || '').trim().toLowerCase()
+}
+
+function isApprovedStatus(status?: string): boolean {
+  const value = getNormalizedStatusText(status)
+
+  // IMPORTANT:
+  // Only an explicit report approval should make a responder report plottable.
+  // Do not treat backend/admin operational statuses such as verified/resolved/completed
+  // as approved here, because newly submitted reports may already create admin
+  // incident records but still need review first.
+  return value === 'approved' || value === 'approve' || value === 'approved report'
+}
+
+function normalizeStatus(status?: string): ReportReviewStatus {
+  return isApprovedStatus(status) ? 'approved' : 'pending'
+}
+
+function getLucenaFallbackCoordinates(location: string): [number, number] {
+  const text = location.toLowerCase()
+
+  if (text.includes('barangay 10')) return [13.941, 121.614]
+  if (text.includes('diversion')) return [13.918, 121.626]
+  if (text.includes('highway')) return [13.926, 121.609]
+  if (text.includes('commercial')) return [13.934, 121.621]
+  if (text.includes('industrial')) return [13.929, 121.642]
+  if (text.includes('east')) return [13.947, 121.632]
+  if (text.includes('north')) return [13.963, 121.618]
+  if (text.includes('isabang')) return [13.9718, 121.5821]
+  if (text.includes('dalahican')) return [13.9147, 121.6502]
+  if (text.includes('cotta')) return [13.933, 121.6279]
+
+  return [13.9414, 121.6236]
+}
+
+function getReportCoordinates(report: IncidentReport, location: string): [number, number] {
+  const data = report as IncidentReport & {
+    latitude?: string | number
+    longitude?: string | number
+    lat?: string | number
+    lng?: string | number
+    coordinates?: [number, number] | { lat?: string | number; lng?: string | number }
+    incident?: {
+      latitude?: string | number
+      longitude?: string | number
+      coordinates?: { lat?: string | number; lng?: string | number }
+    }
+  }
+
+  const possibleLat =
+    data.latitude ??
+    data.lat ??
+    (Array.isArray(data.coordinates) ? data.coordinates[0] : data.coordinates?.lat) ??
+    data.incident?.latitude ??
+    data.incident?.coordinates?.lat
+
+  const possibleLng =
+    data.longitude ??
+    data.lng ??
+    (Array.isArray(data.coordinates) ? data.coordinates[1] : data.coordinates?.lng) ??
+    data.incident?.longitude ??
+    data.incident?.coordinates?.lng
+
+  const lat = Number(possibleLat)
+  const lng = Number(possibleLng)
+
+  if (Number.isFinite(lat) && Number.isFinite(lng)) {
+    return [lat, lng]
+  }
+
+  return getLucenaFallbackCoordinates(location)
+}
+
+function getReportCode(report: IncidentReport): string {
+  return report.reportCode || report.report_code || report.incidentCode || report.incident_code || report.id
+}
+
+function getReportIncidentType(report: IncidentReport): string {
+  return report.incidentType || report.incident_type || ''
+}
+
+function getReportResponderTeam(report: IncidentReport): string {
+  return report.responderTeam || report.responder_team || 'Responder Team'
+}
+
+function getReportTime(report: IncidentReport): string {
+  const time = report.timeOccurred || report.time_occurred
+
+  if (time) return time
+
+  const createdAt = report.createdAt || report.created_at
+  if (!createdAt) return 'Unknown time'
+
+  return new Date(createdAt).toLocaleTimeString('en-PH', {
+    hour: 'numeric',
+    minute: '2-digit',
+  })
+}
+
+function getVictimCount(report: IncidentReport): number {
+  return Number(report.victimCount ?? report.victim_count ?? report.victims?.length ?? 0)
+}
+
+function getReportDateValue(report: IncidentReport): number {
+  const createdAt = report.createdAt || report.created_at
+  if (createdAt) {
+    const createdDate = new Date(createdAt).getTime()
+    if (Number.isFinite(createdDate)) return createdDate
+  }
+
+  const time = report.timeOccurred || report.time_occurred
+  if (time) {
+    const today = new Date().toISOString().slice(0, 10)
+    const timeDate = new Date(`${today}T${time}`).getTime()
+    if (Number.isFinite(timeDate)) return timeDate
+  }
+
+  return 0
+}
+
+function isNewReport(report: IncidentReport): boolean {
+  const createdAt = report.createdAt || report.created_at
+
+  if (!createdAt) return false
+
+  const createdTime = new Date(createdAt).getTime()
+  if (!Number.isFinite(createdTime)) return false
+
+  const hoursSinceCreated = (Date.now() - createdTime) / (1000 * 60 * 60)
+
+  return hoursSinceCreated >= 0 && hoursSinceCreated <= 24
+}
+
+function getViewedReportIds(): string[] {
+  try {
+    const parsed = JSON.parse(localStorage.getItem('adminViewedIncidentReports') || '[]')
+    return Array.isArray(parsed) ? parsed.map(String) : []
+  } catch {
+    return []
+  }
+}
+
+function saveViewedReportId(id: string): string[] {
+  const current = new Set(getViewedReportIds())
+  current.add(id)
+
+  const next = Array.from(current)
+  localStorage.setItem('adminViewedIncidentReports', JSON.stringify(next))
+
+  return next
+}
+
+function mapReportToIncident(report: IncidentReport): MapIncident {
+  const incidentTypeLabel = getReportIncidentType(report) || 'Incident Report'
+  const incidentType = incidentTypeLabel.toLowerCase()
+
+  const code: MapIncident['code'] = incidentType.includes('fire')
+    ? 'FR'
+    : incidentType.includes('earthquake')
+      ? 'EQ'
+      : 'AC'
+  const victimCount = getVictimCount(report)
+  const location = report.location || 'Lucena City'
+
+  return {
+    id: report.id,
+    title: `${incidentTypeLabel} - ${getReportCode(report)}`,
+    time: getReportTime(report),
+    status: normalizeStatus(report.status),
+    code,
+    incidentTypeLabel,
+    location,
+    severity: victimCount >= 5 ? 'Critical' : victimCount >= 3 ? 'High' : victimCount >= 1 ? 'Moderate' : 'Low',
+    operationalStatus: isApprovedStatus(report.status) ? 'Resolved' : 'On-going',
+    responseTeam: getReportResponderTeam(report),
+    description: report.description || report.actionTaken || report.action_taken || 'No description provided.',
+    coordinates: getReportCoordinates(report, location),
+    victims: report.victims || [],
+    rawReport: report,
+    isNew: isNewReport(report),
+  }
+}
+
+
+function escapePopupText(value: unknown): string {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;')
+}
+
+function buildIncidentPopupHtml(incident: MapIncident, statusLabel: string): string {
+  const victimCount = incident.victims?.length ?? getVictimCount(incident.rawReport)
+
+  return `
+    <div style="min-width: 230px; max-width: 280px; font-family: Inter, system-ui, sans-serif;">
+      <div style="font-size: 13px; font-weight: 800; color: #0f172a; margin-bottom: 6px;">
+        ${escapePopupText(incident.title)}
+      </div>
+      <div style="font-size: 12px; color: #475569; line-height: 1.55;">
+        <strong>Location:</strong> ${escapePopupText(incident.location)}<br/>
+        <strong>Time:</strong> ${escapePopupText(incident.time)}<br/>
+        <strong>Type:</strong> ${escapePopupText(incident.incidentTypeLabel)}<br/>
+        <strong>Severity:</strong> ${escapePopupText(incident.severity)}<br/>
+        <strong>Status:</strong> ${escapePopupText(statusLabel)}<br/>
+        <strong>Team:</strong> ${escapePopupText(incident.responseTeam)}<br/>
+        <strong>Victims:</strong> ${victimCount}
+      </div>
+      <div style="margin-top: 8px; border-top: 1px solid #e2e8f0; padding-top: 8px; font-size: 12px; color: #334155; line-height: 1.45;">
+        ${escapePopupText(incident.description)}
+      </div>
+      <div style="margin-top: 8px; font-size: 11px; font-weight: 700; color: #2563eb;">
+        Click marker to open full details
+      </div>
+    </div>
+  `
+}
+
+function getSavedEditedIncidents(): Record<string, Partial<MapIncident>> {
+  try {
+    return JSON.parse(localStorage.getItem('adminEditedIncidents') || '{}')
+  } catch {
+    return {}
+  }
+}
+
+function saveEditedIncident(id: string, data: Partial<MapIncident>): void {
+  const current = getSavedEditedIncidents()
+  localStorage.setItem('adminEditedIncidents', JSON.stringify({ ...current, [id]: { ...current[id], ...data } }))
+}
+
+function applySavedEdit(incident: MapIncident): MapIncident {
+  const saved = getSavedEditedIncidents()[incident.id]
+  if (!saved) return incident
+
+  // Do not allow old localStorage edits to force a report into approved/resolved.
+  // Approval must come from the current backend report status or the Approve button.
+  const {
+    status: _ignoredStatus,
+    operationalStatus: _ignoredOperationalStatus,
+    rawReport: _ignoredRawReport,
+    ...safeSavedDisplayFields
+  } = saved
+
+  return {
+    ...incident,
+    ...safeSavedDisplayFields,
+    status: normalizeStatus(incident.rawReport.status),
+    operationalStatus: isApprovedStatus(incident.rawReport.status) ? 'Resolved' : 'On-going',
+    rawReport: incident.rawReport,
+  }
+}
+
 function getEarthquakeDescription(event: EarthquakeEvent): string {
   if (event.magnitude >= 5) {
     return `Strong seismic event at ${event.depth.toFixed(1)} km depth. Priority validation recommended.`
   }
+
   if (event.magnitude >= 4) {
     return `Moderate event at ${event.depth.toFixed(1)} km depth. Field teams advised to verify affected zones.`
   }
+
   return `Minor-to-light event at ${event.depth.toFixed(1)} km depth. Continue routine monitoring.`
 }
 
-function getFaultLineDistanceScore(geometry: GeoJSON.Geometry | null | undefined): number {
-  if (!geometry) return Number.POSITIVE_INFINITY
 
-  const targetPoint = L.CRS.EPSG3857.project(L.latLng(lucenaCityCenter[0], lucenaCityCenter[1]))
-  let nearestDistance = Number.POSITIVE_INFINITY
 
-  const getPointDistanceToSegment = (startCoordinate: number[], endCoordinate: number[]) => {
-    const startPoint = L.CRS.EPSG3857.project(L.latLng(startCoordinate[1], startCoordinate[0]))
-    const endPoint = L.CRS.EPSG3857.project(L.latLng(endCoordinate[1], endCoordinate[0]))
-    const deltaX = endPoint.x - startPoint.x
-    const deltaY = endPoint.y - startPoint.y
-    const segmentLengthSquared = deltaX ** 2 + deltaY ** 2
+function createHeatCloudPoints(points: HeatPoint[]): HeatPoint[] {
+  const cloudOffsets: Array<[number, number, number]> = [
+    [0, 0, 1],
+    [0.0015, 0.0012, 0.78],
+    [-0.0015, -0.0012, 0.78],
+    [0.0028, -0.0018, 0.58],
+    [-0.0028, 0.0018, 0.58],
+    [0.0042, 0.0028, 0.38],
+    [-0.0042, -0.0028, 0.38],
+  ]
 
-    if (segmentLengthSquared === 0) {
-      return Math.hypot(targetPoint.x - startPoint.x, targetPoint.y - startPoint.y)
-    }
-
-    const projectionRatio = Math.max(
-      0,
-      Math.min(
-        1,
-        ((targetPoint.x - startPoint.x) * deltaX + (targetPoint.y - startPoint.y) * deltaY) / segmentLengthSquared,
-      ),
-    )
-
-    const projectedPointX = startPoint.x + projectionRatio * deltaX
-    const projectedPointY = startPoint.y + projectionRatio * deltaY
-
-    return Math.hypot(targetPoint.x - projectedPointX, targetPoint.y - projectedPointY)
-  }
-
-  const inspectLine = (coordinates: number[][]) => {
-    if (coordinates.length === 1) {
-      const singlePoint = L.CRS.EPSG3857.project(L.latLng(coordinates[0][1], coordinates[0][0]))
-      nearestDistance = Math.min(nearestDistance, Math.hypot(targetPoint.x - singlePoint.x, targetPoint.y - singlePoint.y))
-      return
-    }
-
-    for (let index = 0; index < coordinates.length - 1; index += 1) {
-      nearestDistance = Math.min(nearestDistance, getPointDistanceToSegment(coordinates[index], coordinates[index + 1]))
-    }
-  }
-
-  if (geometry.type === 'LineString') {
-    inspectLine(geometry.coordinates)
-  }
-
-  if (geometry.type === 'MultiLineString') {
-    geometry.coordinates.forEach((segment) => inspectLine(segment))
-  }
-
-  return nearestDistance
+  return points.flatMap(([lat, lng, intensity]) =>
+    cloudOffsets.map(([latOffset, lngOffset, multiplier]) => [
+      lat + latOffset,
+      lng + lngOffset,
+      Math.min(1, Math.max(0.08, intensity * multiplier)),
+    ] as HeatPoint),
+  )
 }
 
-const severityOptions: IncidentSeverity[] = ['Low', 'Moderate', 'High', 'Critical']
-const accidentTypeOptions = [
-  'Road Crash Accident',
-  'Fire Incident',
-  'Crime Against Person/Property',
-  'Medical Emergency',
-  'Ambulance Assistance',
-  'Stand-by Medical Team',
-  'Drowning',
-]
-
-function createVictimEntry(): AccidentVictimEntry {
-  return {
-    id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-    name: '',
-    age: '',
-    address: '',
-    condition: '',
+function getIncidentHeatIntensity(severity: MapIncident['severity']): number {
+  switch (severity) {
+    case 'Critical':
+      return 0.95
+    case 'High':
+      return 0.75
+    case 'Moderate':
+      return 0.55
+    default:
+      return 0.35
   }
 }
 
-const defaultFireFormState: FireFormState = {
-  title: '',
-  location: '',
-  responseTeam: '',
-  severity: 'Moderate',
-  description: '',
-  latitude: '13.934',
-  longitude: '121.621',
-}
 
-function createDefaultAccidentFormState(): AccidentFormState {
-  return {
-    accidentType: 'Road Crash Accident',
-    address: '',
-    actionTaken: '',
-    severity: 'Moderate',
-    latitude: '13.934',
-    longitude: '121.621',
-    victims: [createVictimEntry()],
-  }
-}
 
-export function AdminIncidentMapPanel({ incidents, selectedType, onSelectType, onCreateIncident }: AdminIncidentMapPanelProps) {
+
+export function AdminIncidentMapPanel({
+  onIncidentReportApproved,
+  selectedType,
+  onSelectType,
+}: AdminIncidentMapPanelProps) {
   const mapContainerRef = useRef<HTMLDivElement | null>(null)
   const mapInstanceRef = useRef<L.Map | null>(null)
-  const [fireFormState, setFireFormState] = useState<FireFormState>(defaultFireFormState)
-  const [accidentFormState, setAccidentFormState] = useState<AccidentFormState>(createDefaultAccidentFormState)
-  const [fireFeedbackMessage, setFireFeedbackMessage] = useState('')
-  const [accidentFeedbackMessage, setAccidentFeedbackMessage] = useState('')
-  const [activeReportForm, setActiveReportForm] = useState<ReportableHazardType>('FR')
+
+  const [selectedIncident, setSelectedIncident] = useState<MapIncident | null>(null)
+  const [editingIncident, setEditingIncident] = useState<MapIncident | null>(null)
+  const [editForm, setEditForm] = useState<EditableIncident | null>(null)
+  const [incidentReports, setIncidentReports] = useState<MapIncident[]>([])
+  const [reportsLoading, setReportsLoading] = useState(false)
+  const [reportsError, setReportsError] = useState('')
   const [earthquakeEvents, setEarthquakeEvents] = useState<EarthquakeEvent[]>([])
-  const [faultLines, setFaultLines] = useState<FaultLineFeatureCollection | null>(null)
-  const [barangayLayer, setBarangayLayer] = useState<GeoJSON.FeatureCollection<GeoJSON.Geometry, Record<string, unknown>> | null>(null)
+  const [barangayLayer, setBarangayLayer] =
+    useState<GeoJSON.FeatureCollection<GeoJSON.Geometry, Record<string, unknown>> | null>(null)
   const [eqHeatPoints, setEqHeatPoints] = useState<HeatPoint[]>([])
   const [eqFetchStatus, setEqFetchStatus] = useState<'idle' | 'loading' | 'error'>('idle')
-  const [faultLineStatus, setFaultLineStatus] = useState<'idle' | 'loading' | 'error'>('idle')
   const [showHeatmap, setShowHeatmap] = useState(true)
-  const [showFaultLines, setShowFaultLines] = useState(true)
+  const [showIncidentHeatmap, setShowIncidentHeatmap] = useState(true)
   const [eqLastRefreshed, setEqLastRefreshed] = useState<Date | null>(null)
   const [eqIsRefreshing, setEqIsRefreshing] = useState(false)
   const [eqSearchQuery, setEqSearchQuery] = useState('')
+  const [accidentTypeFilter, setAccidentTypeFilter] = useState('all')
+  const [viewedReportIds, setViewedReportIds] = useState<string[]>(() => getViewedReportIds())
+  const [approvalSuccess, setApprovalSuccess] = useState<ApprovalSuccessModal>({
+    open: false,
+    title: '',
+    message: '',
+    reportTitle: '',
+  })
+
+  useEffect(() => {
+    const styleId = 'barangay-hover-tooltip-style'
+    if (document.getElementById(styleId)) return
+
+    const style = document.createElement('style')
+    style.id = styleId
+    style.textContent = `
+      .barangay-hover-tooltip {
+        background: rgba(15, 23, 42, 0.92) !important;
+        border: 0 !important;
+        border-radius: 999px !important;
+        color: #ffffff !important;
+        font-size: 11px !important;
+        font-weight: 700 !important;
+        letter-spacing: 0.01em !important;
+        padding: 5px 9px !important;
+        box-shadow: 0 8px 20px rgba(15, 23, 42, 0.18) !important;
+      }
+
+      .barangay-hover-tooltip::before {
+        border-top-color: rgba(15, 23, 42, 0.92) !important;
+      }
+
+      .ongoing-incident-pulse-marker {
+        background: transparent !important;
+        border: 0 !important;
+        cursor: pointer !important;
+      }
+
+      .ongoing-incident-pulse-marker .pulse-wrap {
+        position: relative;
+        width: 38px;
+        height: 38px;
+        pointer-events: auto;
+      }
+
+      .ongoing-incident-pulse-marker .pulse-ring {
+        position: absolute;
+        inset: 0;
+        border-radius: 999px;
+        background: rgba(239, 68, 68, 0.28);
+        animation: incidentPulse 1.35s ease-out infinite;
+      }
+
+      .ongoing-incident-pulse-marker .pulse-dot {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 15px;
+        height: 15px;
+        transform: translate(-50%, -50%);
+        border-radius: 999px;
+        border: 2px solid #ffffff;
+        background: #ef4444;
+        box-shadow: 0 8px 18px rgba(239, 68, 68, 0.35);
+      }
+
+      .leaflet-popup-pane {
+        z-index: 1200 !important;
+      }
+
+      .leaflet-popup {
+        z-index: 1200 !important;
+      }
+
+      .leaflet-popup-content-wrapper,
+      .leaflet-popup-tip {
+        position: relative;
+        z-index: 1201 !important;
+      }
+
+      @keyframes incidentPulse {
+        0% { transform: scale(0.35); opacity: 0.95; }
+        70% { transform: scale(1); opacity: 0.2; }
+        100% { transform: scale(1.15); opacity: 0; }
+      }
+    `
+
+    document.head.appendChild(style)
+  }, [])
+
+  const loadIncidentReports = useCallback(async () => {
+    try {
+      setReportsLoading(true)
+      setReportsError('')
+
+      const reports = await getIncidentReports()
+      const mappedReports = reports.map((report) => applySavedEdit(mapReportToIncident(report)))
+
+      setIncidentReports(mappedReports)
+    } catch (error) {
+      console.error('[AdminIncidentMapPanel] Failed to load responder incident reports:', error)
+      setReportsError('Failed to load responder reports.')
+      setIncidentReports([])
+    } finally {
+      setReportsLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    void loadIncidentReports()
+
+    const intervalId = window.setInterval(() => {
+      void loadIncidentReports()
+    }, 30000)
+
+    return () => window.clearInterval(intervalId)
+  }, [loadIncidentReports])
+
+  const accidentTypeOptions = useMemo(() => {
+    const uniqueTypes = new Set(
+      incidentReports
+        .filter((incident) => incident.code === 'AC')
+        .map((incident) => incident.incidentTypeLabel)
+        .filter(Boolean),
+    )
+
+    return Array.from(uniqueTypes).sort((left, right) => left.localeCompare(right))
+  }, [incidentReports])
+
+  const filteredIncidents = useMemo(() => {
+    // Right-side review list rule:
+    // Pending / Submitted / On-going reports must stay visible for review.
+    // Approved reports must disappear from the side list because they are already plotted on the map.
+    if (selectedType === 'EQ') return []
+
+    const baseReports = incidentReports.filter(
+      (incident) => incident.code === selectedType && incident.status !== 'approved',
+    )
+
+    const filteredReports =
+      selectedType === 'AC' && accidentTypeFilter !== 'all'
+        ? baseReports.filter((incident) => incident.incidentTypeLabel === accidentTypeFilter)
+        : baseReports
+
+    return [...filteredReports].sort(
+      (left, right) => getReportDateValue(right.rawReport) - getReportDateValue(left.rawReport),
+    )
+  }, [accidentTypeFilter, incidentReports, selectedType])
+
+  const plottableMapIncidents = useMemo(
+    () =>
+      incidentReports.filter((incident) => {
+        if (incident.code !== selectedType) return false
+
+        // Strict rule:
+        // Do NOT plot Submitted, Pending, or On-going reports.
+        // Only Approved reports are allowed to display on the map.
+        return incident.status === 'approved'
+      }),
+    [incidentReports, selectedType],
+  )
+
+  const incidentHeatPoints = useMemo(
+    () =>
+      plottableMapIncidents.map((incident) => [
+        incident.coordinates[0],
+        incident.coordinates[1],
+        getIncidentHeatIntensity(incident.severity),
+      ]) as HeatPoint[],
+    [plottableMapIncidents],
+  )
+
+  const incidentCounts = useMemo(
+    () => ({
+      EQ:
+        earthquakeEvents.length +
+        incidentReports.filter((incident) => incident.code === 'EQ' && incident.status === 'approved').length,
+      FR: incidentReports.filter((incident) => incident.code === 'FR' && incident.status === 'approved').length,
+      AC: incidentReports.filter((incident) => incident.code === 'AC' && incident.status === 'approved').length,
+    }),
+    [incidentReports, earthquakeEvents.length],
+  )
 
   const loadEarthquakes = useCallback(async (silent = false) => {
     if (silent) {
@@ -225,6 +616,7 @@ export function AdminIncidentMapPanel({ incidents, selectedType, onSelectType, o
     } else {
       setEqFetchStatus('loading')
     }
+
     try {
       const events = await fetchQuezonRegionEarthquakes(1825, 1.0)
       setEarthquakeEvents(events)
@@ -237,68 +629,6 @@ export function AdminIncidentMapPanel({ incidents, selectedType, onSelectType, o
       setEqIsRefreshing(false)
     }
   }, [])
-
-  useEffect(() => {
-    if (selectedType === 'EQ' && earthquakeEvents.length === 0 && eqFetchStatus === 'idle') {
-      void loadEarthquakes()
-    }
-  }, [selectedType, earthquakeEvents.length, eqFetchStatus, loadEarthquakes])
-
-  useEffect(() => {
-    if (selectedType !== 'EQ' || faultLines) return
-
-    let isCancelled = false
-    setFaultLineStatus('loading')
-
-    void fetchQuezonFaultLines()
-      .then((data) => {
-        if (!isCancelled) {
-          setFaultLines(data)
-          setFaultLineStatus('idle')
-        }
-      })
-      .catch(() => {
-        if (!isCancelled) {
-          setFaultLineStatus('error')
-        }
-      })
-
-    return () => {
-      isCancelled = true
-    }
-  }, [selectedType, faultLines])
-
-  // Auto-refresh every 5 minutes while the earthquake view is active
-  useEffect(() => {
-    if (selectedType !== 'EQ') return
-    const intervalId = setInterval(() => {
-      void loadEarthquakes(true)
-    }, 5 * 60 * 1000)
-    return () => clearInterval(intervalId)
-  }, [selectedType, loadEarthquakes])
-
-  useEffect(() => {
-    void fetch('/lucena_barangays.geojson')
-      .then((response) => response.json())
-      .then((data) => setBarangayLayer(data))
-      .catch(() => {
-        console.error('Failed to load Lucena barangay boundaries')
-      })
-  }, [])
-
-  const filteredIncidents = useMemo(
-    () => incidents.filter((incident) => incident.code === selectedType),
-    [incidents, selectedType],
-  )
-
-  const incidentCounts = useMemo(
-    () => ({
-      EQ: incidents.filter((incident) => incident.code === 'EQ').length,
-      FR: incidents.filter((incident) => incident.code === 'FR').length,
-      AC: incidents.filter((incident) => incident.code === 'AC').length,
-    }),
-    [incidents],
-  )
 
   const earthquakeIncidentCards = useMemo(
     () =>
@@ -317,9 +647,8 @@ export function AdminIncidentMapPanel({ incidents, selectedType, onSelectType, o
 
   const filteredEarthquakeIncidentCards = useMemo(() => {
     const normalizedQuery = eqSearchQuery.trim().toLowerCase()
-    if (!normalizedQuery) {
-      return earthquakeIncidentCards.slice(0, 24)
-    }
+
+    if (!normalizedQuery) return earthquakeIncidentCards.slice(0, 24)
 
     return earthquakeIncidentCards.filter(
       (incident) =>
@@ -329,43 +658,51 @@ export function AdminIncidentMapPanel({ incidents, selectedType, onSelectType, o
     )
   }, [earthquakeIncidentCards, eqSearchQuery])
 
-  const nearestFaultLineFeatures = useMemo(() => {
-    if (!faultLines || !faultLines.features) return []
 
-    return faultLines.features
-      .map((feature, index) => ({ feature, index, distanceScore: getFaultLineDistanceScore(feature.geometry) }))
-      .filter((item) => Number.isFinite(item.distanceScore))
-      .sort((left, right) => left.distanceScore - right.distanceScore)
-      .slice(0, nearestFaultLinesLimit)
-  }, [faultLines])
-
-  const nearestFaultLineIndexes = useMemo(
-    () => new Set(nearestFaultLineFeatures.map((item) => item.index)),
-    [nearestFaultLineFeatures],
-  )
-
-  const nonHighlightedFaultLineCollection = useMemo(() => {
-    if (!faultLines || !faultLines.features) return null
+  const earthquakeSummary = useMemo(() => {
+    const significantCount = earthquakeEvents.filter((event) => event.magnitude >= 4).length
+    const strongestMagnitude = earthquakeEvents.reduce((max, event) => Math.max(max, event.magnitude), 0)
+    const recentCount = earthquakeEvents.filter(
+      (event) => event.rawTimestamp >= Date.now() - 30 * 24 * 60 * 60 * 1000,
+    ).length
 
     return {
-      ...faultLines,
-      features: faultLines.features.filter((_, index) => !nearestFaultLineIndexes.has(index)),
+      total: earthquakeEvents.length,
+      significant: significantCount,
+      strongest: strongestMagnitude > 0 ? strongestMagnitude.toFixed(1) : '0.0',
+      recent: recentCount,
     }
-  }, [faultLines, nearestFaultLineIndexes])
+  }, [earthquakeEvents])
 
-  const highlightedFaultLineCollection = useMemo(() => {
-    if (!faultLines) return null
-
-    return {
-      ...faultLines,
-      features: nearestFaultLineFeatures.map((item) => item.feature),
-    }
-  }, [faultLines, nearestFaultLineFeatures])
 
   useEffect(() => {
-    if (!mapContainerRef.current) {
-      return
+    if (selectedType === 'EQ' && earthquakeEvents.length === 0 && eqFetchStatus === 'idle') {
+      void loadEarthquakes()
     }
+  }, [selectedType, earthquakeEvents.length, eqFetchStatus, loadEarthquakes])
+
+
+  useEffect(() => {
+    if (selectedType !== 'EQ') return
+
+    const intervalId = setInterval(() => {
+      void loadEarthquakes(true)
+    }, 5 * 60 * 1000)
+
+    return () => clearInterval(intervalId)
+  }, [selectedType, loadEarthquakes])
+
+  useEffect(() => {
+    void fetch('/lucena_barangays.geojson')
+      .then((response) => response.json())
+      .then((data) => setBarangayLayer(data))
+      .catch(() => {
+        console.error('Failed to load Lucena barangay boundaries')
+      })
+  }, [])
+
+  useEffect(() => {
+    if (!mapContainerRef.current) return
 
     const existingLeafletId = (mapContainerRef.current as { _leaflet_id?: number })._leaflet_id
     if (existingLeafletId) {
@@ -382,160 +719,148 @@ export function AdminIncidentMapPanel({ incidents, selectedType, onSelectType, o
     const map = L.map(mapContainerRef.current, {
       zoomControl: true,
       attributionControl: false,
-      maxBounds: philippinesBounds,
+      maxBounds: isEqView ? philippinesBounds : lucenaBounds,
       maxBoundsViscosity: 1,
-      minZoom: isEqView ? 6 : 10,
-      maxZoom: 17,
+      minZoom: isEqView ? 6 : 12,
+      maxZoom: 18,
     })
 
-    map.fitBounds(isEqView ? quezonRegionBounds : lucenaBounds)
+    if (isEqView) {
+      map.fitBounds(quezonRegionBounds)
+    } else {
+      map.fitBounds(lucenaBounds, { padding: [18, 18] })
+    }
 
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}{r}.png', {
       attribution: '&copy; OpenStreetMap &copy; CARTO',
     }).addTo(map)
 
-    L.rectangle(lucenaBounds, {
-      color: '#0f766e',
-      weight: 2,
-      fillColor: '#14b8a6',
-      fillOpacity: 0.1,
-      dashArray: '6 5',
-    }).addTo(map)
+    const heatmapPane = map.getPane('heatmap-pane') ?? map.createPane('heatmap-pane')
+    heatmapPane.style.zIndex = '350'
+    heatmapPane.style.pointerEvents = 'none'
+
+    const barangayPane = map.getPane('barangay-pane') ?? map.createPane('barangay-pane')
+    barangayPane.style.zIndex = '590'
+    barangayPane.style.pointerEvents = 'auto'
+
+    const incidentMarkerPane = map.getPane('incident-marker-pane') ?? map.createPane('incident-marker-pane')
+    incidentMarkerPane.style.zIndex = '670'
+    incidentMarkerPane.style.pointerEvents = 'auto'
+
+    const mapLabelsPane = map.getPane('map-labels-pane') ?? map.createPane('map-labels-pane')
+    mapLabelsPane.style.zIndex = '650'
+    mapLabelsPane.style.pointerEvents = 'none'
+
+    const popupPane = map.getPane('popupPane')
+    if (popupPane) popupPane.style.zIndex = '1200'
 
     if (barangayLayer) {
-      const barangayPane = map.getPane('barangay-pane') ?? map.createPane('barangay-pane')
-      barangayPane.style.zIndex = '410'
-      barangayPane.style.filter = 'drop-shadow(0 0 20px rgba(56,189,248,0.18))'
 
-      L.geoJSON(barangayLayer, {
+      const barangayBorderColors = [
+        '#2563eb',
+        '#059669',
+        '#d97706',
+        '#7c3aed',
+        '#dc2626',
+        '#0891b2',
+        '#9333ea',
+        '#16a34a',
+        '#db2777',
+        '#0f766e',
+      ]
+
+      function getBarangayName(feature?: GeoJSON.Feature<GeoJSON.Geometry, Record<string, unknown>>): string {
+        return String(
+          feature?.properties?.barangay_name ??
+            feature?.properties?.brgy_name ??
+            feature?.properties?.name ??
+            'Unknown Barangay',
+        )
+      }
+
+      function getBarangayColor(feature?: GeoJSON.Feature<GeoJSON.Geometry, Record<string, unknown>>): string {
+        const barangayName = getBarangayName(feature)
+
+        let hash = 0
+        for (let index = 0; index < barangayName.length; index += 1) {
+          hash = barangayName.charCodeAt(index) + ((hash << 5) - hash)
+        }
+
+        return barangayBorderColors[Math.abs(hash) % barangayBorderColors.length]
+      }
+
+      const barangayGeoJson = L.geoJSON(barangayLayer, {
         pane: 'barangay-pane',
-        style: () => ({
-          color: '#0f172a',
-          weight: 1.2,
-          opacity: 0.88,
-          fillOpacity: 0,
-          dashArray: '5 6',
+        interactive: true,
+        style: (feature) => ({
+          color: getBarangayColor(feature),
+          weight: 0.9,
+          opacity: 0.76,
+          fillColor: getBarangayColor(feature),
+          fillOpacity: 0.01,
           lineJoin: 'round',
           lineCap: 'round',
         }),
         onEachFeature: (feature, layer) => {
-          if (!feature) return
-          const barangayName =
-            (feature.properties?.barangay_name as string) ?? (feature.properties?.brgy_name as string) ?? 'Unknown Barangay'
+          const barangayName = getBarangayName(feature)
 
-          layer.bindTooltip(`<strong>${barangayName}</strong>`, {
+          layer.bindTooltip(barangayName, {
             sticky: true,
-            direction: 'auto',
-            opacity: 0.98,
-            className: 'leaflet-barangay-tooltip',
+            direction: 'top',
+            opacity: 0.95,
+            className: 'barangay-hover-tooltip',
           })
 
           layer.on({
-            mouseover: () => {
-              ;(layer as L.Path).setStyle({
-                weight: 3.4,
-                color: '#38bdf8',
-                fillOpacity: 0,
+            mouseover: (event) => {
+              const target = event.target as L.Path
+              target.setStyle({
+                color: getBarangayColor(feature),
+                weight: 2.1,
                 opacity: 1,
+                fillColor: getBarangayColor(feature),
+                fillOpacity: 0.08,
               })
-              ;(layer as L.Path).bringToFront()
+              target.bringToFront()
             },
             mouseout: () => {
-              ;(layer as L.Path).setStyle({
-                weight: 1.2,
-                color: '#0f172a',
-                fillOpacity: 0,
-                opacity: 0.88,
-              })
+              barangayGeoJson.resetStyle(layer)
             },
           })
         },
-      }).addTo(map)
+      })
+
+      barangayGeoJson.addTo(map)
     }
 
     if (isEqView) {
-      // ── Earthquake heatmap layer ──
       if (showHeatmap && eqHeatPoints.length > 0) {
-        L.heatLayer(eqHeatPoints, {
-          minOpacity: 0.35,
-          radius: 28,
-          blur: 22,
+        ;(L as any).heatLayer(createHeatCloudPoints(eqHeatPoints), {
+          pane: 'heatmap-pane',
+          minOpacity: 0.24,
+          radius: 42,
+          blur: 32,
           max: 1.0,
+          maxZoom: 16,
           gradient: {
-            0.14: '#38bdf8',
-            0.4: '#22c55e',
-            0.6: '#facc15',
-            0.8: '#f97316',
+            0.12: '#2563eb',
+            0.32: '#22d3ee',
+            0.5: '#22c55e',
+            0.68: '#facc15',
+            0.84: '#f97316',
             1.0: '#dc2626',
           },
         }).addTo(map)
       }
 
-      if (showFaultLines && nonHighlightedFaultLineCollection) {
-        const faultPane = map.getPane('fault-lines-pane') ?? map.createPane('fault-lines-pane')
-        faultPane.style.zIndex = '420'
-
-        L.geoJSON(nonHighlightedFaultLineCollection, {
-          pane: 'fault-lines-pane',
-          style: (feature) => {
-            const lineType = feature?.properties?.LINE_TYPE?.toLowerCase() ?? ''
-            const traceType = feature?.properties?.TRACE_TYPE?.toLowerCase() ?? ''
-            const isApproximate = lineType.includes('approx') || traceType.includes('approx')
-            const isConcealed = lineType.includes('concealed') || traceType.includes('concealed')
-
-            return {
-              color: isConcealed ? '#7c3aed' : '#ef4444',
-              weight: isApproximate ? 2.2 : 2.8,
-              opacity: 0.78,
-              dashArray: isConcealed ? '4 8' : isApproximate ? '8 6' : undefined,
-            }
-          },
-          onEachFeature: (feature, layer) => {
-            const faultName = feature.properties?.FAULT_NAME ?? 'Unnamed fault'
-            const segmentName = feature.properties?.SEG_NAME ?? 'Segment not specified'
-            const traceType = feature.properties?.TRACE_TYPE ?? 'Trace type not specified'
-            const lineType = feature.properties?.LINE_TYPE ?? 'Line type not specified'
-            const faultCategory = feature.properties?.FAULT_CAT ?? 'Category not specified'
-            const mappedYear = feature.properties?.YR_MAPPED ?? 'N/A'
-
-            layer.bindPopup(
-              `<strong>${faultName}</strong><br/>Segment: ${segmentName}<br/>Trace: ${traceType}<br/>Line Type: ${lineType}<br/>Category: ${faultCategory}<br/>Mapped: ${mappedYear}`,
-            )
-          },
-        }).addTo(map)
-
-        const highlightPane = map.getPane('fault-highlights-pane') ?? map.createPane('fault-highlights-pane')
-        highlightPane.style.zIndex = '430'
-
-        if (highlightedFaultLineCollection && highlightedFaultLineCollection.features.length > 0) {
-          L.geoJSON(highlightedFaultLineCollection, {
-            pane: 'fault-highlights-pane',
-            style: {
-              color: '#f59e0b',
-              weight: 5,
-              opacity: 0.98,
-            },
-            onEachFeature: (feature, layer) => {
-              const faultName = feature.properties?.FAULT_NAME ?? 'Unnamed fault'
-              const segmentName = feature.properties?.SEG_NAME ?? 'Segment not specified'
-              const traceType = feature.properties?.TRACE_TYPE ?? 'Trace type not specified'
-              const faultCategory = feature.properties?.FAULT_CAT ?? 'Category not specified'
-
-              layer.bindPopup(
-                `<strong>${faultName}</strong><br/>Nearest Lucena fault segment: ${segmentName}<br/>Trace: ${traceType}<br/>Category: ${faultCategory}`,
-              )
-            },
-          }).addTo(map)
-        }
-      }
 
       if (showHeatmap) {
         earthquakeEvents
-          .filter((e) => e.magnitude >= 3.5)
+          .filter((event) => event.magnitude >= 3.5)
           .forEach((event) => {
-            const radiusPx = Math.max(4, (event.magnitude - 1) * 3)
             L.circleMarker([event.lat, event.lng], {
-              radius: radiusPx,
+              pane: 'incident-marker-pane',
+              radius: Math.max(4, (event.magnitude - 1) * 3),
               color: '#ffffff',
               weight: 1,
               fillColor: hazardColors.EQ,
@@ -547,47 +872,64 @@ export function AdminIncidentMapPanel({ incidents, selectedType, onSelectType, o
               )
           })
       }
-
-      if (eqFetchStatus === 'loading') {
-        L.popup({ closeButton: false })
-          .setLatLng([14.3, 121.5])
-          .setContent('<p style="margin:0;font-size:12px">Loading PHIVOLCS/USGS seismic data…</p>')
-          .openOn(map)
-      }
     } else {
-      // ── Standard incident markers ──
-      filteredIncidents.forEach((incident) => {
+      if (showIncidentHeatmap && incidentHeatPoints.length > 0 && typeof (L as any).heatLayer === 'function') {
+        ;(L as any).heatLayer(createHeatCloudPoints(incidentHeatPoints), {
+          pane: 'heatmap-pane',
+          minOpacity: 0.24,
+          radius: 46,
+          blur: 34,
+          max: 1.0,
+          maxZoom: 17,
+          gradient: {
+            0.12: '#2563eb',
+            0.32: '#22d3ee',
+            0.5: '#22c55e',
+            0.68: '#facc15',
+            0.84: '#f97316',
+            1.0: '#dc2626',
+          },
+        }).addTo(map)
+      }
+
+      plottableMapIncidents.forEach((incident) => {
+        const markerColor = hazardColors[incident.code]
+        const statusLabel = 'Approved / Resolved'
+
         L.circleMarker(incident.coordinates, {
-          radius: 14,
+          pane: 'incident-marker-pane',
+          radius: 17,
           stroke: false,
-          fillColor: hazardColors[incident.code],
-          fillOpacity: 0.24,
+          fillColor: markerColor,
+          fillOpacity: 0.26,
           interactive: false,
         }).addTo(map)
 
-        if (incident.status === 'active') {
-          L.circleMarker(incident.coordinates, {
-            radius: 10,
-            color: hazardColors[incident.code],
-            weight: 2,
-            fillColor: hazardColors[incident.code],
-            fillOpacity: 0.18,
-            interactive: false,
-            className: 'hazard-marker-pulse',
-          }).addTo(map)
-        }
-
-        L.circleMarker(incident.coordinates, {
-          radius: 7,
+        const approvedMarker = L.circleMarker(incident.coordinates, {
+          pane: 'incident-marker-pane',
+          radius: 9,
           color: '#ffffff',
-          weight: 1.5,
-          fillColor: hazardColors[incident.code],
+          weight: 2,
+          fillColor: markerColor,
           fillOpacity: 0.98,
+          bubblingMouseEvents: false,
         })
           .addTo(map)
-          .bindPopup(`<strong>${incident.title}</strong><br/>${incident.location}<br/>${incident.time}`)
+          .bindPopup(buildIncidentPopupHtml(incident, statusLabel), {
+            maxWidth: 320,
+            closeButton: true,
+          })
+
+        approvedMarker.on('click', () => {
+          approvedMarker.openPopup()
+        })
       })
     }
+
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}{r}.png', {
+      pane: 'map-labels-pane',
+      attribution: '&copy; CARTO',
+    }).addTo(map)
 
     window.setTimeout(() => {
       map.invalidateSize()
@@ -599,154 +941,170 @@ export function AdminIncidentMapPanel({ incidents, selectedType, onSelectType, o
       map.remove()
       mapInstanceRef.current = null
     }
-  }, [filteredIncidents, selectedType, eqHeatPoints, earthquakeEvents, showHeatmap, showFaultLines, eqFetchStatus, nonHighlightedFaultLineCollection, highlightedFaultLineCollection, barangayLayer])
+  }, [
+    plottableMapIncidents,
+    incidentHeatPoints,
+    showIncidentHeatmap,
+    selectedType,
+    eqHeatPoints,
+    earthquakeEvents,
+    showHeatmap,
+    barangayLayer,
+  ])
 
-  useEffect(() => {
-    if (selectedType === 'FR' || selectedType === 'AC') {
-      setActiveReportForm(selectedType)
-    }
-  }, [selectedType])
+  function showApprovalCelebration(incident: MapIncident): void {
+    confetti({
+      particleCount: 160,
+      spread: 90,
+      origin: { y: 0.62 },
+    })
+
+    confetti({
+      particleCount: 90,
+      angle: 60,
+      spread: 70,
+      origin: { x: 0, y: 0.7 },
+    })
+
+    confetti({
+      particleCount: 90,
+      angle: 120,
+      spread: 70,
+      origin: { x: 1, y: 0.7 },
+    })
+
+    setApprovalSuccess({
+      open: true,
+      title: 'Report Approved',
+      message: 'The incident report has been verified, plotted on the map, and moved to the Incident Reports page.',
+      reportTitle: incident.title,
+    })
+  }
+
+  function handleViewIncident(incident: MapIncident): void {
+    setViewedReportIds(saveViewedReportId(incident.id))
+    setSelectedIncident({ ...incident, isNew: false })
+  }
 
   function handleMapTypeSelect(filter: IncidentMapFilter): void {
-    if (filter === 'FR' || filter === 'AC') {
-      setActiveReportForm(filter)
-    }
-
     onSelectType(filter)
   }
 
-  function handleFireFieldChange(field: Exclude<keyof FireFormState, 'code'>, value: string): void {
-    setFireFormState((current) => ({
-      ...current,
-      [field]: value,
-    }))
-    if (fireFeedbackMessage) {
-      setFireFeedbackMessage('')
-    }
-  }
+  async function handleSetReviewStatus(incident: MapIncident, status: ReportReviewStatus): Promise<void> {
+    try {
+      const backendStatus = status === 'approved' ? 'Approved' : 'Pending'
+      const updatedReport = await updateIncidentReportStatus(incident.id, backendStatus)
 
-  function handleAccidentFieldChange(field: Exclude<keyof AccidentFormState, 'code' | 'victims'>, value: string): void {
-    setAccidentFormState((current) => ({
-      ...current,
-      [field]: value,
-    }))
-    if (accidentFeedbackMessage) {
-      setAccidentFeedbackMessage('')
-    }
-  }
-
-  function handleVictimFieldChange(entryId: string, field: keyof Omit<AccidentVictimEntry, 'id'>, value: string): void {
-    setAccidentFormState((current) => ({
-      ...current,
-      victims: current.victims.map((entry) =>
-        entry.id === entryId
-          ? {
-              ...entry,
-              [field]: value,
-            }
-          : entry,
-      ),
-    }))
-    if (accidentFeedbackMessage) {
-      setAccidentFeedbackMessage('')
-    }
-  }
-
-  function handleAddActivityLog(): void {
-    setAccidentFormState((current) => ({
-      ...current,
-      victims: [...current.victims, createVictimEntry()],
-    }))
-    if (accidentFeedbackMessage) {
-      setAccidentFeedbackMessage('')
-    }
-  }
-
-  function handleRemoveActivityLog(entryId: string): void {
-    setAccidentFormState((current) => {
-      if (current.victims.length === 1) {
-        return current
+      // Do not depend only on the backend response here. Some APIs return a
+      // partial object after updating status, which can make the approved
+      // accident disappear from the map because the mapper loses its original
+      // coordinates/type. Keep the current incident data, then force the new
+      // review/operation status locally. The next refresh will sync it again
+      // from the backend.
+      const responseMapped = updatedReport?.id ? applySavedEdit(mapReportToIncident(updatedReport)) : incident
+      const mapped: MapIncident = {
+        ...incident,
+        ...responseMapped,
+        id: incident.id,
+        code: incident.code,
+        coordinates: responseMapped.coordinates || incident.coordinates,
+        status,
+        operationalStatus: status === 'approved' ? 'Resolved' : 'On-going',
+        rawReport: {
+          ...incident.rawReport,
+          ...(updatedReport || {}),
+          status: backendStatus,
+        },
       }
 
-      return {
-        ...current,
-        victims: current.victims.filter((entry) => entry.id !== entryId),
+      setIncidentReports((current) =>
+        current.map((item) => (item.id === incident.id ? mapped : item)),
+      )
+
+      if (status === 'approved' && selectedType !== incident.code) {
+        onSelectType(incident.code)
       }
-    })
-    if (accidentFeedbackMessage) {
-      setAccidentFeedbackMessage('')
+
+      if (selectedIncident?.id === incident.id) {
+        setSelectedIncident(mapped)
+      }
+
+      if (editingIncident?.id === incident.id) {
+        setEditingIncident(mapped)
+      }
+
+      if (status === 'approved') {
+        setSelectedIncident(null)
+        setEditingIncident(null)
+        setEditForm(null)
+        showApprovalCelebration(mapped)
+      }
+
+      if (status === 'approved') {
+        onIncidentReportApproved?.()
+      }
+
+      window.setTimeout(() => {
+        void loadIncidentReports()
+      }, 300)
+    } catch (error) {
+      console.error('[AdminIncidentMapPanel] Failed to update report status:', error)
+      alert('Failed to update report status.')
     }
   }
 
-  function handleFireSubmit(): void {
-    const latitude = Number(fireFormState.latitude)
-    const longitude = Number(fireFormState.longitude)
-
-    if (Number.isNaN(latitude) || Number.isNaN(longitude)) {
-      setFireFeedbackMessage('Latitude and longitude must be valid numbers inside Lucena City.')
-      return
-    }
-
-    if (!fireFormState.title.trim() || !fireFormState.location.trim() || !fireFormState.responseTeam.trim() || !fireFormState.description.trim()) {
-      setFireFeedbackMessage('Complete the fire title, location, response team, and description fields first.')
-      return
-    }
-
-    onCreateIncident({
-      code: 'FR',
-      title: fireFormState.title.trim(),
-      location: fireFormState.location.trim(),
-      responseTeam: fireFormState.responseTeam.trim(),
-      severity: fireFormState.severity,
-      description: fireFormState.description.trim(),
-      coordinates: [latitude, longitude],
+  function handleEditIncident(incident: MapIncident): void {
+    setEditingIncident(incident)
+    setEditForm({
+      incidentTypeLabel: incident.incidentTypeLabel,
+      location: incident.location,
+      severity: incident.severity,
+      operationalStatus: incident.operationalStatus,
+      responseTeam: incident.responseTeam,
+      description: incident.description,
+      latitude: String(incident.coordinates[0]),
+      longitude: String(incident.coordinates[1]),
     })
-
-    setFireFormState(defaultFireFormState)
-    setFireFeedbackMessage('Fire accomplishment report added to the map and reports list.')
   }
 
-  function handleAccidentSubmit(): void {
-    const latitude = Number(accidentFormState.latitude)
-    const longitude = Number(accidentFormState.longitude)
+  function handleSaveEdit(): void {
+    if (!editingIncident || !editForm) return
 
-    if (Number.isNaN(latitude) || Number.isNaN(longitude)) {
-      setAccidentFeedbackMessage('Latitude and longitude must be valid numbers inside Lucena City.')
-      return
+    const lat = Number(editForm.latitude)
+    const lng = Number(editForm.longitude)
+    const coordinates: [number, number] =
+      Number.isFinite(lat) && Number.isFinite(lng) ? [lat, lng] : editingIncident.coordinates
+
+    const updatedIncident: MapIncident = {
+      ...editingIncident,
+      incidentTypeLabel: editForm.incidentTypeLabel,
+      title: `${editForm.incidentTypeLabel} - ${getReportCode(editingIncident.rawReport)}`,
+      location: editForm.location,
+      severity: editForm.severity,
+      operationalStatus: editForm.operationalStatus,
+      responseTeam: editForm.responseTeam,
+      description: editForm.description,
+      coordinates,
     }
 
-    if (!accidentFormState.accidentType.trim() || !accidentFormState.address.trim() || !accidentFormState.actionTaken.trim()) {
-      setAccidentFeedbackMessage('Complete the type of accident, address, and A/T fields first.')
-      return
-    }
+    saveEditedIncident(editingIncident.id, {
+      incidentTypeLabel: updatedIncident.incidentTypeLabel,
+      title: updatedIncident.title,
+      location: updatedIncident.location,
+      severity: updatedIncident.severity,
+      operationalStatus: updatedIncident.operationalStatus,
+      responseTeam: updatedIncident.responseTeam,
+      description: updatedIncident.description,
+      coordinates: updatedIncident.coordinates,
+    })
 
-    const populatedVictims = accidentFormState.victims.filter(
-      (victim) => victim.name.trim() && victim.age.trim() && victim.address.trim() && victim.condition.trim(),
+    setIncidentReports((current) =>
+      current.map((item) => (item.id === editingIncident.id ? updatedIncident : item)),
     )
 
-    if (populatedVictims.length === 0) {
-      setAccidentFeedbackMessage('Add at least one victim with complete name, age, address, and condition details.')
-      return
-    }
-
-    const victimSummary = populatedVictims
-      .map((victim, index) => {
-        return `Victim ${index + 1}: ${victim.name.trim()}, Age ${victim.age.trim()}, Address ${victim.address.trim()}, Condition ${victim.condition.trim()}.`
-      })
-      .join(' ')
-
-    onCreateIncident({
-      code: 'AC',
-      title: `${accidentFormState.accidentType} - ${accidentFormState.address.trim()}`,
-      location: accidentFormState.address.trim(),
-      responseTeam: 'Accident Response Team',
-      severity: accidentFormState.severity,
-      description: `Type of Accident: ${accidentFormState.accidentType}. Address: ${accidentFormState.address.trim()}. ${victimSummary} A/T: ${accidentFormState.actionTaken.trim()}.`,
-      coordinates: [latitude, longitude],
-    })
-
-    setAccidentFormState(createDefaultAccidentFormState())
-    setAccidentFeedbackMessage('Accident report added to the map and reports list.')
+    setSelectedIncident(updatedIncident)
+    setEditingIncident(null)
+    setEditForm(null)
   }
 
   return (
@@ -756,16 +1114,26 @@ export function AdminIncidentMapPanel({ incidents, selectedType, onSelectType, o
           <div className="flex flex-col gap-4 border-b border-slate-200 bg-[linear-gradient(90deg,#e8f1fd_0%,#f6fbff_100%)] px-4 py-4 sm:px-5 sm:py-4 lg:flex-row lg:items-start lg:justify-between">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                {selectedType === 'EQ' ? 'Seismic Mapping — Quezon Province' : 'Dashboard Mapping'}
+                {selectedType === 'EQ' ? 'Seismic Mapping — Quezon Province' : 'Approved Report Mapping'}
               </p>
-              <h2 className="mt-1 text-xl font-bold text-slate-900 sm:text-2xl">Lucena Incident Map</h2>
+
+              <h2 className="mt-1 text-xl font-bold text-slate-900 sm:text-2xl">
+                Lucena Incident Map
+              </h2>
+
+              <p className="mt-1 text-xs text-slate-500">
+                Only approved reports are plotted on the map. Submitted, pending, and on-going reports stay in the review list only.
+              </p>
             </div>
+
             <div className="flex w-full flex-col gap-2 lg:w-auto lg:min-w-[360px] lg:items-end">
               <div className="flex flex-wrap gap-2 lg:justify-end">
                 {(Object.keys(hazardTypeMeta) as HazardType[]).map((typeCode) => (
                   <button
                     className={`rounded-full border px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.12em] transition ${
-                      selectedType === typeCode ? 'text-slate-950 shadow-[0_8px_18px_rgba(15,23,42,0.12)]' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
+                      selectedType === typeCode
+                        ? 'text-slate-950 shadow-[0_8px_18px_rgba(15,23,42,0.12)]'
+                        : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
                     }`}
                     key={typeCode}
                     onClick={() => handleMapTypeSelect(typeCode)}
@@ -779,9 +1147,13 @@ export function AdminIncidentMapPanel({ incidents, selectedType, onSelectType, o
                   </button>
                 ))}
               </div>
+
               {selectedType === 'EQ' ? (
                 <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-200 bg-white/75 px-3 py-2 backdrop-blur lg:justify-end">
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Layers</span>
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                    Layers
+                  </span>
+
                   <button
                     className={`rounded-full border px-3 py-1 text-[11px] font-semibold transition ${
                       showHeatmap
@@ -793,133 +1165,112 @@ export function AdminIncidentMapPanel({ incidents, selectedType, onSelectType, o
                   >
                     Heatmap
                   </button>
+
+                </div>
+              ) : (
+                <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-200 bg-white/75 px-3 py-2 backdrop-blur lg:justify-end">
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                    Layers
+                  </span>
+
                   <button
                     className={`rounded-full border px-3 py-1 text-[11px] font-semibold transition ${
-                      showFaultLines
-                        ? 'border-rose-300 bg-rose-50 text-rose-700'
+                      showIncidentHeatmap
+                        ? 'border-emerald-500 bg-emerald-500 text-white'
                         : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
                     }`}
-                    onClick={() => setShowFaultLines((value) => !value)}
+                    onClick={() => setShowIncidentHeatmap((value) => !value)}
                     type="button"
                   >
-                    Fault Lines
+                    Heatmap
                   </button>
                 </div>
-              ) : null}
+              )}
             </div>
           </div>
 
-          {selectedType === 'EQ' && (showHeatmap || showFaultLines || eqFetchStatus !== 'idle' || eqIsRefreshing || faultLineStatus !== 'idle') ? (
-            <div className="flex flex-wrap items-center gap-3 border-b border-slate-200 bg-slate-50 px-4 py-2.5 text-[11px] sm:px-5">
-              <span className="font-semibold uppercase tracking-[0.12em] text-slate-500">Legend</span>
-              {showHeatmap ? (
-                <>
-                  <div className="flex items-center gap-1.5">
-                    <span className="inline-block h-2.5 w-2.5 rounded-full bg-[#38bdf8]" />
-                    <span className="text-slate-600">M1.0-M1.9</span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="inline-block h-2.5 w-2.5 rounded-full bg-[#22c55e]" />
-                    <span className="text-slate-600">M2.0-M2.9</span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="inline-block h-2.5 w-2.5 rounded-full bg-[#facc15]" />
-                    <span className="text-slate-600">M3.0-M3.9</span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="inline-block h-2.5 w-2.5 rounded-full bg-[#f97316]" />
-                    <span className="text-slate-600">M4.0-M4.9</span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="inline-block h-2.5 w-2.5 rounded-full bg-[#dc2626]" />
-                    <span className="text-slate-600">M5.0+</span>
-                  </div>
-                </>
-              ) : null}
-              {showFaultLines ? (
-                <>
-                  <div className="flex items-center gap-1.5">
-                    <span className="inline-block h-[3px] w-8 rounded-full bg-[#ef4444]" />
-                    <span className="text-slate-600">Fault trace</span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="inline-block h-[3px] w-8 rounded-full bg-[#7c3aed]" style={{ backgroundImage: 'repeating-linear-gradient(90deg,#7c3aed 0 8px, transparent 8px 14px)' }} />
-                    <span className="text-slate-600">Concealed fault</span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="inline-block h-[4px] w-8 rounded-full bg-[#f59e0b]" />
-                    <span className="text-slate-600">Nearest to Lucena</span>
-                  </div>
-                </>
-              ) : null}
-              <div className="ml-auto flex items-center gap-2">
-                {eqFetchStatus === 'loading' ? (
-                  <span className="animate-pulse font-semibold text-blue-600">Fetching data…</span>
-                ) : eqIsRefreshing ? (
-                  <span className="animate-pulse font-semibold text-blue-500">Refreshing…</span>
-                ) : eqFetchStatus === 'error' ? (
-                  <span className="font-semibold text-red-600">Fetch failed</span>
-                ) : (
-                  <span className="flex items-center gap-1 rounded-full border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.1em] text-emerald-700">
-                    <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
-                    Live · 5 min
-                  </span>
-                )}
-                {faultLineStatus === 'loading' ? (
-                  <span className="font-semibold text-rose-600">Loading faults…</span>
-                ) : faultLineStatus === 'error' ? (
-                  <span className="font-semibold text-rose-600">Fault lines unavailable</span>
-                ) : showFaultLines && faultLines && faultLines.features ? (
-                  <span className="rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.1em] text-rose-700">
-                    {faultLines.features.length} fault traces
-                  </span>
-                ) : null}
+          <div className="flex flex-wrap items-center gap-3 border-b border-slate-200 px-4 py-3 text-xs text-slate-600 sm:px-5">
+            {(Object.keys(hazardTypeMeta) as HazardType[]).map((typeCode) => (
+              <div className="flex items-center gap-2" key={typeCode}>
+                <span
+                  className="inline-block h-2.5 w-2.5 rounded-full"
+                  style={{ backgroundColor: hazardTypeMeta[typeCode].color }}
+                />
+
+                <span className="font-semibold text-slate-700">{hazardTypeMeta[typeCode].label}</span>
+
+                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600">
+                  {incidentCounts[typeCode]}
+                </span>
               </div>
-            </div>
-          ) : (
-            <div className="flex flex-wrap items-center gap-3 border-b border-slate-200 px-4 py-3 text-xs text-slate-600 sm:px-5">
-              {(Object.keys(hazardTypeMeta) as HazardType[]).map((typeCode) => (
-                <div className="flex items-center gap-2" key={typeCode}>
-                  <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: hazardTypeMeta[typeCode].color }} />
-                  <span className="font-semibold text-slate-700">{hazardTypeMeta[typeCode].label}</span>
-                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600">{incidentCounts[typeCode]}</span>
-                </div>
-              ))}
-            </div>
-          )}
+            ))}
+
+            {reportsLoading ? (
+              <span className="ml-auto text-[11px] font-semibold text-blue-600">
+                Loading responder reports...
+              </span>
+            ) : (
+              <span className="ml-auto text-[11px] font-semibold text-emerald-700">
+                {plottableMapIncidents.length} plotted on map
+              </span>
+            )}
+          </div>
 
           <div className="h-[520px] w-full sm:h-[640px] md:h-auto md:flex-1" ref={mapContainerRef} />
         </div>
 
         <aside className="overflow-x-hidden rounded-[28px] border border-slate-200 bg-white p-4 shadow-[0_12px_32px_rgba(15,23,42,0.08)] sm:p-5 md:h-[calc(100vh-13rem)] md:overflow-hidden">
-          {selectedType === 'FR' || selectedType === 'AC' ? (
-            <div className="border-b border-slate-200 pb-4">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Initial Reports</p>
-              <h2 className="mt-1 text-xl font-bold text-slate-900 sm:text-2xl">{activeReportForm === 'FR' ? 'Fire Report Form' : 'Accident Report Form'}</h2>
-              <p className="mt-2 text-sm leading-relaxed text-slate-600">
-                Click Fire or Accident in the map filters and the matching accomplishment report form will appear here.
-              </p>
-            </div>
-          ) : null}
-
           {selectedType === 'EQ' ? (
-            <div className="rounded-[24px] border border-emerald-200 bg-[linear-gradient(180deg,#ecfdf5_0%,#ffffff_100%)] p-4 sm:p-5">
-              <div className="flex items-center justify-between gap-3 border-b border-emerald-100 pb-3">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-700">Seismic Events</p>
-                  <h3 className="mt-1 text-xl font-bold text-slate-900">PHIVOLCS / USGS Earthquakes</h3>
+            <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-[28px] border border-emerald-100 bg-[radial-gradient(circle_at_top_left,#d1fae5_0%,#f0fdf4_34%,#ffffff_100%)] shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
+              <div className="border-b border-emerald-100 bg-white/70 px-4 py-4 backdrop-blur sm:px-5">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-[11px] font-black uppercase tracking-[0.18em] text-emerald-700">
+                      Seismic Events
+                    </p>
+
+                    <h3 className="mt-1 text-xl font-black tracking-tight text-slate-900">
+                      Earthquake Monitoring
+                    </h3>
+
+                    <p className="mt-1 text-xs leading-relaxed text-slate-500">
+                      Live earthquake records for Quezon Province and nearby areas.
+                    </p>
+                  </div>
+
+                  <span className="shrink-0 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-black text-emerald-800">
+                    {eqFetchStatus === 'loading' ? 'Loading' : `${earthquakeSummary.total} events`}
+                  </span>
                 </div>
-                <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-800">
-                  {eqFetchStatus === 'loading' ? '…' : earthquakeEvents.length}
-                </span>
+
+                <div className="mt-4 grid grid-cols-3 gap-2">
+                  <div className="rounded-2xl border border-emerald-100 bg-white/85 p-3 text-center shadow-sm">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-slate-400">Strongest</p>
+                    <p className="mt-1 text-xl font-black text-emerald-700">M{earthquakeSummary.strongest}</p>
+                  </div>
+                  <div className="rounded-2xl border border-orange-100 bg-white/85 p-3 text-center shadow-sm">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-slate-400">M4+</p>
+                    <p className="mt-1 text-xl font-black text-orange-600">{earthquakeSummary.significant}</p>
+                  </div>
+                  <div className="rounded-2xl border border-blue-100 bg-white/85 p-3 text-center shadow-sm">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-slate-400">30 Days</p>
+                    <p className="mt-1 text-xl font-black text-blue-600">{earthquakeSummary.recent}</p>
+                  </div>
+                </div>
+
+                <p className="mt-3 rounded-2xl border border-emerald-100 bg-emerald-50/70 px-3 py-2 text-xs leading-relaxed text-emerald-800">
+                  {eqLastRefreshed
+                    ? `Last updated ${eqLastRefreshed.toLocaleTimeString('en-PH', {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit',
+                      })}`
+                    : 'Waiting for earthquake data'}
+                  {eqIsRefreshing ? ' · Refreshing…' : ''}
+                </p>
               </div>
 
-              <p className="mt-3 text-xs leading-relaxed text-slate-600">
-                Quezon Province seismic log
-                {eqLastRefreshed
-                  ? ` · Updated ${eqLastRefreshed.toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`
-                  : ''}
-              </p>
+              <div className="min-h-0 flex-1 overflow-hidden px-4 py-4 sm:px-5">
 
               {eqFetchStatus === 'loading' ? (
                 <div className="mt-4 flex items-center gap-3">
@@ -929,6 +1280,7 @@ export function AdminIncidentMapPanel({ incidents, selectedType, onSelectType, o
               ) : eqFetchStatus === 'error' ? (
                 <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 p-4 text-center">
                   <p className="text-sm font-semibold text-red-800">Failed to load seismic data</p>
+
                   <button
                     className="mt-3 rounded-lg border border-red-300 bg-white px-3 py-1.5 text-xs font-semibold text-red-800 hover:bg-red-50"
                     onClick={() => void loadEarthquakes()}
@@ -940,48 +1292,44 @@ export function AdminIncidentMapPanel({ incidents, selectedType, onSelectType, o
               ) : (
                 <>
                   <div className="mt-4">
-                    <label className="sr-only" htmlFor="admin-eq-search">
-                      Search earthquake events
-                    </label>
-                    <div className="flex items-center gap-2 rounded-xl border border-[#0b6b50]/20 bg-white px-3 py-2.5 shadow-[0_10px_20px_rgba(15,23,42,0.06)] transition focus-within:border-[#0b6b50]/45 focus-within:ring-2 focus-within:ring-[#0b6b50]/10">
-                      <input
-                        className="w-full bg-transparent text-sm text-slate-800 outline-none placeholder:text-slate-400"
-                        id="admin-eq-search"
-                        onChange={(event) => setEqSearchQuery(event.target.value)}
-                        placeholder="Search place or event"
-                        type="text"
-                        value={eqSearchQuery}
-                      />
-                      <span className="rounded-full border border-[#0b6b50]/20 bg-[#0b6b50]/5 px-2 py-1 text-[10px] font-bold text-[#0b6b50]">
-                        {filteredEarthquakeIncidentCards.length}/{earthquakeIncidentCards.length}
-                      </span>
-                    </div>
+                    <input
+                      className="w-full rounded-2xl border border-emerald-100 bg-white px-4 py-3 text-sm font-medium text-slate-800 shadow-sm outline-none transition focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
+                      onChange={(event) => setEqSearchQuery(event.target.value)}
+                      placeholder="Search earthquake location or event"
+                      type="text"
+                      value={eqSearchQuery}
+                    />
                   </div>
 
-                  <p className="mt-4 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">Recent Events</p>
-                  <div className="mt-2 max-h-[420px] space-y-2 overflow-y-auto pr-1">
+                  <div className="mt-4 max-h-[calc(100vh-27rem)] min-h-[320px] space-y-3 overflow-y-auto pr-1">
                     {filteredEarthquakeIncidentCards.length === 0 ? (
                       <div className="rounded-xl border border-slate-200 bg-white p-3 text-center text-xs text-slate-500">
                         No matching earthquake event found.
                       </div>
                     ) : (
                       filteredEarthquakeIncidentCards.map((incident) => (
-                        <article className="rounded-xl border border-slate-200 bg-white p-3" key={incident.id}>
+                        <article className="group rounded-2xl border border-slate-200 bg-white/95 p-4 shadow-sm transition hover:-translate-y-0.5 hover:border-emerald-200 hover:shadow-md" key={incident.id}>
                           <div className="flex items-start justify-between gap-2">
                             <div className="min-w-0">
                               <div className="flex items-center gap-2">
-                                <span className="inline-flex rounded-md bg-emerald-400 px-1.5 py-0.5 text-[10px] font-black text-slate-900">
+                                <span className="inline-flex rounded-lg bg-emerald-500 px-2 py-1 text-[10px] font-black text-white shadow-sm">
                                   EQ
                                 </span>
-                                <p className="truncate text-sm font-semibold text-slate-900">{incident.title}</p>
+
+                                <p className="truncate text-sm font-semibold text-slate-900">
+                                  {incident.title}
+                                </p>
                               </div>
+
                               <p className="mt-1 pl-7 text-xs text-slate-500">{incident.time}</p>
                               <p className="mt-1 pl-7 text-xs text-slate-500">{incident.location}</p>
                             </div>
-                            <span className="rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-bold text-emerald-700">
+
+                            <span className="shrink-0 rounded-full border border-emerald-100 bg-emerald-50 px-2.5 py-1 text-[10px] font-black text-emerald-700">
                               M{incident.magnitude.toFixed(1)}
                             </span>
                           </div>
+
                           <p className="mt-2 pl-7 text-xs text-slate-600">{incident.description}</p>
                         </article>
                       ))
@@ -989,290 +1337,488 @@ export function AdminIncidentMapPanel({ incidents, selectedType, onSelectType, o
                   </div>
                 </>
               )}
+              </div>
             </div>
-          ) : null}
+          ) : (
+            <div className="flex h-full min-h-0 flex-col">
+              <div className="border-b border-slate-200 pb-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                  Responder Reports
+                </p>
 
-          {selectedType === 'FR' || selectedType === 'AC' ? (
-            <div className="mt-5 grid gap-5 overflow-x-hidden pb-3 md:h-[calc(100%-7.5rem)] md:overflow-y-auto md:pr-2 md:pb-6">
-              {activeReportForm === 'FR' ? (
-                <section className="grid gap-5 overflow-x-hidden">
-                  <div className="rounded-2xl border border-orange-200 bg-[linear-gradient(135deg,#fff1ea_0%,#ffffff_60%)] p-4">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-orange-700">Fire Report</p>
-                    <h3 className="mt-1 text-lg font-bold text-slate-900">Incident Details</h3>
-                    <p className="mt-1 text-xs text-slate-600">Complete the fire incident information and submit it to the live map.</p>
+                <h2 className="mt-1 text-xl font-bold text-slate-900 sm:text-2xl">
+                  {selectedType === 'FR' ? 'Fire Incident Reports' : 'Accident Incident Reports'}
+                </h2>
 
-                    <label className="mt-4 grid gap-2 text-sm font-medium text-slate-700">
-                      Incident title
-                      <input
-                        className="w-full min-w-0 rounded-xl border border-orange-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-orange-500 focus:ring-2 focus:ring-orange-100"
-                        onChange={(event) => handleFireFieldChange('title', event.target.value)}
-                        placeholder="Example: Vehicle Fire - Barangay 6"
-                        type="text"
-                        value={fireFormState.title}
-                      />
-                    </label>
+                <p className="mt-2 text-sm leading-relaxed text-slate-600">
+                  {selectedType === 'FR'
+                    ? 'Fire reports stay here for review until approved. Only approved fire reports are plotted on the map as resolved records.'
+                    : 'Accident-related reports stay here for review until approved. Only approved reports are plotted on the map.'}
+                </p>
 
-                    <label className="mt-4 grid gap-2 text-sm font-medium text-slate-700">
-                      Location
-                      <input
-                        className="w-full min-w-0 rounded-xl border border-orange-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-orange-500 focus:ring-2 focus:ring-orange-100"
-                        onChange={(event) => handleFireFieldChange('location', event.target.value)}
-                        placeholder="Exact place in Lucena City"
-                        type="text"
-                        value={fireFormState.location}
-                      />
-                    </label>
+                {selectedType === 'AC' ? (
+                  <div className="mt-5 rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-4 shadow-sm">
+                    <div className="flex flex-col gap-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <label
+                            className="block text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500"
+                            htmlFor="accident-hazard-filter"
+                          >
+                            Filter by Hazard Type
+                          </label>
+                          <p className="mt-1 text-xs text-slate-500">
+                            Select a specific responder report category.
+                          </p>
+                        </div>
 
-                    <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                      <label className="grid gap-2 text-sm font-medium text-slate-700">
-                        Severity
-                        <select
-                          className="w-full min-w-0 rounded-xl border border-orange-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-orange-500 focus:ring-2 focus:ring-orange-100"
-                          onChange={(event) => handleFireFieldChange('severity', event.target.value)}
-                          value={fireFormState.severity}
-                        >
-                          {severityOptions.map((severity) => (
-                            <option key={severity} value={severity}>
-                              {severity}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <label className="grid gap-2 text-sm font-medium text-slate-700">
-                        Response team
-                        <input
-                          className="w-full min-w-0 rounded-xl border border-orange-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-orange-500 focus:ring-2 focus:ring-orange-100"
-                          onChange={(event) => handleFireFieldChange('responseTeam', event.target.value)}
-                          placeholder="Assigned fire unit"
-                          type="text"
-                          value={fireFormState.responseTeam}
-                        />
-                      </label>
-                    </div>
-
-                    <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                      <label className="grid gap-2 text-sm font-medium text-slate-700">
-                        Latitude
-                        <input
-                          className="w-full min-w-0 rounded-xl border border-orange-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-orange-500 focus:ring-2 focus:ring-orange-100"
-                          onChange={(event) => handleFireFieldChange('latitude', event.target.value)}
-                          type="text"
-                          value={fireFormState.latitude}
-                        />
-                      </label>
-                      <label className="grid gap-2 text-sm font-medium text-slate-700">
-                        Longitude
-                        <input
-                          className="w-full min-w-0 rounded-xl border border-orange-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-orange-500 focus:ring-2 focus:ring-orange-100"
-                          onChange={(event) => handleFireFieldChange('longitude', event.target.value)}
-                          type="text"
-                          value={fireFormState.longitude}
-                        />
-                      </label>
-                    </div>
-                  </div>
-
-                  <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                    <label className="grid gap-2 text-sm font-medium text-slate-700">
-                      Description
-                      <textarea
-                        className="min-h-28 w-full min-w-0 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-orange-500 focus:ring-2 focus:ring-orange-100"
-                        onChange={(event) => handleFireFieldChange('description', event.target.value)}
-                        placeholder="Short fire incident description, affected area, and current action taken"
-                        value={fireFormState.description}
-                      />
-                    </label>
-                  </div>
-
-                  {fireFeedbackMessage ? <p className="rounded-2xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm font-medium text-orange-900">{fireFeedbackMessage}</p> : null}
-
-                  <button
-                    className="mt-1 rounded-xl bg-[linear-gradient(90deg,#ea580c_0%,#fb923c_100%)] px-4 py-3 text-sm font-semibold text-white shadow-[0_10px_22px_rgba(234,88,12,0.28)] transition hover:brightness-105 mb-1"
-                    onClick={handleFireSubmit}
-                    type="button"
-                  >
-                    Submit fire report to map
-                  </button>
-                </section>
-              ) : (
-                <section className="grid gap-5 overflow-x-hidden">
-                  <div className="rounded-2xl border border-amber-200 bg-[linear-gradient(135deg,#fff8e7_0%,#ffffff_60%)] p-4">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-amber-700">Accident Report</p>
-                    <h3 className="mt-1 text-lg font-bold text-slate-900">Incident Details</h3>
-                    <p className="mt-1 text-xs text-slate-600">Fill out the core incident information before adding victim details.</p>
-
-                    <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                      <label className="grid gap-2 text-sm font-medium text-slate-700">
-                        Type of Accident
-                        <select
-                          className="w-full min-w-0 rounded-xl border border-amber-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
-                          onChange={(event) => handleAccidentFieldChange('accidentType', event.target.value)}
-                          value={accidentFormState.accidentType}
-                        >
-                          {accidentTypeOptions.map((option) => (
-                            <option key={option} value={option}>
-                              {option}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <label className="grid gap-2 text-sm font-medium text-slate-700">
-                        Severity
-                        <select
-                          className="w-full min-w-0 rounded-xl border border-amber-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
-                          onChange={(event) => handleAccidentFieldChange('severity', event.target.value)}
-                          value={accidentFormState.severity}
-                        >
-                          {severityOptions.map((severity) => (
-                            <option key={severity} value={severity}>
-                              {severity}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                    </div>
-
-                    <label className="mt-4 grid gap-2 text-sm font-medium text-slate-700">
-                      Address
-                      <input
-                        className="w-full min-w-0 rounded-xl border border-amber-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
-                        onChange={(event) => handleAccidentFieldChange('address', event.target.value)}
-                        placeholder="Example: Near Rotonda, Isabang, Lucena City"
-                        type="text"
-                        value={accidentFormState.address}
-                      />
-                    </label>
-
-                    <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                      <label className="grid gap-2 text-sm font-medium text-slate-700">
-                        Latitude
-                        <input
-                          className="w-full min-w-0 rounded-xl border border-amber-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
-                          onChange={(event) => handleAccidentFieldChange('latitude', event.target.value)}
-                          type="text"
-                          value={accidentFormState.latitude}
-                        />
-                      </label>
-                      <label className="grid gap-2 text-sm font-medium text-slate-700">
-                        Longitude
-                        <input
-                          className="w-full min-w-0 rounded-xl border border-amber-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
-                          onChange={(event) => handleAccidentFieldChange('longitude', event.target.value)}
-                          type="text"
-                          value={accidentFormState.longitude}
-                        />
-                      </label>
-                    </div>
-                  </div>
-
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4">
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                      <div>
-                        <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Victim Information</p>
-                        <p className="mt-1 text-sm font-semibold text-slate-900">Victims</p>
-                        <p className="text-xs text-slate-600">Add victim details with name, age, address, and condition.</p>
+                        {accidentTypeFilter !== 'all' ? (
+                          <button
+                            className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-bold text-slate-600 transition hover:bg-slate-100"
+                            onClick={() => setAccidentTypeFilter('all')}
+                            type="button"
+                          >
+                            Clear
+                          </button>
+                        ) : null}
                       </div>
-                      <button
-                        className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:border-amber-300 hover:bg-amber-50 sm:self-auto"
-                        onClick={handleAddActivityLog}
-                        type="button"
-                      >
-                        + Add victim
-                      </button>
+
+                      <div className="relative">
+                        <select
+                          className="block h-12 w-full appearance-none rounded-xl border border-slate-300 bg-white px-4 pr-11 text-sm font-semibold text-slate-800 shadow-sm outline-none transition hover:border-amber-300 focus:border-amber-500 focus:ring-4 focus:ring-amber-100"
+                          id="accident-hazard-filter"
+                          onChange={(event) => setAccidentTypeFilter(event.target.value)}
+                          value={accidentTypeFilter}
+                        >
+                          <option value="all">All accident-related hazards</option>
+                          {accidentTypeOptions.map((type) => (
+                            <option key={type} value={type}>
+                              {type}
+                            </option>
+                          ))}
+                        </select>
+
+                        <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-slate-400">
+                          ▾
+                        </span>
+                      </div>
                     </div>
+                  </div>
+                ) : null}
+              </div>
 
-                    <div className="mt-4 grid gap-3">
-                      {accidentFormState.victims.map((entry, index) => (
-                        <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-[0_6px_18px_rgba(15,23,42,0.05)]" key={entry.id}>
-                          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                            <p className="text-sm font-semibold text-slate-800">Victim {index + 1}</p>
-                            <button
-                              className="text-left text-xs font-semibold text-rose-700 transition hover:text-rose-800 disabled:text-slate-300 sm:text-right"
-                              disabled={accidentFormState.victims.length === 1}
-                              onClick={() => handleRemoveActivityLog(entry.id)}
-                              type="button"
+              {reportsError ? (
+                <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700">
+                  {reportsError}
+                </div>
+              ) : null}
+
+              <div className="mt-4 min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
+                {filteredIncidents.length > 0 ? (
+                  filteredIncidents.map((incident) => (
+                    <article
+                      className="rounded-2xl border border-slate-200 bg-[#fbfdff] p-4 shadow-[0_8px_20px_rgba(15,23,42,0.05)]"
+                      key={incident.id}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span
+                              className="inline-flex rounded-md px-1.5 py-0.5 text-[10px] font-black text-slate-900"
+                              style={{ backgroundColor: hazardColors[incident.code] }}
                             >
-                              Remove
-                            </button>
+                              {incident.code}
+                            </span>
+
+                            <p className="truncate text-sm font-bold text-slate-900">
+                              {incident.title}
+                            </p>
                           </div>
 
-                          <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                            <label className="grid gap-2 text-sm font-medium text-slate-700">
-                              Name
-                              <input
-                                className="w-full min-w-0 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
-                                onChange={(event) => handleVictimFieldChange(entry.id, 'name', event.target.value)}
-                                placeholder="Full name"
-                                type="text"
-                                value={entry.name}
-                              />
-                            </label>
-                            <label className="grid gap-2 text-sm font-medium text-slate-700">
-                              Age
-                              <input
-                                className="w-full min-w-0 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
-                                onChange={(event) => handleVictimFieldChange(entry.id, 'age', event.target.value)}
-                                placeholder="Age"
-                                type="text"
-                                value={entry.age}
-                              />
-                            </label>
-                          </div>
+                          <p className="mt-2 text-xs text-slate-500">{incident.location}</p>
+                          <p className="mt-1 text-xs text-slate-500">{incident.time}</p>
+                          <p className="mt-1 text-xs text-slate-500">
+                            Hazard Type: <span className="font-semibold">{incident.incidentTypeLabel}</span>
+                          </p>
+                          <p className="mt-1 text-xs text-slate-500">
+                            Team: <span className="font-semibold">{incident.responseTeam}</span>
+                          </p>
+                          <p className="mt-1 text-xs text-slate-500">
+                            Severity: <span className="font-semibold">{incident.severity}</span>
+                          </p>
+                          <p className="mt-1 text-xs text-slate-500">
+                            Operation Status: <span className="font-semibold">{incident.operationalStatus}</span>
+                          </p>
+                        </div>
 
-                          <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                            <label className="grid gap-2 text-sm font-medium text-slate-700">
-                              Address
-                              <input
-                                className="w-full min-w-0 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
-                                onChange={(event) => handleVictimFieldChange(entry.id, 'address', event.target.value)}
-                                placeholder="Victim address"
-                                type="text"
-                                value={entry.address}
-                              />
-                            </label>
-                            <label className="grid gap-2 text-sm font-medium text-slate-700">
-                              Condition
-                              <input
-                                className="w-full min-w-0 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
-                                onChange={(event) => handleVictimFieldChange(entry.id, 'condition', event.target.value)}
-                                placeholder="Example: Stable, Critical, Minor injury"
-                                type="text"
-                                value={entry.condition}
-                              />
-                            </label>
-                          </div>
+                        <span
+                          className={`rounded-full px-2 py-1 text-[10px] font-bold uppercase ${reviewStatusClass[incident.status]}`}
+                        >
+                          {incident.status}
+                        </span>
+
+                        {incident.isNew && !viewedReportIds.includes(incident.id) ? (
+                          <span className="animate-pulse rounded-full bg-red-500 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-white shadow-sm">
+                            New
+                          </span>
+                        ) : null}
+                      </div>
+
+                      <p className="mt-3 line-clamp-2 text-xs leading-relaxed text-slate-600">
+                        {incident.description}
+                      </p>
+
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <button
+                      className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700 hover:bg-blue-100"
+                      onClick={() => handleViewIncident(incident)}
+                      type="button"
+                    >
+                      View Details
+                    </button>
+
+                    <button
+                      className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                      onClick={() => handleEditIncident(incident)}
+                      type="button"
+                    >
+                      Edit Details
+                    </button>
+                  </div>
+                    </article>
+                  ))
+                ) : (
+                  <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-5 text-center">
+                    <p className="text-sm font-semibold text-slate-700">
+                      No responder reports yet.
+                    </p>
+
+                    <p className="mt-1 text-xs text-slate-500">
+                      Once responders submit {selectedType === 'FR' ? 'fire' : 'accident'} reports, all records for this tab will appear here.
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </aside>
+      </div>
+
+      {approvalSuccess.open ? (
+        <div className="fixed inset-0 z-[1500] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm">
+          <section className="w-full max-w-md overflow-hidden rounded-[28px] border border-emerald-100 bg-white shadow-[0_28px_70px_rgba(15,23,42,0.30)]">
+            <div className="bg-gradient-to-br from-emerald-50 via-white to-blue-50 px-6 py-7 text-center">
+              <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full bg-emerald-100 text-4xl shadow-inner">
+                🎉
+              </div>
+
+              <p className="mt-5 text-xs font-black uppercase tracking-[0.22em] text-emerald-700">
+                Approval Complete
+              </p>
+
+              <h3 className="mt-2 text-2xl font-black text-slate-900">
+                {approvalSuccess.title}
+              </h3>
+
+              <p className="mt-3 text-sm leading-6 text-slate-600">
+                {approvalSuccess.message}
+              </p>
+
+              {approvalSuccess.reportTitle ? (
+                <div className="mt-4 rounded-2xl border border-emerald-100 bg-white/80 px-4 py-3 text-sm font-bold text-slate-800 shadow-sm">
+                  {approvalSuccess.reportTitle}
+                </div>
+              ) : null}
+
+              <button
+                className="mt-6 rounded-xl bg-emerald-600 px-6 py-3 text-sm font-bold text-white shadow-[0_12px_24px_rgba(5,150,105,0.25)] transition hover:bg-emerald-700 active:scale-95"
+                onClick={() =>
+                  setApprovalSuccess({
+                    open: false,
+                    title: '',
+                    message: '',
+                    reportTitle: '',
+                  })
+                }
+                type="button"
+              >
+                Continue
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {selectedIncident ? (
+        <div
+          className="fixed inset-0 z-[1300] overflow-y-auto bg-slate-900/40 p-4 backdrop-blur-sm sm:p-8"
+          onClick={() => setSelectedIncident(null)}
+        >
+          <div className="mx-auto my-6 w-full max-w-3xl sm:my-8" onClick={(event) => event.stopPropagation()}>
+            <section className="flex max-h-[88vh] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_20px_40px_rgba(15,23,42,0.22)]">
+              <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-200 px-5 py-4 sm:px-6">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-[0.15em] text-slate-500">
+                    Responder Incident Report
+                  </p>
+
+                  <h3 className="mt-1 text-xl font-black text-slate-900 sm:text-2xl">
+                    {selectedIncident.title}
+                  </h3>
+                </div>
+
+                <button
+                  className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100"
+                  onClick={() => setSelectedIncident(null)}
+                  type="button"
+                >
+                  Close
+                </button>
+              </div>
+
+              <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4 sm:px-6">
+                <p className="text-sm leading-relaxed text-slate-600 sm:text-base">
+                  {selectedIncident.description}
+                </p>
+
+                <div className="mt-4 grid gap-2 text-sm sm:grid-cols-2">
+                  <p className="text-slate-600">
+                    <span className="font-semibold text-slate-800">Location:</span> {selectedIncident.location}
+                  </p>
+
+                  <p className="text-slate-600">
+                    <span className="font-semibold text-slate-800">Time:</span> {selectedIncident.time}
+                  </p>
+
+                  <p className="text-slate-600">
+                    <span className="font-semibold text-slate-800">Severity:</span> {selectedIncident.severity}
+                  </p>
+
+                  <p className="text-slate-600">
+                    <span className="font-semibold text-slate-800">Operation Status:</span> {selectedIncident.operationalStatus}
+                  </p>
+
+                  <p className="text-slate-600">
+                    <span className="font-semibold text-slate-800">Response Team:</span>{' '}
+                    {selectedIncident.responseTeam}
+                  </p>
+
+                  <p className="text-slate-600">
+                    <span className="font-semibold text-slate-800">Type:</span>{' '}
+                    {selectedIncident.incidentTypeLabel}
+                  </p>
+
+                  <p className="text-slate-600">
+                    <span className="font-semibold text-slate-800">Status:</span>{' '}
+                    <span
+                      className={`rounded-full px-2 py-1 text-[10px] font-bold uppercase ${
+                        reviewStatusClass[selectedIncident.status]
+                      }`}
+                    >
+                      {selectedIncident.status}
+                    </span>
+                  </p>
+
+                  <p className="text-slate-600">
+                    <span className="font-semibold text-slate-800">Coordinates:</span>{' '}
+                    {selectedIncident.coordinates[0].toFixed(5)}, {selectedIncident.coordinates[1].toFixed(5)}
+                  </p>
+                </div>
+
+                {selectedIncident.victims && selectedIncident.victims.length > 0 ? (
+                  <div className="mt-5 border-t border-slate-200 pt-4">
+                    <p className="text-sm font-bold text-slate-900">Victims</p>
+
+                    <div className="mt-2 space-y-2">
+                      {selectedIncident.victims.map((victim, index) => (
+                        <div
+                          className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600"
+                          key={victim.id || index}
+                        >
+                          <p className="font-semibold text-slate-800">
+                            Victim {index + 1}: {victim.name}
+                          </p>
+                          <p>Age: {victim.age}</p>
+                          <p>Gender: {victim.gender || 'N/A'}</p>
+                          <p>Address: {victim.address}</p>
+                          <p>Condition: {victim.condition}</p>
                         </div>
                       ))}
                     </div>
                   </div>
+                ) : null}
+              </div>
 
-                  <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                    <label className="grid gap-2 text-sm font-medium text-slate-700">
-                      A/T (Action Taken)
-                      <textarea
-                        className="min-h-24 w-full min-w-0 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
-                        onChange={(event) => handleAccidentFieldChange('actionTaken', event.target.value)}
-                        placeholder="Describe the action taken for this accident response"
-                        value={accidentFormState.actionTaken}
-                      />
-                    </label>
-                  </div>
-
-                  {accidentFeedbackMessage ? <p className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900">{accidentFeedbackMessage}</p> : null}
-
+              <div className="shrink-0 border-t border-slate-200 bg-white px-5 py-4 sm:px-6">
+                <div className="flex flex-wrap gap-2">
                   <button
-                    className="mt-1 rounded-xl bg-[linear-gradient(90deg,#f59e0b_0%,#fbbf24_100%)] px-4 py-3 text-sm font-semibold text-slate-950 shadow-[0_10px_22px_rgba(245,158,11,0.28)] transition hover:brightness-105 mb-1"
-                    onClick={handleAccidentSubmit}
+                    className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                    onClick={() => handleEditIncident(selectedIncident)}
                     type="button"
                   >
-                    Submit accident report to map
+                    Edit Details
                   </button>
-                </section>
-              )}
-            </div>
-          ) : null}
-        </aside>
-      </div>
+
+                  <button
+                    className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-xs font-semibold text-amber-800 hover:bg-amber-100"
+                    onClick={() => void handleSetReviewStatus(selectedIncident, 'pending')}
+                    type="button"
+                  >
+                    Mark as Pending
+                  </button>
+
+                  <button
+                    className="rounded-lg border border-emerald-300 bg-emerald-50 px-4 py-2 text-xs font-semibold text-emerald-800 hover:bg-emerald-100"
+                    onClick={() => void handleSetReviewStatus(selectedIncident, 'approved')}
+                    type="button"
+                  >
+                    Approved Report
+                  </button>
+                </div>
+              </div>
+            </section>
+          </div>
+        </div>
+      ) : null}
+
+      {editingIncident && editForm ? (
+        <div
+          className="fixed inset-0 z-[1400] overflow-y-auto bg-slate-900/50 p-4 backdrop-blur-sm sm:p-8"
+          onClick={() => {
+            setEditingIncident(null)
+            setEditForm(null)
+          }}
+        >
+          <div className="mx-auto my-6 w-full max-w-3xl" onClick={(event) => event.stopPropagation()}>
+            <section className="rounded-2xl border border-slate-200 bg-white shadow-[0_20px_40px_rgba(15,23,42,0.22)]">
+              <div className="border-b border-slate-200 px-5 py-4 sm:px-6">
+                <p className="text-xs font-bold uppercase tracking-[0.15em] text-blue-700">
+                  Edit Incident Details
+                </p>
+                <h3 className="mt-1 text-xl font-black text-slate-900">
+                  {editingIncident.title}
+                </h3>
+                <p className="mt-1 text-xs text-slate-500">
+                  This updates the admin display and map coordinates locally. Backend update requires a separate update API.
+                </p>
+              </div>
+
+              <div className="grid gap-4 px-5 py-5 sm:grid-cols-2 sm:px-6">
+                <label className="block">
+                  <span className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">Incident Type</span>
+                  <input
+                    className="mt-2 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-blue-500"
+                    onChange={(event) => setEditForm({ ...editForm, incidentTypeLabel: event.target.value })}
+                    value={editForm.incidentTypeLabel}
+                  />
+                </label>
+
+                <label className="block">
+                  <span className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">Response Team</span>
+                  <input
+                    className="mt-2 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-blue-500"
+                    onChange={(event) => setEditForm({ ...editForm, responseTeam: event.target.value })}
+                    value={editForm.responseTeam}
+                  />
+                </label>
+
+                <label className="block sm:col-span-2">
+                  <span className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">Location</span>
+                  <input
+                    className="mt-2 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-blue-500"
+                    onChange={(event) => setEditForm({ ...editForm, location: event.target.value })}
+                    value={editForm.location}
+                  />
+                </label>
+
+                <label className="block">
+                  <span className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">Severity</span>
+                  <select
+                    className="mt-2 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-blue-500"
+                    onChange={(event) =>
+                      setEditForm({
+                        ...editForm,
+                        severity: event.target.value as EditableIncident['severity'],
+                      })
+                    }
+                    value={editForm.severity}
+                  >
+                    <option value="Low">Low</option>
+                    <option value="Moderate">Moderate</option>
+                    <option value="High">High</option>
+                    <option value="Critical">Critical</option>
+                  </select>
+                </label>
+
+                <label className="block">
+                  <span className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">Operation Status</span>
+                  <select
+                    className="mt-2 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-blue-500"
+                    onChange={(event) =>
+                      setEditForm({
+                        ...editForm,
+                        operationalStatus: event.target.value as EditableIncident['operationalStatus'],
+                      })
+                    }
+                    value={editForm.operationalStatus}
+                  >
+                    <option value="On-going">On-going</option>
+                    <option value="Resolved">Resolved</option>
+                  </select>
+                </label>
+
+                <label className="block">
+                  <span className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">Latitude</span>
+                  <input
+                    className="mt-2 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-blue-500"
+                    onChange={(event) => setEditForm({ ...editForm, latitude: event.target.value })}
+                    value={editForm.latitude}
+                  />
+                </label>
+
+                <label className="block">
+                  <span className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">Longitude</span>
+                  <input
+                    className="mt-2 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-blue-500"
+                    onChange={(event) => setEditForm({ ...editForm, longitude: event.target.value })}
+                    value={editForm.longitude}
+                  />
+                </label>
+
+                <label className="block sm:col-span-2">
+                  <span className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">Description</span>
+                  <textarea
+                    className="mt-2 min-h-32 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-blue-500"
+                    onChange={(event) => setEditForm({ ...editForm, description: event.target.value })}
+                    value={editForm.description}
+                  />
+                </label>
+              </div>
+
+              <div className="flex flex-wrap justify-end gap-2 border-t border-slate-200 px-5 py-4 sm:px-6">
+                <button
+                  className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                  onClick={() => {
+                    setEditingIncident(null)
+                    setEditForm(null)
+                  }}
+                  type="button"
+                >
+                  Cancel
+                </button>
+
+                <button
+                  className="rounded-xl bg-blue-800 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-900"
+                  onClick={handleSaveEdit}
+                  type="button"
+                >
+                  Save Details
+                </button>
+              </div>
+            </section>
+          </div>
+        </div>
+      ) : null}
     </section>
   )
 }

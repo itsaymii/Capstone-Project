@@ -1,0 +1,20 @@
+[33m39fc6f3[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mfrontend-only[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m, [m[1;32mmain[m[33m)[m HEAD@{Sat Jun 6 13:09:45 2026}: checkout: moving from main to frontend-only
+[33m39fc6f3[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mfrontend-only[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m, [m[1;32mmain[m[33m)[m HEAD@{Sat Jun 6 13:09:39 2026}: reset: moving to HEAD
+[33m39fc6f3[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mfrontend-only[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m, [m[1;32mmain[m[33m)[m HEAD@{Sat Jun 6 13:08:01 2026}: reset: moving to HEAD@{1}
+[33m39fc6f3[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mfrontend-only[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m, [m[1;32mmain[m[33m)[m HEAD@{Sat Jun 6 13:06:41 2026}: checkout: moving from frontend-only to main
+[33m39fc6f3[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mfrontend-only[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m, [m[1;32mmain[m[33m)[m HEAD@{Sat Jun 6 13:06:22 2026}: checkout: moving from main to frontend-only
+[33m39fc6f3[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mfrontend-only[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m, [m[1;32mmain[m[33m)[m HEAD@{Sat Jun 6 13:03:21 2026}: reset: moving to frontend-only
+[33m1cae2fa[m HEAD@{Sat Jun 6 13:03:16 2026}: checkout: moving from frontend-only to main
+[33m39fc6f3[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mfrontend-only[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m, [m[1;32mmain[m[33m)[m HEAD@{Sat Jun 6 13:03:05 2026}: checkout: moving from 39fc6f38a4465b0bfdc7462689f45bd95200d0f2 to frontend-only
+[33m39fc6f3[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mfrontend-only[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m, [m[1;32mmain[m[33m)[m HEAD@{Sat Jun 6 13:02:46 2026}: reset: moving to frontend-only
+[33ma7eaef2[m[33m ([m[1;31morigin/frontend-only[m[33m)[m HEAD@{Sat Jun 6 13:02:33 2026}: pull origin frontend-only --rebase (start): checkout a7eaef23d3b816090fc8a4fad98cb8066bad3665
+[33m39fc6f3[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mfrontend-only[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m, [m[1;32mmain[m[33m)[m HEAD@{Sat Jun 6 13:02:28 2026}: checkout: moving from frontend-only to frontend-only
+[33m39fc6f3[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mfrontend-only[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m, [m[1;32mmain[m[33m)[m HEAD@{Sat Jun 6 13:02:14 2026}: reset: moving to HEAD
+[33m39fc6f3[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mfrontend-only[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m, [m[1;32mmain[m[33m)[m HEAD@{Sat Jun 6 12:58:43 2026}: checkout: moving from frontend-only to frontend-only
+[33m39fc6f3[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mfrontend-only[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m, [m[1;32mmain[m[33m)[m HEAD@{Sat Jun 6 12:58:22 2026}: rebase (finish): returning to refs/heads/frontend-only
+[33m39fc6f3[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mfrontend-only[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m, [m[1;32mmain[m[33m)[m HEAD@{Sat Jun 6 12:58:15 2026}: rebase (continue): gumana na sana
+[33m0428631[m HEAD@{Sat Jun 6 12:57:36 2026}: rebase (continue): bading si juju
+[33m6634cba[m HEAD@{Sat Jun 6 12:55:06 2026}: rebase (continue): gumana na sana
+[33m1cae2fa[m HEAD@{Sat Jun 6 12:54:40 2026}: pull origin main --rebase (start): checkout 1cae2fafb144fcd4267677d97c82a25ea2e10fde
+[33mdd98bb9[m HEAD@{Sat Jun 6 12:54:02 2026}: commit: asdas
+[33mad5091f[m HEAD@{Sat Jun 6 12:51:02 2026}: checkout: moving from main to frontend-only

@@ -100,6 +100,26 @@ export interface DashboardDeleteAccountResponse {
   message: string
 }
 
+export interface CreateEvacuationCenterPayload {
+  name: string
+  latitude: number
+  longitude: number
+  address: string
+  barangay_id?: string
+}
+
+export interface EvacuationCenter {
+  id: string
+  name: string
+  latitude: number
+  longitude: number
+  address: string
+  barangay?: {
+    id: string
+    name: string
+  } | null
+}
+
 export interface SimulationProgressPayload {
   courseProgress: Record<string, number>
   completedLessonVideos: Record<string, boolean>

@@ -1,22 +1,24 @@
 import random
 from datetime import datetime, time
 
-from django.core.management.base import BaseCommand
-from django.utils import timezone
-from django.db import transaction
 from django.contrib.auth import get_user_model
+from django.core.management.base import BaseCommand, CommandError
+from django.db import transaction
+from django.db.models.functions import Length
+from django.utils import timezone
 from faker import Faker
 
 from incidents.models import (
+    AccomplishmentReport,
     IncidentReport,
     VictimDetail,
-    AccomplishmentReport,
 )
 
 try:
-    from incidents.models import Incident
-except Exception:
+    from incidents.models import Incident, HazardType
+except Exception:  # Keeps command safe if these models are not available in this branch.
     Incident = None
+    HazardType = None
 
 try:
     from locations.models import Barangay
@@ -37,7 +39,7 @@ INCIDENT_TYPES = [
 
 TEAMS = ['Alpha', 'Bravo', 'Charlie']
 
-# Official 33 barangays of Lucena City.
+# Official 33 barangays of Lucena City. These names match the frontend dropdown.
 BARANGAY_NAMES = [
     'Barangay 1',
     'Barangay 2',
@@ -74,7 +76,7 @@ BARANGAY_NAMES = [
     'Talao-Talao',
 ]
 
-LOCATION_COORDINATES = {
+BARANGAY_COORDINATES = {
     'Barangay 1': (13.9389702, 121.6124776),
     'Barangay 2': (13.939363479614258, 121.6145248413086),
     'Barangay 3': (13.9374033, 121.6122379),
@@ -177,25 +179,37 @@ def has_model_field(model, field_name):
     return any(field.name == field_name for field in model._meta.get_fields())
 
 
-def get_first_existing_field(model, field_names):
-    for field_name in field_names:
-        if has_model_field(model, field_name):
-            return field_name
-    return None
-
-
 def get_model_field_names(model):
     if model is None:
         return set()
     return {field.name for field in model._meta.get_fields()}
 
 
-def normalize_name(value):
-    return str(value or '').strip().lower().replace('brgy.', 'barangay').replace('brgy ', 'barangay ')
+def get_first_existing_field(model, candidate_fields):
+    for field_name in candidate_fields:
+        if has_model_field(model, field_name):
+            return field_name
+    return None
 
 
-def barangay_candidates(name):
-    name = str(name or '').strip()
+def build_create_kwargs(model, **kwargs):
+    allowed_fields = get_model_field_names(model)
+    return {key: value for key, value in kwargs.items() if key in allowed_fields}
+
+
+def normalize_barangay_name(value):
+    return (
+        str(value or '')
+        .replace(', Lucena City', '')
+        .replace('Brgy.', 'Barangay')
+        .replace('Brgy ', 'Barangay ')
+        .strip()
+        .lower()
+    )
+
+
+def barangay_candidates(barangay_name):
+    name = str(barangay_name or '').replace(', Lucena City', '').strip()
     if not name:
         return []
 
@@ -209,56 +223,51 @@ def barangay_candidates(name):
     unique = []
     seen = set()
     for candidate in candidates:
-        key = normalize_name(candidate)
+        key = normalize_barangay_name(candidate)
         if key not in seen:
             seen.add(key)
             unique.append(candidate)
     return unique
 
 
-def find_or_create_barangay(name):
+def find_barangay(barangay_name):
     if Barangay is None:
-        return None, False
+        return None
 
     name_field = get_first_existing_field(Barangay, ['name', 'barangay_name', 'brgy_name', 'title'])
     if not name_field:
-        return None, False
+        return None
 
-    for candidate in barangay_candidates(name):
+    candidates = barangay_candidates(barangay_name)
+
+    for candidate in candidates:
         barangay = Barangay.objects.filter(**{f'{name_field}__iexact': candidate}).first()
         if barangay:
-            return barangay, False
+            return barangay
 
-    for candidate in barangay_candidates(name):
+    normalized_target = normalize_barangay_name(barangay_name)
+    for barangay in Barangay.objects.all():
+        current_name = normalize_barangay_name(getattr(barangay, name_field, ''))
+        if current_name == normalized_target:
+            return barangay
+
+    for candidate in candidates:
         barangay = Barangay.objects.filter(**{f'{name_field}__icontains': candidate}).first()
         if barangay:
-            return barangay, False
+            return barangay
 
-    create_kwargs = {name_field: name}
-
-    # Fill optional coordinate fields if the Barangay model has them.
-    lat, lng = LOCATION_COORDINATES.get(name, (None, None))
-    if lat is not None:
-        for lat_field in ['latitude', 'lat']:
-            if has_model_field(Barangay, lat_field):
-                create_kwargs[lat_field] = lat
-                break
-    if lng is not None:
-        for lng_field in ['longitude', 'lng', 'lon']:
-            if has_model_field(Barangay, lng_field):
-                create_kwargs[lng_field] = lng
-                break
-
-    barangay = Barangay.objects.create(**create_kwargs)
-    return barangay, True
+    return None
 
 
 def get_randomized_coordinates(barangay_name):
-    base_lat, base_lng = LOCATION_COORDINATES.get(barangay_name, (13.9414, 121.6236))
+    base_lat, base_lng = BARANGAY_COORDINATES.get(barangay_name, (13.9414, 121.6236))
+
     latitude = round(base_lat + random.uniform(-0.0018, 0.0018), 6)
     longitude = round(base_lng + random.uniform(-0.0018, 0.0018), 6)
+
     latitude = min(max(latitude, 13.89), 13.98)
     longitude = min(max(longitude, 121.57), 121.69)
+
     return latitude, longitude
 
 
@@ -283,9 +292,30 @@ def get_incident_description(incident_type, location):
     return f'{random.choice(descriptions)} Location: {location}.'
 
 
-def build_create_kwargs(model, **kwargs):
-    allowed_fields = get_model_field_names(model)
-    return {key: value for key, value in kwargs.items() if key in allowed_fields}
+def get_hazard_name_for_incident_type(incident_type):
+    normalized = incident_type.lower()
+    if 'fire' in normalized:
+        return 'Fire'
+    if 'rca' in normalized or 'road' in normalized or 'accident' in normalized:
+        return 'Accident'
+    if 'medical' in normalized or 'ambulance' in normalized or 'stand-by' in normalized:
+        return 'Medical Emergency'
+    if 'crime' in normalized:
+        return 'Crime'
+    if 'drowning' in normalized:
+        return 'Drowning'
+    return 'Incident'
+
+
+def get_or_create_hazard_type(incident_type):
+    if HazardType is None:
+        return None
+    hazard_name = get_hazard_name_for_incident_type(incident_type)
+    hazard, _ = HazardType.objects.get_or_create(
+        name=hazard_name,
+        defaults={'description': f'Auto-generated hazard type for {hazard_name}.'},
+    )
+    return hazard
 
 
 def set_created_at(model, object_id, created_at):
@@ -294,7 +324,7 @@ def set_created_at(model, object_id, created_at):
 
 
 class Command(BaseCommand):
-    help = 'Generate pending incident reports connected to Barangay records.'
+    help = 'Generate pending incident reports with Barangay FK connected to the selected barangay dropdown values.'
 
     def add_arguments(self, parser):
         parser.add_argument('--count', type=int, default=50)
@@ -304,7 +334,7 @@ class Command(BaseCommand):
         parser.add_argument(
             '--also-create-incidents',
             action='store_true',
-            help='Also create records in Incident model when your project uses Incident for analytics/map barangay FK.',
+            help='Also create Incident records connected to Barangay for map/analytics if your dashboard uses Incident.',
         )
 
     def handle(self, *args, **options):
@@ -314,13 +344,28 @@ class Command(BaseCommand):
         end_year = options['end_year']
         also_create_incidents = options['also_create_incidents']
 
+        if count < 0:
+            raise CommandError('count must be 0 or higher.')
+
         if start_year > end_year:
-            self.stdout.write(self.style.ERROR('Invalid year range. start-year must be <= end-year.'))
-            return
+            raise CommandError('Invalid year range. start-year must be less than or equal to end-year.')
+
+        if start_year < 1 or end_year > 9999:
+            raise CommandError('Invalid year range. Years must be between 1 and 9999. Example: --start-year 2020 --end-year 2026')
 
         if Barangay is None:
-            self.stdout.write(self.style.ERROR('locations.models.Barangay could not be imported. Cannot connect barangays.'))
-            return
+            raise CommandError('locations.models.Barangay could not be imported. Cannot connect reports to barangays.')
+
+        report_has_barangay = has_model_field(IncidentReport, 'barangay')
+        if not report_has_barangay:
+            raise CommandError(
+                'IncidentReport has no barangay ForeignKey. Add barangay = models.ForeignKey("locations.Barangay", ...) '
+                'to IncidentReport, then run makemigrations and migrate.'
+            )
+
+        if also_create_incidents and Incident is None:
+            self.stdout.write(self.style.WARNING('Incident model could not be imported. Skipping --also-create-incidents.'))
+            also_create_incidents = False
 
         User = get_user_model()
         responders = list(User.objects.filter(is_staff=True))
@@ -334,38 +379,26 @@ class Command(BaseCommand):
             responders = [responder]
 
         if should_clear:
-            self.stdout.write(self.style.WARNING('Clearing old generated data...'))
+            self.stdout.write(self.style.WARNING('Clearing old generated report data...'))
             AccomplishmentReport.objects.all().delete()
             VictimDetail.objects.all().delete()
             IncidentReport.objects.all().delete()
             if also_create_incidents and Incident is not None:
                 Incident.objects.all().delete()
 
-        report_has_barangay = has_model_field(IncidentReport, 'barangay')
-        incident_has_barangay = has_model_field(Incident, 'barangay') if Incident is not None else False
-
-        if not report_has_barangay:
-            self.stdout.write(self.style.WARNING('IncidentReport has no barangay FK. Add/migrate barangay field to IncidentReport if reports must store barangay_id.'))
-        else:
-            self.stdout.write(self.style.SUCCESS('IncidentReport barangay FK detected.'))
-
+        self.stdout.write(self.style.SUCCESS('IncidentReport barangay FK detected.'))
         if also_create_incidents:
-            if Incident is None:
-                self.stdout.write(self.style.WARNING('Incident model could not be imported. Skipping Incident creation.'))
-            elif not incident_has_barangay:
-                self.stdout.write(self.style.WARNING('Incident has no barangay FK. Incident records will not have barangay_id.'))
-            else:
-                self.stdout.write(self.style.SUCCESS('Incident barangay FK detected. Incident records will be linked too.'))
+            self.stdout.write(self.style.SUCCESS('Incident generation enabled. Incident records will also be connected to Barangay.'))
+
+        self.stdout.write(
+            self.style.WARNING(
+                f'Generating {count} pending incident report records from {start_year} to {end_year}...'
+            )
+        )
 
         linked_reports = 0
         linked_incidents = 0
-        created_barangays = 0
-        unlinked_reports = 0
-
-        self.stdout.write(self.style.WARNING(f'Generating {count} pending records from {start_year} to {end_year}...'))
-
-        linked_count = 0
-        unlinked_count = 0
+        not_matched = []
 
         with transaction.atomic():
             for index in range(count):
@@ -373,13 +406,18 @@ class Command(BaseCommand):
                 incident_type = random.choice(INCIDENT_TYPES)
                 victim_count = random.randint(0, 4)
                 barangay_name = random.choice(BARANGAY_NAMES)
-                barangay, was_created = find_or_create_barangay(barangay_name)
-                if was_created:
-                    created_barangays += 1
+                barangay = find_barangay(barangay_name)
+
+                if barangay is None:
+                    not_matched.append(barangay_name)
+                    raise CommandError(
+                        f'Barangay "{barangay_name}" was not found in the Barangay table. '
+                        'Seed/import all 33 Lucena barangays first, then run this command again.'
+                    )
 
                 location = f'{barangay_name}, Lucena City'
                 latitude, longitude = get_randomized_coordinates(barangay_name)
-                incident_code = f'INC-{created_at.year}-{index + 1:04d}'
+                incident_code = f'INC-{created_at.year}-{index + 1:05d}'
                 occurred_time = time(hour=random.randint(0, 23), minute=random.randint(0, 59))
                 responder = random.choice(responders)
                 description = get_incident_description(incident_type, location)
@@ -393,7 +431,7 @@ class Command(BaseCommand):
                     responder_team=random.choice(TEAMS),
                     location=location,
                     address=location,
-                    barangay=barangay if report_has_barangay else None,
+                    barangay=barangay,
                     latitude=latitude,
                     longitude=longitude,
                     description=description,
@@ -405,52 +443,50 @@ class Command(BaseCommand):
 
                 report = IncidentReport.objects.create(**report_kwargs)
                 set_created_at(IncidentReport, report.id, created_at)
-
-                if report_has_barangay and barangay is not None:
-                    linked_reports += 1
-                else:
-                    unlinked_reports += 1
+                linked_reports += 1
 
                 if also_create_incidents and Incident is not None:
+                    hazard_type = get_or_create_hazard_type(incident_type)
+                    severity_level = random.choice(['low', 'moderate', 'high', 'critical'])
+                    status = random.choice(['reported', 'verified', 'ongoing', 'contained', 'resolved'])
+                    impact_level = random.choice(['minimal', 'minor', 'major', 'severe'])
+
                     incident_kwargs = build_create_kwargs(
                         Incident,
-                        incident_code=incident_code,
-                        code=incident_code,
-                        title=incident_type,
-                        name=incident_type,
-                        incident_type=incident_type,
-                        type=incident_type,
-                        status='Pending',
-                        location=location,
-                        address=location,
-                        barangay=barangay if incident_has_barangay else None,
+                        reference_code=incident_code,
+                        hazard_type=hazard_type,
                         latitude=latitude,
                         longitude=longitude,
+                        address=location,
+                        barangay=barangay,
+                        reported_by=responder,
+                        incident_datetime=created_at,
+                        severity_level=severity_level,
+                        status=status,
+                        impact_level=impact_level,
                         description=description,
-                        created_by=responder,
                     )
                     incident = Incident.objects.create(**incident_kwargs)
                     set_created_at(Incident, incident.id, created_at)
-                    if incident_has_barangay and barangay is not None:
-                        linked_incidents += 1
+                    linked_incidents += 1
 
                 for _ in range(victim_count):
+                    victim_barangay = random.choice(BARANGAY_NAMES)
                     VictimDetail.objects.create(
                         incident_report=report,
                         name=fake.name(),
                         age=str(random.randint(1, 85)),
                         gender=random.choice(['M', 'F']),
-                        address=random.choice([f'{name}, Lucena City' for name in BARANGAY_NAMES]),
+                        address=f'{victim_barangay}, Lucena City',
                         condition=random.choice(CONDITIONS),
                     )
 
         self.stdout.write(
             self.style.SUCCESS(
-                f'Successfully generated {count} pending incident reports. '
+                f'Successfully generated {count} pending incident reports from {start_year} to {end_year}. '
                 f'Report barangay linked: {linked_reports}. '
-                f'Report not linked: {unlinked_reports}. '
                 f'Incident barangay linked: {linked_incidents}. '
-                f'Barangays auto-created: {created_barangays}. '
-                f'Victim details total: {VictimDetail.objects.count()}.'
+                f'Victim details total: {VictimDetail.objects.count()}. '
+                f'All generated reports require manual admin approval.'
             )
         )

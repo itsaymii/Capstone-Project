@@ -269,7 +269,7 @@ class IncidentReport(models.Model):
     time_occurred = models.TimeField()
     incident_type = models.CharField(max_length=100)
     responder_team = models.CharField(max_length=100)
-    location = models.TextField()
+    location = models.TextField(blank=True)
     barangay = models.ForeignKey(
         'locations.Barangay',
         on_delete=models.SET_NULL,

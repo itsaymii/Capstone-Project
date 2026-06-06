@@ -108,6 +108,14 @@ def user_has_dashboard_access(user: User) -> bool:
 
 
 def user_bypasses_login_otp(user: User) -> bool:
+	# Explicitly allow superusers and staff to bypass OTP regardless of profile lookup issues.
+	try:
+		if user.is_superuser or user.is_staff:
+			return True
+	except Exception:
+		# In unusual cases where `user` is not a full User instance, fall back to DB-driven check.
+		pass
+
 	return user_has_dashboard_access(user)
 
 
