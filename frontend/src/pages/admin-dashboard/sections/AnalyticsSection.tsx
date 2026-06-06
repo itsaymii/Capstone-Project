@@ -53,10 +53,9 @@ const hazardLabels: Record<HazardType, string> = {
   AC: 'Accident',
 }
 
-const statusLabels: Record<IncidentStatus, string> = {
+const statusLabels: Record<'active' | 'pending' | 'resolved', string> = {
   active: 'Active',
   pending: 'Pending',
-  approved: 'Approved',
   resolved: 'Resolved',
 }
 
@@ -189,6 +188,193 @@ function getEarthquakeEventDate(event: EarthquakeEvent): Date {
 
 function getMonthLabel(date: Date): string {
   return date.toLocaleDateString(undefined, { month: 'short' })
+}
+
+
+type EvacuationCenterRecord = {
+  capacity?: number | string
+  totalCapacity?: number | string
+  total_capacity?: number | string
+  maxCapacity?: number | string
+  max_capacity?: number | string
+  availableCapacity?: number | string
+  available_capacity?: number | string
+  occupancy?: number | string
+  currentOccupancy?: number | string
+  current_occupancy?: number | string
+  occupied?: number | string
+  evacuees?: number | string
+}
+
+function getNumberField(record: unknown, keys: string[]): number | null {
+  const source = record as Record<string, unknown>
+
+  for (const key of keys) {
+    const raw = source?.[key]
+    const value = Number(raw)
+
+    if (Number.isFinite(value)) return value
+  }
+
+  return null
+}
+
+function getTextField(record: unknown, keys: string[]): string {
+  const source = record as Record<string, unknown>
+
+  for (const key of keys) {
+    const value = source?.[key]
+
+    if (typeof value === 'string' && value.trim()) return value.trim()
+    if (typeof value === 'number' && Number.isFinite(value)) return String(value)
+  }
+
+  return ''
+}
+
+function normalizeAnalyticsStatus(status: unknown): IncidentStatus {
+  const value = String(status || '').trim().toLowerCase()
+
+  if (value.includes('approve') || value.includes('verified')) return 'approved'
+  if (value.includes('resolve') || value.includes('complete') || value.includes('closed')) return 'resolved'
+  if (value.includes('active') || value.includes('ongoing') || value.includes('on-going')) return 'active'
+  return 'pending'
+}
+
+function getReportStatus(report: HazardIncident): IncidentStatus {
+  return normalizeAnalyticsStatus((report as any).status || (report as any).review_status || (report as any).operationalStatus)
+}
+
+function getDisplayReportStatus(report: HazardIncident): 'active' | 'pending' | 'resolved' {
+  const status = getReportStatus(report)
+
+  // UI rule for analytics: backend Approved reports are already completed/validated,
+  // so they should be counted and displayed as Resolved in the status overview.
+  if (status === 'approved') return 'resolved'
+
+  return status
+}
+
+function getReportVictimCount(report: HazardIncident): number {
+  const victims = (report as any).victims
+  const directValue = getNumberField(report, ['victimCount', 'victim_count', 'totalVictims', 'total_victims', 'casualties', 'affected_count'])
+
+  if (directValue !== null) return Math.max(0, directValue)
+  if (Array.isArray(victims)) return victims.length
+
+  return 0
+}
+
+function parseDateValue(value: unknown): Date | null {
+  if (!value) return null
+
+  const parsed = new Date(String(value))
+  if (!Number.isNaN(parsed.getTime())) return parsed
+
+  return null
+}
+
+function getReportDateTime(report: HazardIncident): Date | null {
+  const dateTime = parseDateValue(
+    getTextField(report, [
+      'createdAt',
+      'created_at',
+      'date_reported',
+      'reported_at',
+      'timeOccurred',
+      'time_occurred',
+      'incident_datetime',
+      'incidentDateTime',
+    ]),
+  )
+
+  if (dateTime) return dateTime
+
+  const dateText = getTextField(report, ['date', 'incident_date', 'dateOccurred', 'date_occurred'])
+  const timeText = getTextField(report, ['time', 'timeOccurred', 'time_occurred'])
+
+  if (dateText && timeText) {
+    const parsed = parseDateValue(`${dateText} ${timeText}`)
+    if (parsed) return parsed
+  }
+
+  return null
+}
+
+function getReportResolvedDateTime(report: HazardIncident): Date | null {
+  return parseDateValue(
+    getTextField(report, [
+      'resolvedAt',
+      'resolved_at',
+      'approvedAt',
+      'approved_at',
+      'completedAt',
+      'completed_at',
+      'arrivedAt',
+      'arrived_at',
+      'response_completed_at',
+      'updatedAt',
+      'updated_at',
+    ]),
+  )
+}
+
+function getActualResponseMinutes(report: HazardIncident): number | null {
+  const directValue = getNumberField(report, [
+    'responseTimeMinutes',
+    'response_time_minutes',
+    'responseMinutes',
+    'response_minutes',
+    'arrival_minutes',
+  ])
+
+  if (directValue !== null && directValue >= 0) return Math.round(directValue)
+
+  const startedAt = getReportDateTime(report)
+  const completedAt = getReportResolvedDateTime(report)
+
+  if (!startedAt || !completedAt) return null
+
+  const minutes = Math.round((completedAt.getTime() - startedAt.getTime()) / (1000 * 60))
+  return minutes >= 0 && minutes <= 24 * 60 ? minutes : null
+}
+
+function getEvacuationCenterCapacity(center: EvacuationCenterRecord): number {
+  return (
+    getNumberField(center, ['capacity', 'totalCapacity', 'total_capacity', 'maxCapacity', 'max_capacity']) || 0
+  )
+}
+
+function getEvacuationCenterOccupancy(center: EvacuationCenterRecord): number {
+  return (
+    getNumberField(center, ['occupancy', 'currentOccupancy', 'current_occupancy', 'occupied', 'evacuees']) || 0
+  )
+}
+
+function getEvacuationCenterAvailableCapacity(center: EvacuationCenterRecord): number {
+  const explicitAvailable = getNumberField(center, ['availableCapacity', 'available_capacity'])
+
+  if (explicitAvailable !== null) return Math.max(0, explicitAvailable)
+
+  return Math.max(0, getEvacuationCenterCapacity(center) - getEvacuationCenterOccupancy(center))
+}
+
+function calculateLinearProjection(values: number[]): number {
+  const usableValues = values.filter((value) => Number.isFinite(value))
+
+  if (usableValues.length === 0) return 0
+  if (usableValues.length === 1) return usableValues[0]
+
+  const n = usableValues.length
+  const xAverage = (n - 1) / 2
+  const yAverage = usableValues.reduce((sum, value) => sum + value, 0) / n
+
+  const numerator = usableValues.reduce((sum, value, index) => sum + (index - xAverage) * (value - yAverage), 0)
+  const denominator = usableValues.reduce((sum, _value, index) => sum + (index - xAverage) ** 2, 0)
+  const slope = denominator === 0 ? 0 : numerator / denominator
+  const intercept = yAverage - slope * xAverage
+
+  return Math.max(0, Math.round(intercept + slope * n))
 }
 
 function AnalyticsMetricCard({
@@ -582,7 +768,7 @@ function GaugeChart({
         </text>
       </svg>
       <p className="text-sm font-semibold text-slate-800">{label}</p>
-      <p className="mt-1 text-xs text-slate-500">Lower minutes means faster response performance.</p>
+      <p className="mt-1 text-xs text-slate-500">Uses actual response-time fields when available. 0 means no response timestamp yet.</p>
     </div>
   )
 }
@@ -598,7 +784,7 @@ function ResponseTimeAnalysis({
     <div className={`${glassPanelClass} p-5 sm:p-6`}>
       <SectionHeader
         badge={`${averageResponseMinutes} min avg`}
-        description="Bar chart shows incident volume by time block; gauge shows estimated average response performance."
+        description="Bar chart shows incident volume by time block; gauge uses actual response timestamps/minutes when available from the system."
         eyebrow="Response Time Analysis"
         title="Response Time Analysis"
       />
@@ -934,6 +1120,7 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
 
   const [selectedYear, setSelectedYear] = useState<string | null>(null)
   const [selectedMonth, setSelectedMonth] = useState<string | null>(null)
+  const [evacuationCenters, setEvacuationCenters] = useState<EvacuationCenterRecord[]>([])
   const [evacuationCenterCount, setEvacuationCenterCount] = useState<number | null>(null)
   const [evacuationCenterError, setEvacuationCenterError] = useState<string | null>(null)
 
@@ -1026,10 +1213,13 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
     void getEvacuationCenters()
       .then((centers) => {
         if (!active) return
-        setEvacuationCenterCount(centers.length)
+        const centerList = Array.isArray(centers) ? (centers as EvacuationCenterRecord[]) : []
+        setEvacuationCenters(centerList)
+        setEvacuationCenterCount(centerList.length)
       })
       .catch(() => {
         if (!active) return
+        setEvacuationCenters([])
         setEvacuationCenterCount(0)
         setEvacuationCenterError('Unable to load evacuation resources data.')
       })
@@ -1039,8 +1229,8 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
     }
   }, [])
 
-  const activeCount = filteredReports.filter((report) => report.status === 'active').length
-  const pendingCount = filteredReports.filter((report) => report.status === 'pending').length
+  const activeCount = filteredReports.filter((report) => getDisplayReportStatus(report) === 'active').length
+  const pendingCount = filteredReports.filter((report) => getDisplayReportStatus(report) === 'pending').length
 
   const fireCount = filteredReports.filter((report) => getAnalyticsIncidentType(report) === 'Fire').length
   const accidentCount = filteredReports.filter((report) => getAnalyticsIncidentType(report) === 'Accident').length
@@ -1070,14 +1260,22 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
       ? filteredEarthquakeEvents.reduce((sum, event) => sum + event.magnitude, 0) / filteredEarthquakeEvents.length
       : 0
 
+  const totalVictimCount = filteredReports.reduce((sum, report) => sum + getReportVictimCount(report), 0)
+  const recentIncidentCount = filteredReports.filter((report) => {
+    const date = getReportDate(report)
+    return date.getTime() >= Date.now() - 30 * 24 * 60 * 60 * 1000
+  }).length
+
   const riskScore = Math.min(
     100,
     Math.round(
-      activeRate * 0.45 +
-        percent(highPriorityCount, Math.max(totalIncidentReports, 1)) * 0.35 +
-        averageSeverity * 6 +
-        Math.min(recentEarthquake30Days * 2, 18) +
-        Math.min(significantEarthquakes * 3, 20),
+      activeRate * 0.25 +
+        percent(highPriorityCount, Math.max(totalIncidentReports, 1)) * 0.25 +
+        Math.min(totalVictimCount * 2, 20) +
+        Math.min(recentIncidentCount * 2, 20) +
+        averageSeverity * 5 +
+        Math.min(recentEarthquake30Days * 1.25, 12) +
+        Math.min(significantEarthquakes * 2.5, 15),
     ),
   )
 
@@ -1104,9 +1302,9 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
 
   const statusDistribution = useMemo(
     () =>
-      (['active', 'pending', 'approved', 'resolved'] as IncidentStatus[]).map((status) => ({
+      (['active', 'pending', 'resolved'] as const).map((status) => ({
         label: statusLabels[status],
-        value: filteredReports.filter((report) => report.status === status).length,
+        value: filteredReports.filter((report) => getDisplayReportStatus(report) === status).length,
       })),
     [filteredReports],
   )
@@ -1124,37 +1322,41 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
     const buckets = ['12AM - 6AM', '6AM - 12PM', '12PM - 6PM', '6PM - 12AM']
 
     return buckets.map((bucket) => {
-      const incidents = filteredReports.filter((report) => getPeakHourBucket(parseIncidentHour(report.time)) === bucket)
-      const estimatedMinutes =
-        bucket === '6AM - 12PM'
-          ? 14
-          : bucket === '12PM - 6PM'
-            ? 18
-            : bucket === '6PM - 12AM'
-              ? 22
-              : 26
+      const incidents = filteredReports.filter((report) => {
+        const reportDateTime = getReportDateTime(report)
+        const hour = reportDateTime ? reportDateTime.getHours() : parseIncidentHour((report as any).time || '')
+        return getPeakHourBucket(hour) === bucket
+      })
+
+      const responseMinutes = incidents
+        .map((report) => getActualResponseMinutes(report))
+        .filter((value): value is number => value !== null)
+
+      const averageBucketMinutes =
+        responseMinutes.length > 0
+          ? Math.round(responseMinutes.reduce((sum, value) => sum + value, 0) / responseMinutes.length)
+          : 0
 
       return {
         label: bucket,
         value: incidents.length,
-        helper: `${estimatedMinutes} min estimated response`,
+        helper:
+          responseMinutes.length > 0
+            ? `${averageBucketMinutes} min actual avg response`
+            : 'No response-time field yet',
       }
     })
   }, [filteredReports])
 
   const averageResponseMinutes = useMemo(() => {
-    if (totalIncidentReports === 0) return 0
+    const responseMinutes = filteredReports
+      .map((report) => getActualResponseMinutes(report))
+      .filter((value): value is number => value !== null)
 
-    const totalMinutes = filteredReports.reduce((sum, report) => {
-      const bucket = getPeakHourBucket(parseIncidentHour(report.time))
-      if (bucket === '6AM - 12PM') return sum + 14
-      if (bucket === '12PM - 6PM') return sum + 18
-      if (bucket === '6PM - 12AM') return sum + 22
-      return sum + 26
-    }, 0)
+    if (responseMinutes.length === 0) return 0
 
-    return Math.round(totalMinutes / totalIncidentReports)
-  }, [filteredReports, totalIncidentReports])
+    return Math.round(responseMinutes.reduce((sum, value) => sum + value, 0) / responseMinutes.length)
+  }, [filteredReports])
 
   const barangayRiskData = useMemo(() => {
     const map = new Map<string, RiskLocation>()
@@ -1174,12 +1376,13 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
       }
 
       const severityScore = getSeverityWeight(report.severity) * 2
-      const statusScore = report.status === 'active' ? 3 : report.status === 'pending' ? 2 : 0
+      const displayStatus = getDisplayReportStatus(report)
+      const statusScore = displayStatus === 'active' ? 3 : displayStatus === 'pending' ? 2 : 0
       const earthquakeExposureScore = getAnalyticsIncidentType(report) === 'Earthquake' ? 2 : 0
 
       current.incidents += 1
       current.score += severityScore + statusScore + earthquakeExposureScore
-      current.responseLoad += report.status === 'resolved' ? 1 : 2
+      current.responseLoad += displayStatus === 'resolved' ? 1 : 2
       current.severityPressure += severityScore
 
       if (getAnalyticsIncidentType(report) === 'Fire') current.fire += 1
@@ -1223,23 +1426,37 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
       .slice(0, 6)
   }, [filteredEarthquakeEvents, filteredReports])
 
+  const evacuationCapacity = useMemo(() => {
+    const totalCapacity = evacuationCenters.reduce((sum, center) => sum + getEvacuationCenterCapacity(center), 0)
+    const occupied = evacuationCenters.reduce((sum, center) => sum + getEvacuationCenterOccupancy(center), 0)
+    const available = evacuationCenters.reduce((sum, center) => sum + getEvacuationCenterAvailableCapacity(center), 0)
+
+    return { totalCapacity, occupied, available }
+  }, [evacuationCenters])
+
   const evacuationStats = useMemo(() => {
-    const criticalCount = filteredReports.filter((report) => report.severity === 'Critical').length
-    const highCount = filteredReports.filter((report) => report.severity === 'High').length
-    const moderateCount = filteredReports.filter((report) => report.severity === 'Moderate').length
+    const criticalVictims = filteredReports
+      .filter((report) => report.severity === 'Critical')
+      .reduce((sum, report) => sum + Math.max(1, getReportVictimCount(report)), 0)
+    const highVictims = filteredReports
+      .filter((report) => report.severity === 'High')
+      .reduce((sum, report) => sum + Math.max(1, getReportVictimCount(report)), 0)
+    const moderateVictims = filteredReports
+      .filter((report) => report.severity === 'Moderate')
+      .reduce((sum, report) => sum + Math.max(1, getReportVictimCount(report)), 0)
     const earthquakeWatch = filteredEarthquakeEvents.filter((event) => event.magnitude >= 4).length + earthquakeReportCount
 
     return [
       {
         label: 'Immediate evacuation',
-        value: criticalCount,
-        helper: 'Critical severity zones',
+        value: criticalVictims,
+        helper: 'Victims from critical severity reports',
         color: '#dc2626',
       },
       {
         label: 'Standby evacuation',
-        value: highCount,
-        helper: 'High severity watch areas',
+        value: highVictims,
+        helper: 'Victims from high severity reports',
         color: '#f97316',
       },
       {
@@ -1250,27 +1467,28 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
       },
       {
         label: 'Available support',
-        value: Math.max(1, Math.round(totalRecords * 0.25)),
-        helper: 'Estimated standby capacity',
+        value: evacuationCapacity.available,
+        helper: 'Available evacuation center capacity from resources',
         color: '#2563eb',
       },
       {
         label: 'Shelter monitoring',
-        value: moderateCount,
-        helper: 'Moderate severity monitoring',
+        value: moderateVictims,
+        helper: 'Victims from moderate severity reports',
         color: '#f59e0b',
       },
     ]
-  }, [filteredEarthquakeEvents, earthquakeReportCount, filteredReports, totalRecords])
+  }, [evacuationCapacity.available, filteredEarthquakeEvents, earthquakeReportCount, filteredReports])
 
   const evacuationResourceComparison = useMemo<ChartItem[]>(() => {
-    const available = evacuationCenterCount ?? 0
-    const totalUrgentNeed = filteredReports.filter((report) => report.severity === 'Critical' || report.severity === 'High').length
+    const urgentVictimNeed = filteredReports
+      .filter((report) => report.severity === 'Critical' || report.severity === 'High')
+      .reduce((sum, report) => sum + Math.max(1, getReportVictimCount(report)), 0)
 
     return [
       {
         label: 'Evacuation centers available',
-        value: available,
+        value: evacuationCenterCount ?? 0,
         helper:
           evacuationCenterCount === null
             ? 'Loading evacuation resources data...'
@@ -1278,25 +1496,25 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
         color: '#2563eb',
       },
       {
-        label: 'Immediate evacuation need',
-        value: filteredReports.filter((report) => report.severity === 'Critical').length,
-        helper: 'Critical evacuation alerts in analytics',
+        label: 'Total center capacity',
+        value: evacuationCapacity.totalCapacity,
+        helper: 'Sum of capacity fields from evacuation centers',
+        color: '#0f766e',
+      },
+      {
+        label: 'Available capacity',
+        value: evacuationCapacity.available,
+        helper: 'Capacity minus current occupancy when fields exist',
+        color: '#10b981',
+      },
+      {
+        label: 'Urgent evacuation need',
+        value: urgentVictimNeed,
+        helper: 'Victims from critical + high reports',
         color: '#dc2626',
       },
-      {
-        label: 'Standby evacuation need',
-        value: filteredReports.filter((report) => report.severity === 'High').length,
-        helper: 'High evacuation alerts in analytics',
-        color: '#f97316',
-      },
-      {
-        label: 'Total urgent evacuation alerts',
-        value: Math.max(1, totalUrgentNeed),
-        helper: 'Critical + High severity alerts',
-        color: '#8b5cf6',
-      },
     ]
-  }, [filteredReports, evacuationCenterCount])
+  }, [filteredReports, evacuationCenterCount, evacuationCapacity])
 
   const monthlyTrend = useMemo<TrendItem[]>(() => {
     const sourceDates = [
@@ -1434,10 +1652,7 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
       : currentMonthTotal < previousMonthTotal
         ? 'Decreasing'
         : 'Stable'
-  const projectedNextMonth = Math.max(
-    0,
-    currentMonthTotal + Math.round((currentMonthTotal - previousMonthTotal) * 0.65),
-  )
+  const projectedNextMonth = calculateLinearProjection(monthlyTrend.map((item) => item.total))
 
   const radarAxes: RadarAxis[] = [
     { label: 'Incidents', value: barangayRiskData[0]?.incidents || 0 },
@@ -1608,7 +1823,7 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
             />
             <AnalyticsMetricCard
               accentClass="border-t-violet-600"
-              helper="High and critical severity incidents."
+              helper={`${highPriorityCount} high/critical reports • ${totalVictimCount} total victims.`}
               label="High Priority"
               value={highPriorityCount}
             />
@@ -1738,7 +1953,7 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
         <div className={`${glassPanelClass} p-5 sm:p-6`}>
           <SectionHeader
             badge="Evacuation"
-            description="Estimated evacuation support categories based on severity pressure and live earthquake standby monitoring."
+            description="Evacuation categories are computed from actual victim counts, severity, earthquake standby records, and evacuation resource capacity."
             eyebrow="Evacuation Statistics"
             title="Evacuation Statistics"
           />
@@ -1758,9 +1973,11 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
           ) : null}
           {evacuationCenterCount !== null ? (
             <p className="mt-4 text-sm text-slate-500">
-              {evacuationCenterCount >= analyticsReports.filter((report) => report.severity === 'Critical' || report.severity === 'High').length
-                ? 'Evacuation resource centers are currently equal to or greater than urgent analytics alerts.'
-                : 'Evacuation needs currently exceed the number of resource centers; review resource coverage.'}
+              {evacuationCapacity.available >= filteredReports
+                .filter((report) => report.severity === 'Critical' || report.severity === 'High')
+                .reduce((sum, report) => sum + Math.max(1, getReportVictimCount(report)), 0)
+                ? 'Available evacuation capacity is currently enough for urgent victim-based alerts.'
+                : 'Urgent victim-based evacuation needs currently exceed available capacity; review resource coverage.'}
             </p>
           ) : null}
         </div>
@@ -1778,7 +1995,7 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
         <div className={`${glassPanelClass} p-5 sm:p-6`}>
           <SectionHeader
             badge="Forecasting"
-            description="Prediction cards based on report trends, disaster distribution, live earthquake activity, and active response load."
+            description="Prediction cards use the latest monthly incident history, disaster distribution, live earthquake activity, and current response load."
             eyebrow="Forecasting Analytics"
             title="Forecasting Analytics"
           />
@@ -1814,7 +2031,7 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
         <div className={`${glassPanelClass} p-5 sm:p-6`}>
           <SectionHeader
             badge="Status"
-            description="Final operational status summary for admin monitoring."
+            description="Operational status summary from actual report statuses. Approved reports are counted as Resolved."
             eyebrow="Operational Status Summary"
             title="Incident Status Overview"
           />

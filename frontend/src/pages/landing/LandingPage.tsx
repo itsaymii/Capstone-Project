@@ -6,7 +6,8 @@ import { RegisterPage } from '../auth/register/RegisterPage'
 import { NavigationBar } from '../../components/NavigationBar'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { getCurrentUserProfile, isAuthenticated } from '../../services/auth'
-import { hazardIncidents } from '../../data/adminOperations'
+import { getIncidentReports } from '../../services/incidents'
+import { hazardIncidents, type HazardIncident } from '../../data/adminOperations'
 import landingPageImage from '../../images/LandingPage.jpg'
 import earthquakeIcon from '../../images/earthquake.png'
 import alarmIcon from '../../images/alarm.png'
@@ -28,6 +29,48 @@ const mapColorByCode = {
   FR: '#ef4444',
   AC: '#f59e0b',
 } as const
+
+const landingMapIncidents: HazardIncident[] =
+  hazardIncidents.length > 0
+    ? hazardIncidents
+    : [
+        {
+          id: 'sample-eq-1',
+          title: 'Earthquake detected near Lucena Bay',
+          code: 'EQ' as const,
+          status: 'active' as const,
+          severity: 'High' as const,
+          location: 'Barangay 4',
+          time: '08:24 PM',
+          responseTeam: 'Seismic Unit',
+          description: 'Moderate tremor felt across central Lucena. Monitoring continues.',
+          coordinates: [13.9375, 121.6208] as [number, number],
+        },
+        {
+          id: 'sample-fr-1',
+          title: 'Warehouse fire reported',
+          code: 'FR' as const,
+          status: 'pending' as const,
+          severity: 'Critical' as const,
+          location: 'Candelaria Public Market',
+          time: '07:10 PM',
+          responseTeam: 'Fire Brigade Unit 2',
+          description: 'Heavy smoke visible. Fire crews en route to the scene.',
+          coordinates: [13.9448, 121.6201] as [number, number],
+        },
+        {
+          id: 'sample-ac-1',
+          title: 'Traffic accident on highway',
+          code: 'AC' as const,
+          status: 'approved' as const,
+          severity: 'Moderate' as const,
+          location: 'Maharlika Highway',
+          time: '06:48 PM',
+          responseTeam: 'Traffic Response Team',
+          description: 'Multi-vehicle collision with minor injuries reported.',
+          coordinates: [13.9521, 121.6344] as [number, number],
+        },
+      ]
 
 const hazardRiskLevels = [
   {
@@ -115,13 +158,12 @@ export function LandingPage() {
   const popupFadeTimerRef = useRef<number | null>(null)
   const popupClearTimerRef = useRef<number | null>(null)
 
-  const alertItems = [
-    'KEN LLOYD ALCOREZA: Laging nag bi-vape.',
-    'JULIUS REYESS: Mahilig mangutingting.',
-    'LOUIZZA PAJARILLON: Palaging naka Chinese Drama.',
-  ]
+  const [alertItems, setAlertItems] = useState<string[]>([
+    'Loading live alerts from the disaster network...',
+  ])
 
   const tickerItems = [...alertItems, ...alertItems]
+
   const systemStats = [
     {
       value: '33',
@@ -153,6 +195,59 @@ export function LandingPage() {
     },
   ]
   const isModalOpen = activeModal !== null
+
+  useEffect(() => {
+    let active = true
+
+    void getIncidentReports()
+      .then((reports) => {
+        if (!active) return
+
+        const alerts = reports.slice(0, 6).map((report) => {
+          const incidentType = report.incidentType || report.incident_type || 'Incident'
+          const location = report.location || 'Lucena City'
+          const rawTime =
+            report.timeOccurred || report.time_occurred || report.createdAt || report.created_at || ''
+          const when = rawTime
+            ? new Date(rawTime).toLocaleTimeString(undefined, {
+                hour: 'numeric',
+                minute: '2-digit',
+              })
+            : ''
+
+          const statusLabel = (() => {
+            const status = String(report.status || '').toLowerCase()
+            if (status.includes('pending') || status.includes('reported') || status.includes('ongoing')) {
+              return 'reported'
+            }
+            if (status.includes('approved') || status.includes('confirmed') || status.includes('contained')) {
+              return 'confirmed'
+            }
+            return 'updated'
+          })()
+
+          return `${incidentType} ${statusLabel} at ${location}${when ? ` · ${when}` : ''}`
+        })
+
+        if (alerts.length > 0) {
+          setAlertItems(alerts)
+        } else {
+          setAlertItems([
+            'No active public incident reports available right now. Check the disaster map for real-time alerts.',
+          ])
+        }
+      })
+      .catch(() => {
+        if (!active) return
+        setAlertItems([
+          'Unable to load live alerts right now. Visit the disaster map for the latest incident status.',
+        ])
+      })
+
+    return () => {
+      active = false
+    }
+  }, [])
 
   function closeModal() {
     setActiveModal(null)
@@ -209,7 +304,7 @@ export function LandingPage() {
       const targetPath = isAdmin ? '/admin-dashboard' : isStaff ? '/responder-dashboard' : '/landing'
       navigate(targetPath, {
         state: {
-          loginSuccessMessage: 'Login successful. Welcome back to Lucena City DRRMO.',
+          loginSuccessMessage: 'Login successful. Welcome to Lucena City DRRMO.',
         },
       })
       return
@@ -220,7 +315,7 @@ export function LandingPage() {
       setPendingProtectedPath(null)
       navigate(targetPath, {
         state: {
-          loginSuccessMessage: 'Login successful. Welcome back to Lucena City DRRMO.',
+          loginSuccessMessage: 'Login successful. Welcome to Lucena City DRRMO.',
         },
       })
       return
@@ -229,7 +324,7 @@ export function LandingPage() {
     showAuthPopup({
       type: 'login',
       title: 'Login Successful',
-      message: 'Login successful. Welcome back to Lucena City DRRMO.',
+      message: 'Login successful. Welcome to Lucena City DRRMO.',
       accentClass: 'from-emerald-400 via-teal-500 to-cyan-500',
       badgeClass: 'border-emerald-200 bg-emerald-50 text-emerald-700',
       icon: '✓',
@@ -316,27 +411,19 @@ export function LandingPage() {
       maxBounds: lucenaBounds,
       maxBoundsViscosity: 1,
       minZoom: 12,
-      maxZoom: 17,
+      maxZoom: 18,
     })
 
-    map.fitBounds(lucenaBounds)
+    map.fitBounds(lucenaBounds, { padding: [18, 18] })
 
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
       attribution: '&copy; OpenStreetMap &copy; CARTO',
     }).addTo(map)
 
-    L.rectangle(lucenaBounds, {
-      color: '#60a5fa',
-      weight: 2,
-      fillColor: '#1d4ed8',
-      fillOpacity: 0.05,
-      dashArray: '6 5',
-    }).addTo(map)
-
     // Plot currently tracked incidents on the home map preview.
-    const incidentBounds = L.latLngBounds(hazardIncidents.map((incident) => incident.coordinates))
+    const incidentBounds = L.latLngBounds(landingMapIncidents.map((incident) => incident.coordinates))
 
-    hazardIncidents.forEach((incident) => {
+    landingMapIncidents.forEach((incident) => {
       const markerColor = mapColorByCode[incident.code]
 
       L.circleMarker(incident.coordinates, {
@@ -347,7 +434,7 @@ export function LandingPage() {
         interactive: false,
       }).addTo(map)
 
-      if (incident.status !== 'resolved') {
+      if (incident.status === 'pending') {
         L.circleMarker(incident.coordinates, {
           radius: 11,
           color: markerColor,
@@ -542,6 +629,31 @@ export function LandingPage() {
                 </div>
 
                 <div className="relative">
+                  <div className="absolute right-6 bottom-6 z-20 hidden max-w-sm rounded-[2rem] border border-white/15 bg-slate-950/88 p-5 text-white shadow-2xl backdrop-blur-xl sm:block">
+                    <p className="text-xs font-semibold uppercase tracking-[0.22em] text-sky-300">Live Hazard Feed</p>
+                    <h3 className="mt-2 text-xl font-black text-white">Current incident preview</h3>
+                    <p className="mt-3 text-sm leading-relaxed text-slate-300">
+                      Tap a marker on the map to view incident details and response status across Lucena City.
+                    </p>
+
+                    <div className="mt-4 space-y-3">
+                      {landingMapIncidents.slice(0, 3).map((incident) => (
+                        <div key={incident.id} className="rounded-3xl border border-white/10 bg-white/5 px-4 py-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <p className="text-sm font-semibold text-white">{incident.title}</p>
+                            <span
+                              className="rounded-full px-2 py-1 text-[11px] font-semibold uppercase"
+                              style={{ backgroundColor: `${mapColorByCode[incident.code]}22`, color: mapColorByCode[incident.code] }}
+                            >
+                              {incident.code}
+                            </span>
+                          </div>
+                          <p className="mt-1 text-xs text-slate-300">{incident.location} · {incident.time}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
                   <div className="h-[420px] w-full sm:h-[560px]" ref={mapContainerRef} />
                   <div className="pointer-events-none absolute inset-y-0 left-0 w-[30%] bg-gradient-to-r from-slate-100/45 via-slate-100/20 to-transparent" />
                 </div>

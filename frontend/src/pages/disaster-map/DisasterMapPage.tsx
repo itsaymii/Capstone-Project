@@ -3,6 +3,13 @@ import * as L from 'leaflet'
 import type { LatLngBoundsExpression } from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import 'leaflet.heat'
+
+// leaflet.heat does not ship complete TypeScript typings in many Vite projects.
+// This small local type keeps the build clean while still using the plugin at runtime.
+type LeafletWithHeat = typeof L & {
+  heatLayer?: (latlngs: HeatPoint[], options?: L.LayerOptions & Record<string, unknown>) => L.Layer
+}
+
 import { AdminSidebar } from '../../components/AdminSidebar'
 import { NavigationBar } from '../../components/NavigationBar'
 import { useNavigate } from 'react-router-dom'
@@ -10,9 +17,7 @@ import { isAuthenticated } from '../../services/auth'
 import { getIncidentReports } from '../../services/incidents'
 import {
   type EarthquakeEvent,
-  type FaultLineFeatureCollection,
   type HeatPoint,
-  fetchQuezonFaultLines,
   fetchQuezonRegionEarthquakes,
   toHeatPoints,
 } from '../../services/earthquakes'
@@ -32,8 +37,6 @@ const quezonRegionBounds: LatLngBoundsExpression = [
   [14.12, 121.92],
 ]
 
-const lucenaCityCenter: [number, number] = [13.94, 121.62]
-const nearestFaultLinesLimit = 5
 
 const hazardColors = {
   EQ: '#4ade80',
@@ -73,6 +76,16 @@ const statusClassByType: Record<string, string> = {
   approved: 'border border-emerald-200 bg-emerald-50 text-emerald-800',
 }
 
+function getDisplayStatus(status: IncidentItem['status']): string {
+  if (status === 'approved' || status === 'resolved') return 'Resolved'
+  if (status === 'active') return 'Active'
+  return 'Pending'
+}
+
+function getStatusStyleKey(status: IncidentItem['status']): string {
+  return status === 'approved' ? 'resolved' : status
+}
+
 function getEarthquakeSeverity(magnitude: number): IncidentItem['severity'] {
   if (magnitude >= 5) return 'Critical'
   if (magnitude >= 4) return 'High'
@@ -96,54 +109,6 @@ function getEarthquakeDescription(event: EarthquakeEvent): string {
   return `Minor-to-light seismic activity near ${event.place}. Depth ${event.depth.toFixed(
     1,
   )} km. Monitoring remains active.`
-}
-
-function getFaultLineDistanceScore(geometry: GeoJSON.Geometry | null | undefined): number {
-  if (!geometry) return Number.POSITIVE_INFINITY
-
-  const targetPoint = L.CRS.EPSG3857.project(L.latLng(lucenaCityCenter[0], lucenaCityCenter[1]))
-  let nearestDistance = Number.POSITIVE_INFINITY
-
-  const getPointDistanceToSegment = (startCoordinate: number[], endCoordinate: number[]) => {
-    const startPoint = L.CRS.EPSG3857.project(L.latLng(startCoordinate[1], startCoordinate[0]))
-    const endPoint = L.CRS.EPSG3857.project(L.latLng(endCoordinate[1], endCoordinate[0]))
-
-    const deltaX = endPoint.x - startPoint.x
-    const deltaY = endPoint.y - startPoint.y
-    const segmentLengthSquared = deltaX ** 2 + deltaY ** 2
-
-    if (segmentLengthSquared === 0) {
-      return Math.hypot(targetPoint.x - startPoint.x, targetPoint.y - startPoint.y)
-    }
-
-    const projectionRatio = Math.max(
-      0,
-      Math.min(
-        1,
-        ((targetPoint.x - startPoint.x) * deltaX + (targetPoint.y - startPoint.y) * deltaY) /
-          segmentLengthSquared,
-      ),
-    )
-
-    const projectedPointX = startPoint.x + projectionRatio * deltaX
-    const projectedPointY = startPoint.y + projectionRatio * deltaY
-
-    return Math.hypot(targetPoint.x - projectedPointX, targetPoint.y - projectedPointY)
-  }
-
-  const inspectLine = (coordinates: number[][]) => {
-    for (let index = 0; index < coordinates.length - 1; index += 1) {
-      nearestDistance = Math.min(
-        nearestDistance,
-        getPointDistanceToSegment(coordinates[index], coordinates[index + 1]),
-      )
-    }
-  }
-
-  if (geometry.type === 'LineString') inspectLine(geometry.coordinates)
-  if (geometry.type === 'MultiLineString') geometry.coordinates.forEach((segment) => inspectLine(segment))
-
-  return nearestDistance
 }
 
 function getLucenaFallbackCoordinates(location: string): [number, number] {
@@ -188,7 +153,15 @@ function mapIncidentReportToMapIncident(report: any): IncidentItem {
   const victimCount = Number(report.victimCount || report.victim_count || 0)
 
   const rawStatus = String(report.status || '').toLowerCase()
-  const status: IncidentItem['status'] = rawStatus === 'approved' ? 'approved' : 'pending'
+  let status: IncidentItem['status']
+
+  if (rawStatus === 'approved' || rawStatus === 'approve' || rawStatus === 'approved report' || rawStatus === 'resolved') {
+    status = 'resolved'
+  } else if (rawStatus === 'active' || rawStatus === 'ongoing' || rawStatus === 'on-going') {
+    status = 'active'
+  } else {
+    status = 'pending'
+  }
 
   return {
     id: report.id,
@@ -215,6 +188,28 @@ function mapIncidentReportToMapIncident(report: any): IncidentItem {
   }
 }
 
+function createHeatCloudPoints(points: HeatPoint[]): HeatPoint[] {
+  // Creates a smooth heat "cloud" without hiding barangay borders, labels, or markers.
+  // Keep the offsets small because Lucena is a compact map area.
+  const cloudOffsets: Array<[number, number, number]> = [
+    [0, 0, 1],
+    [0.0022, 0.0018, 0.72],
+    [-0.0022, -0.0018, 0.72],
+    [0.0035, -0.0025, 0.55],
+    [-0.0035, 0.0025, 0.55],
+    [0.005, 0.0035, 0.36],
+    [-0.005, -0.0035, 0.36],
+  ]
+
+  return points.flatMap(([lat, lng, intensity]) =>
+    cloudOffsets.map(([latOffset, lngOffset, multiplier]) => [
+      lat + latOffset,
+      lng + lngOffset,
+      Math.min(1, Math.max(0.08, intensity * multiplier)),
+    ] as HeatPoint),
+  )
+}
+
 export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | 'admin' }) {
   const navigate = useNavigate()
   const isAdminVariant = variant === 'admin'
@@ -225,12 +220,11 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
   const [selectedType, setSelectedType] = useState<IncidentTypeFilter>('FR')
   const [backendIncidents, setBackendIncidents] = useState<IncidentItem[]>([])
   const [earthquakeEvents, setEarthquakeEvents] = useState<EarthquakeEvent[]>([])
-  const [faultLines, setFaultLines] = useState<FaultLineFeatureCollection | null>(null)
   const [barangayLayer, setBarangayLayer] = useState<GeoJSON.FeatureCollection<GeoJSON.Geometry, Record<string, unknown>> | null>(null)
   const [eqHeatPoints, setEqHeatPoints] = useState<HeatPoint[]>([])
   const [eqFetchStatus, setEqFetchStatus] = useState<'idle' | 'loading' | 'error'>('idle')
   const [showHeatmap, setShowHeatmap] = useState(true)
-  const [showFaultLines, setShowFaultLines] = useState(true)
+  const [incidentLayerMode, setIncidentLayerMode] = useState<'markers' | 'heatmap'>('heatmap')
   const [eqLastRefreshed, setEqLastRefreshed] = useState<Date | null>(null)
   const [eqSearchQuery, setEqSearchQuery] = useState('')
 
@@ -243,6 +237,27 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
     () => allMappedIncidents.filter((incident) => incident.code === selectedType),
     [allMappedIncidents, selectedType],
   )
+
+  const incidentHeatPoints = useMemo(() => {
+    const severityToIntensity = (severity: IncidentItem['severity']): number => {
+      switch (severity) {
+        case 'Critical':
+          return 0.95
+        case 'High':
+          return 0.75
+        case 'Moderate':
+          return 0.55
+        default:
+          return 0.3
+      }
+    }
+
+    return filteredIncidents.map((incident) => [
+      incident.coordinates[0],
+      incident.coordinates[1],
+      severityToIntensity(incident.severity),
+    ]) as HeatPoint[]
+  }, [filteredIncidents])
 
   const earthquakeIncidentCards = useMemo(
     () =>
@@ -276,38 +291,35 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
     )
   }, [earthquakeIncidentCards, eqSearchQuery])
 
-  const nearestFaultLineFeatures = useMemo(() => {
-    if (!faultLines || !faultLines.features) return []
 
-    return faultLines.features
-      .map((feature, index) => ({ feature, index, distanceScore: getFaultLineDistanceScore(feature.geometry) }))
-      .filter((item) => Number.isFinite(item.distanceScore))
-      .sort((left, right) => left.distanceScore - right.distanceScore)
-      .slice(0, nearestFaultLinesLimit)
-  }, [faultLines])
+  const earthquakeStats = useMemo(() => {
+    const total = earthquakeEvents.length
+    const significant = earthquakeEvents.filter((event) => event.magnitude >= 4).length
+    const strongest = earthquakeEvents.reduce((max, event) => Math.max(max, event.magnitude), 0)
+    const averageMagnitude =
+      total > 0 ? earthquakeEvents.reduce((sum, event) => sum + event.magnitude, 0) / total : 0
+    const recent30Days = earthquakeEvents.filter(
+      (event) => event.rawTimestamp >= Date.now() - 30 * 24 * 60 * 60 * 1000,
+    ).length
 
-  const nearestFaultLineIndexes = useMemo(
-    () => new Set(nearestFaultLineFeatures.map((item) => item.index)),
-    [nearestFaultLineFeatures],
+    return {
+      total,
+      significant,
+      strongest: strongest.toFixed(1),
+      averageMagnitude: averageMagnitude.toFixed(1),
+      recent30Days,
+    }
+  }, [earthquakeEvents])
+
+  const incidentTypeCounts = useMemo(
+    () => ({
+      EQ: allMappedIncidents.filter((incident) => incident.code === 'EQ').length,
+      FR: allMappedIncidents.filter((incident) => incident.code === 'FR').length,
+      AC: allMappedIncidents.filter((incident) => incident.code === 'AC').length,
+    }),
+    [allMappedIncidents],
   )
 
-  const nonHighlightedFaultLineCollection = useMemo(() => {
-    if (!faultLines || !faultLines.features) return null
-
-    return {
-      ...faultLines,
-      features: faultLines.features.filter((_, index) => !nearestFaultLineIndexes.has(index)),
-    }
-  }, [faultLines, nearestFaultLineIndexes])
-
-  const highlightedFaultLineCollection = useMemo(() => {
-    if (!faultLines) return null
-
-    return {
-      ...faultLines,
-      features: nearestFaultLineFeatures.map((item) => item.feature),
-    }
-  }, [faultLines, nearestFaultLineFeatures])
 
   function handleIncidentClick(incident: IncidentItem) {
     if (!isAdminVariant && !isAuthenticated()) {
@@ -339,11 +351,11 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
     if (!id) return
 
     setBackendIncidents((items) =>
-      items.map((item) => (item.id === id ? { ...item, status: 'approved' } : item)),
+      items.map((item) => (item.id === id ? { ...item, status: 'resolved' } : item)),
     )
 
     if (selectedIncident?.id === id) {
-      setSelectedIncident({ ...selectedIncident, status: 'approved' })
+      setSelectedIncident({ ...selectedIncident, status: 'resolved' })
     }
   }
 
@@ -391,25 +403,6 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
     }
   }, [selectedType, earthquakeEvents.length, eqFetchStatus, loadEarthquakes])
 
-  useEffect(() => {
-    if (selectedType !== 'EQ' || faultLines) return
-
-    let isCancelled = false
-
-    void fetchQuezonFaultLines()
-      .then((data) => {
-        if (!isCancelled) {
-          setFaultLines(data)
-        }
-      })
-      .catch(() => {
-        console.error('Failed to load fault lines')
-      })
-
-    return () => {
-      isCancelled = true
-    }
-  }, [selectedType, faultLines])
 
   useEffect(() => {
     void fetch('/lucena_barangays.geojson')
@@ -461,14 +454,29 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
         map.fitBounds(lucenaBounds, { padding: [18, 18] })
       }
 
-      L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}{r}.png', {
         attribution: '&copy; OpenStreetMap &copy; CARTO',
       }).addTo(map)
 
+      const heatmapPane = map.getPane('heatmap-pane') ?? map.createPane('heatmap-pane')
+      heatmapPane.style.zIndex = '350'
+      heatmapPane.style.pointerEvents = 'none'
+
+      const barangayPane = map.getPane('barangay-pane') ?? map.createPane('barangay-pane')
+      barangayPane.style.zIndex = '590'
+      barangayPane.style.pointerEvents = 'auto'
+
+      const incidentMarkerPane = map.getPane('incident-marker-pane') ?? map.createPane('incident-marker-pane')
+      incidentMarkerPane.style.zIndex = '670'
+      incidentMarkerPane.style.pointerEvents = 'auto'
+
+      const labelsPane = map.getPane('map-labels-pane') ?? map.createPane('map-labels-pane')
+      labelsPane.style.zIndex = '650'
+      labelsPane.style.pointerEvents = 'none'
+
+      const heatLayerFactory = (L as LeafletWithHeat).heatLayer
+
       if (barangayLayer) {
-        const barangayPane = map.getPane('barangay-pane') ?? map.createPane('barangay-pane')
-        barangayPane.style.zIndex = '330'
-        barangayPane.style.pointerEvents = 'auto'
 
         const barangayBorderColors = [
           '#2563eb',
@@ -548,46 +556,21 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
       }
 
       if (isEqView) {
-        if (showHeatmap && eqHeatPoints.length > 0 && typeof L.heatLayer === 'function') {
-          L.heatLayer(eqHeatPoints, {
-            minOpacity: 0.35,
-            radius: 28,
-            blur: 22,
+        if (showHeatmap && eqHeatPoints.length > 0 && typeof heatLayerFactory === 'function') {
+          heatLayerFactory(createHeatCloudPoints(eqHeatPoints), {
+            pane: 'heatmap-pane',
+            minOpacity: 0.22,
+            radius: 42,
+            blur: 32,
             max: 1.0,
+            maxZoom: 16,
             gradient: {
-              0.14: '#38bdf8',
-              0.4: '#22c55e',
-              0.6: '#facc15',
-              0.8: '#f97316',
+              0.12: '#2563eb',
+              0.32: '#22d3ee',
+              0.5: '#22c55e',
+              0.68: '#facc15',
+              0.84: '#f97316',
               1.0: '#dc2626',
-            },
-          }).addTo(map)
-        }
-
-        if (showFaultLines && nonHighlightedFaultLineCollection) {
-          const faultPane = map.createPane('fault-lines-pane')
-          faultPane.style.zIndex = '420'
-
-          L.geoJSON(nonHighlightedFaultLineCollection, {
-            pane: 'fault-lines-pane',
-            style: {
-              color: '#ef4444',
-              weight: 2.5,
-              opacity: 0.78,
-            },
-          }).addTo(map)
-        }
-
-        if (showFaultLines && highlightedFaultLineCollection) {
-          const highlightPane = map.createPane('fault-highlights-pane')
-          highlightPane.style.zIndex = '430'
-
-          L.geoJSON(highlightedFaultLineCollection, {
-            pane: 'fault-highlights-pane',
-            style: {
-              color: '#f59e0b',
-              weight: 5,
-              opacity: 0.98,
             },
           }).addTo(map)
         }
@@ -597,6 +580,7 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
             .filter((event) => event.magnitude >= 3.5)
             .forEach((event) => {
               L.circleMarker([event.lat, event.lng], {
+                pane: 'incident-marker-pane',
                 radius: Math.max(4, (event.magnitude - 1) * 3),
                 color: '#ffffff',
                 weight: 1,
@@ -610,28 +594,50 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
             })
         }
       } else {
+        if (incidentLayerMode === 'heatmap' && typeof heatLayerFactory === 'function' && incidentHeatPoints.length > 0) {
+          heatLayerFactory(createHeatCloudPoints(incidentHeatPoints), {
+            pane: 'heatmap-pane',
+            minOpacity: 0.22,
+            radius: 46,
+            blur: 34,
+            max: 1.0,
+            maxZoom: 17,
+            gradient: {
+              0.12: '#2563eb',
+              0.32: '#22d3ee',
+              0.5: '#22c55e',
+              0.68: '#facc15',
+              0.84: '#f97316',
+              1.0: '#dc2626',
+            },
+          }).addTo(map)
+        }
+
         filteredIncidents.forEach((incident) => {
           L.circleMarker(incident.coordinates, {
+            pane: 'incident-marker-pane',
             radius: 16,
             stroke: false,
             fillColor: incident.color,
-            fillOpacity: 0.24,
+            fillOpacity: incidentLayerMode === 'heatmap' ? 0.16 : 0.24,
             interactive: false,
           }).addTo(map)
 
           if (incident.status === 'pending') {
             L.circleMarker(incident.coordinates, {
+              pane: 'incident-marker-pane',
               radius: 11,
               color: incident.color,
               weight: 2,
               fillColor: incident.color,
-              fillOpacity: 0.18,
+              fillOpacity: incidentLayerMode === 'heatmap' ? 0.12 : 0.18,
               interactive: false,
               className: 'hazard-marker-pulse',
             }).addTo(map)
           }
 
           L.circleMarker(incident.coordinates, {
+            pane: 'incident-marker-pane',
             radius: 8,
             color: '#ffffff',
             weight: 1.8,
@@ -641,14 +647,19 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
             .addTo(map)
             .bindPopup(
               `<strong>${incident.title}</strong><br/>
-              <small>${incident.location}</small><br/>
-              <small>${incident.time}</small><br/>
-              <small>${incident.severity}</small><br/>
-              <small>Status: ${incident.status}</small>`,
+            <small>${incident.location}</small><br/>
+            <small>${incident.time}</small><br/>
+            <small>${incident.severity}</small><br/>
+            <small>Status: ${getDisplayStatus(incident.status)}</small>`,
             )
             .on('click', () => handleIncidentClick(incident))
         })
       }
+
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}{r}.png', {
+        pane: 'map-labels-pane',
+        attribution: '&copy; CARTO',
+      }).addTo(map)
 
       window.setTimeout(() => map.invalidateSize(), 0)
 
@@ -663,13 +674,12 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
     }
   }, [
     filteredIncidents,
+    incidentHeatPoints,
+    incidentLayerMode,
     selectedType,
     eqHeatPoints,
     earthquakeEvents,
     showHeatmap,
-    showFaultLines,
-    nonHighlightedFaultLineCollection,
-    highlightedFaultLineCollection,
     barangayLayer,
   ])
 
@@ -747,28 +757,74 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
                 Incident Type Mapping
               </p>
 
-              {(Object.keys(incidentTypeMeta) as IncidentTypeFilter[]).map((typeCode) => (
-                <button
-                  className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
-                    selectedType === typeCode
-                      ? 'border-slate-300 text-slate-900'
-                      : 'border-slate-300 bg-white text-slate-700 hover:border-slate-400'
-                  }`}
-                  key={typeCode}
-                  onClick={() => setSelectedType(typeCode)}
-                  style={{
-                    backgroundColor: selectedType === typeCode ? incidentTypeMeta[typeCode].color : undefined,
-                    borderColor: selectedType === typeCode ? incidentTypeMeta[typeCode].color : undefined,
-                  }}
-                  type="button"
-                >
-                  {incidentTypeMeta[typeCode].label}
-                </button>
-              ))}
+              {(Object.keys(incidentTypeMeta) as IncidentTypeFilter[]).map((typeCode) => {
+                const isActive = selectedType === typeCode
+                return (
+                  <button
+                    className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 ${
+                      isActive
+                        ? 'border-transparent text-white shadow-[0_10px_20px_rgba(15,23,42,0.12)]'
+                        : 'border-slate-300 bg-white text-slate-700 hover:border-slate-400 hover:bg-slate-50'
+                    }`}
+                    key={typeCode}
+                    onClick={() => setSelectedType(typeCode)}
+                    style={
+                      isActive
+                        ? {
+                            backgroundColor: incidentTypeMeta[typeCode].color,
+                            boxShadow: `0 12px 24px ${incidentTypeMeta[typeCode].color}30`,
+                          }
+                        : undefined
+                    }
+                    type="button"
+                  >
+                    <span
+                      className="inline-flex h-2.5 w-2.5 rounded-full"
+                      style={{ backgroundColor: incidentTypeMeta[typeCode].color }}
+                    />
+                    <span>{incidentTypeMeta[typeCode].label}</span>
+                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-700">
+                      {incidentTypeCounts[typeCode]}
+                    </span>
+                  </button>
+                )
+              })}
 
               <span className="ml-auto rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700">
                 {backendIncidents.length} responder reports loaded
               </span>
+            </div>
+
+            <div
+              className={`mx-auto mt-3 flex w-full max-w-7xl flex-wrap items-center gap-3 rounded-2xl border border-slate-200/80 bg-white/90 px-3 py-3 text-sm shadow-sm ${
+                isAdminVariant ? 'border-slate-600/80 bg-slate-950/90 text-slate-200' : ''
+              }`}
+            >
+              <span className="text-[10px] font-black uppercase tracking-[0.26em] text-slate-500">
+                Layers
+              </span>
+
+              <button
+                className={`rounded-full border px-4 py-2 text-xs font-semibold transition ${
+                  (selectedType === 'EQ' ? showHeatmap : incidentLayerMode === 'heatmap')
+                    ? 'border-emerald-500 bg-emerald-500 text-white shadow-sm'
+                    : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
+                }`}
+                onClick={() => {
+                  if (selectedType === 'EQ') {
+                    setShowHeatmap((value) => !value)
+                  } else {
+                    setIncidentLayerMode((current) => (current === 'heatmap' ? 'markers' : 'heatmap'))
+                  }
+                }}
+                type="button"
+              >
+                Heatmap
+              </button>
+
+              <p className="ml-auto text-xs text-slate-500">
+                Toggle the incident overlay for current map type.
+              </p>
             </div>
           </section>
 
@@ -812,23 +868,33 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
                       >
                         {showHeatmap ? 'Heatmap ON' : 'Heatmap OFF'}
                       </button>
-
-                      <button
-                        className={`rounded-full border px-3 py-1.5 text-[11px] font-semibold transition ${
-                          showFaultLines
-                            ? 'border-rose-300 bg-rose-50 text-rose-700'
-                            : 'border-slate-300 bg-white text-slate-600 hover:bg-slate-50'
-                        }`}
-                        onClick={() => setShowFaultLines((value) => !value)}
-                        type="button"
-                      >
-                        {showFaultLines ? 'Fault Lines ON' : 'Fault Lines OFF'}
-                      </button>
                     </div>
                   ) : null}
                 </div>
 
                 <div className="relative overflow-hidden rounded-b-3xl">
+                  <div className="pointer-events-none absolute right-4 top-4 z-20 hidden max-w-xs rounded-3xl border border-slate-200/80 bg-white/90 p-4 text-sm text-slate-700 shadow-xl backdrop-blur-md sm:block dark:border-slate-700 dark:bg-slate-950/80 dark:text-slate-100">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500 dark:text-slate-400">
+                      Map legend
+                    </p>
+                    <div className="mt-3 space-y-2">
+                      {Object.entries(incidentTypeMeta).map(([code, meta]) => (
+                        <div key={code} className="flex items-center gap-3">
+                          <span
+                            className="inline-flex h-3.5 w-3.5 rounded-full"
+                            style={{ backgroundColor: meta.color }}
+                          />
+                          <span>{meta.label}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="mt-3 rounded-2xl bg-slate-100/90 p-3 text-xs text-slate-500 dark:bg-slate-900/85 dark:text-slate-300">
+                      {selectedType === 'EQ'
+                        ? 'Earthquake view with live seismic density and monitored seismic events.'
+                        : 'Click a marker to preview incident details and open the responder report.'}
+                    </div>
+                  </div>
+
                   <div className="h-[520px] w-full sm:h-[640px]" ref={mapContainerRef} />
                 </div>
               </div>
@@ -841,40 +907,90 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
                 }`}
               >
                 {selectedType === 'EQ' ? (
-                  <div className="flex h-full min-h-0 flex-col">
-                    <div className={`pb-3 ${isAdminVariant ? 'border-b border-slate-700' : 'border-b border-slate-200'}`}>
-                      <div className="flex items-center justify-between">
-                        <h2 className={`text-xl font-bold ${isAdminVariant ? 'text-white' : 'text-slate-900'}`}>
-                          Seismic Events
-                        </h2>
-                        <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-800">
-                          {eqFetchStatus === 'loading' ? '…' : earthquakeEvents.length}
+                  <div className="flex h-full min-h-0 flex-col overflow-hidden">
+                    <div
+                      className={`relative overflow-hidden rounded-[26px] border p-5 ${
+                        isAdminVariant
+                          ? 'border-emerald-400/20 bg-[radial-gradient(circle_at_top_left,rgba(16,185,129,0.22)_0%,rgba(30,41,59,0.96)_48%,rgba(15,23,42,0.98)_100%)]'
+                          : 'border-emerald-100 bg-[radial-gradient(circle_at_top_left,#dcfce7_0%,#f0fdf4_42%,#ffffff_100%)]'
+                      }`}
+                    >
+                      <div className="pointer-events-none absolute -right-10 -top-10 h-32 w-32 rounded-full bg-emerald-400/20 blur-3xl" />
+                      <div className="relative z-10 flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-[11px] font-black uppercase tracking-[0.2em] text-emerald-500">
+                            Earthquake Monitoring
+                          </p>
+                          <h2 className={`mt-2 text-2xl font-black ${isAdminVariant ? 'text-white' : 'text-slate-950'}`}>
+                            Seismic Events
+                          </h2>
+                          <p className={`mt-1 text-xs leading-relaxed ${isAdminVariant ? 'text-slate-300' : 'text-slate-600'}`}>
+                            Live earthquake feed for Quezon Province with magnitude, depth, place, and event time.
+                          </p>
+                        </div>
+
+                        <span className="shrink-0 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-black text-emerald-700 shadow-sm">
+                          {eqFetchStatus === 'loading' ? '...' : earthquakeStats.total}
                         </span>
                       </div>
 
-                      <p className="mt-1 text-xs text-slate-500">
-                        USGS / PHIVOLCS · Quezon Province
-                        {eqLastRefreshed
-                          ? ` · Updated ${eqLastRefreshed.toLocaleTimeString('en-PH', {
-                              hour: '2-digit',
-                              minute: '2-digit',
-                              second: '2-digit',
-                            })}`
-                          : ''}
-                      </p>
+                      <div className="relative z-10 mt-5 grid grid-cols-3 gap-2">
+                        <div className={`rounded-2xl border p-3 ${isAdminVariant ? 'border-white/10 bg-white/8' : 'border-white/70 bg-white/80'}`}>
+                          <p className={`text-[10px] font-bold uppercase tracking-[0.12em] ${isAdminVariant ? 'text-slate-400' : 'text-slate-500'}`}>
+                            Strongest
+                          </p>
+                          <p className={`mt-1 text-xl font-black ${isAdminVariant ? 'text-white' : 'text-slate-900'}`}>
+                            M{earthquakeStats.strongest}
+                          </p>
+                        </div>
+                        <div className={`rounded-2xl border p-3 ${isAdminVariant ? 'border-white/10 bg-white/8' : 'border-white/70 bg-white/80'}`}>
+                          <p className={`text-[10px] font-bold uppercase tracking-[0.12em] ${isAdminVariant ? 'text-slate-400' : 'text-slate-500'}`}>
+                            Average
+                          </p>
+                          <p className={`mt-1 text-xl font-black ${isAdminVariant ? 'text-white' : 'text-slate-900'}`}>
+                            M{earthquakeStats.averageMagnitude}
+                          </p>
+                        </div>
+                        <div className={`rounded-2xl border p-3 ${isAdminVariant ? 'border-white/10 bg-white/8' : 'border-white/70 bg-white/80'}`}>
+                          <p className={`text-[10px] font-bold uppercase tracking-[0.12em] ${isAdminVariant ? 'text-slate-400' : 'text-slate-500'}`}>
+                            M4+
+                          </p>
+                          <p className={`mt-1 text-xl font-black ${isAdminVariant ? 'text-white' : 'text-slate-900'}`}>
+                            {earthquakeStats.significant}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="relative z-10 mt-4 flex flex-wrap items-center justify-between gap-2 text-xs">
+                        <span className={`rounded-full px-3 py-1 font-semibold ${isAdminVariant ? 'bg-white/10 text-slate-300' : 'bg-white/80 text-slate-600'}`}>
+                          Recent 30 days: {earthquakeStats.recent30Days}
+                        </span>
+                        <span className={`rounded-full px-3 py-1 font-semibold ${isAdminVariant ? 'bg-white/10 text-slate-300' : 'bg-white/80 text-slate-600'}`}>
+                          {eqLastRefreshed
+                            ? `Updated ${eqLastRefreshed.toLocaleTimeString('en-PH', {
+                                hour: '2-digit',
+                                minute: '2-digit',
+                              })}`
+                            : 'Waiting for update'}
+                        </span>
+                      </div>
                     </div>
 
-                    <div className="min-h-0 flex-1 pb-3">
+                    <div className="mt-4 min-h-0 flex-1">
                       {eqFetchStatus === 'loading' ? (
-                        <div className="mt-6 flex flex-col items-center gap-3 py-6 text-center">
-                          <div className="h-8 w-8 animate-spin rounded-full border-4 border-emerald-400 border-t-transparent" />
-                          <p className="text-sm text-slate-500">Fetching seismic data...</p>
+                        <div className={`flex min-h-[320px] flex-col items-center justify-center rounded-[24px] border text-center ${isAdminVariant ? 'border-slate-700 bg-slate-900/40' : 'border-slate-200 bg-slate-50'}`}>
+                          <div className="h-10 w-10 animate-spin rounded-full border-4 border-emerald-400 border-t-transparent" />
+                          <p className={`mt-4 text-sm font-semibold ${isAdminVariant ? 'text-slate-200' : 'text-slate-700'}`}>
+                            Fetching seismic data...
+                          </p>
+                          <p className="mt-1 text-xs text-slate-500">Please wait while the live feed loads.</p>
                         </div>
                       ) : eqFetchStatus === 'error' ? (
-                        <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 p-4 text-center">
-                          <p className="text-sm font-semibold text-red-800">Failed to load seismic data</p>
+                        <div className="rounded-[24px] border border-red-200 bg-red-50 p-5 text-center">
+                          <p className="text-sm font-bold text-red-800">Failed to load seismic data</p>
+                          <p className="mt-1 text-xs text-red-600">Check the earthquake service or try again.</p>
                           <button
-                            className="mt-3 rounded-lg border border-red-300 bg-white px-3 py-1.5 text-xs font-semibold text-red-800 hover:bg-red-50"
+                            className="mt-4 rounded-xl border border-red-300 bg-white px-4 py-2 text-xs font-bold text-red-800 transition hover:bg-red-50"
                             onClick={() => void loadEarthquakes()}
                             type="button"
                           >
@@ -882,47 +998,92 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
                           </button>
                         </div>
                       ) : (
-                        <>
-                          <div className="mt-3">
+                        <div className="flex h-full min-h-0 flex-col">
+                          <div className="relative">
                             <input
-                              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none"
+                              className={`w-full rounded-2xl border px-4 py-3 pl-10 text-sm font-medium outline-none transition ${
+                                isAdminVariant
+                                  ? 'border-slate-700 bg-slate-950/70 text-white placeholder:text-slate-500 focus:border-emerald-400'
+                                  : 'border-slate-200 bg-white text-slate-800 placeholder:text-slate-400 focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100'
+                              }`}
                               onChange={(event) => setEqSearchQuery(event.target.value)}
-                              placeholder="Search place"
+                              placeholder="Search earthquake place or description"
                               type="text"
                               value={eqSearchQuery}
                             />
+                            <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-sm text-slate-400">
+                              ⌕
+                            </span>
                           </div>
 
-                          <div className="mt-3 max-h-[500px] space-y-2 overflow-y-auto pr-1">
-                            {filteredEarthquakeIncidentCards.map((incident) => (
-                              <article
-                                className={`rounded-xl p-3 ${
-                              isAdminVariant
-                                ? 'border border-slate-700 bg-[#1d2230]'
-                                : 'border border-slate-200 bg-[#fbfdff]'
-                            }`}
-                                key={`${incident.title}-${incident.time}`}
-                              >
-                                <div className="flex items-start justify-between gap-2">
-                                  <div>
-                                    <p className={`text-sm font-semibold ${isAdminVariant ? 'text-white' : 'text-slate-900'}`}>
-                                      {incident.title}
-                                    </p>
-                                    <p className="mt-1 text-xs text-slate-500">{incident.time}</p>
-                                    <p className="mt-1 text-xs text-slate-500">{incident.location}</p>
-                                  </div>
-                                  <button
-                                    className="rounded-md border border-[#234d77]/30 bg-white px-2.5 py-1.5 text-xs font-semibold text-[#234d77]"
-                                    onClick={() => handleIncidentClick(incident)}
-                                    type="button"
+                          <div className="mt-4 min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
+                            {filteredEarthquakeIncidentCards.length > 0 ? (
+                              filteredEarthquakeIncidentCards.map((incident) => {
+                                const magnitudeTone =
+                                  (incident.magnitude ?? 0) >= 5
+                                    ? 'border-red-200 bg-red-50 text-red-700'
+                                    : (incident.magnitude ?? 0) >= 4
+                                      ? 'border-orange-200 bg-orange-50 text-orange-700'
+                                      : (incident.magnitude ?? 0) >= 3
+                                        ? 'border-amber-200 bg-amber-50 text-amber-700'
+                                        : 'border-emerald-200 bg-emerald-50 text-emerald-700'
+
+                                return (
+                                  <article
+                                    className={`group rounded-[22px] border p-4 transition duration-200 hover:-translate-y-0.5 ${
+                                      isAdminVariant
+                                        ? 'border-slate-700 bg-[#1d2230] hover:border-emerald-400/50 hover:bg-[#222a3b]'
+                                        : 'border-slate-200 bg-white hover:border-emerald-200 hover:shadow-[0_14px_28px_rgba(15,23,42,0.08)]'
+                                    }`}
+                                    key={`${incident.title}-${incident.time}`}
                                   >
-                                    View Info
-                                  </button>
-                                </div>
-                              </article>
-                            ))}
+                                    <div className="flex items-start justify-between gap-3">
+                                      <div className="min-w-0">
+                                        <div className="flex items-center gap-2">
+                                          <span className="inline-flex rounded-lg bg-emerald-400 px-2 py-1 text-[10px] font-black text-slate-950">
+                                            EQ
+                                          </span>
+                                          <p className={`truncate text-sm font-bold ${isAdminVariant ? 'text-white' : 'text-slate-900'}`}>
+                                            {incident.location}
+                                          </p>
+                                        </div>
+
+                                        <p className="mt-2 text-xs font-medium text-slate-500">{incident.time}</p>
+                                        <p className={`mt-2 line-clamp-2 text-xs leading-relaxed ${isAdminVariant ? 'text-slate-300' : 'text-slate-600'}`}>
+                                          {incident.description}
+                                        </p>
+                                      </div>
+
+                                      <span className={`shrink-0 rounded-full border px-2.5 py-1 text-xs font-black ${magnitudeTone}`}>
+                                        M{incident.magnitude?.toFixed(1) ?? '0.0'}
+                                      </span>
+                                    </div>
+
+                                    <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-200/70 pt-3">
+                                      <span className="text-[11px] font-semibold text-slate-500">
+                                        Depth-aware seismic monitoring
+                                      </span>
+                                      <button
+                                        className="rounded-lg border border-[#234d77]/30 bg-white px-3 py-1.5 text-xs font-bold text-[#234d77] transition hover:bg-blue-50"
+                                        onClick={() => handleIncidentClick(incident)}
+                                        type="button"
+                                      >
+                                        View Info
+                                      </button>
+                                    </div>
+                                  </article>
+                                )
+                              })
+                            ) : (
+                              <div className={`rounded-[24px] border border-dashed p-6 text-center ${isAdminVariant ? 'border-slate-700 bg-slate-900/40' : 'border-slate-300 bg-slate-50'}`}>
+                                <p className={`text-sm font-bold ${isAdminVariant ? 'text-slate-200' : 'text-slate-700'}`}>
+                                  No matching seismic event found.
+                                </p>
+                                <p className="mt-1 text-xs text-slate-500">Try another place or clear the search field.</p>
+                              </div>
+                            )}
                           </div>
-                        </>
+                        </div>
                       )}
                     </div>
                   </div>
@@ -979,10 +1140,10 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
 
                               <span
                                 className={`rounded-full px-2 py-1 text-[10px] font-bold uppercase ${
-                                  statusClassByType[incident.status]
+                                  statusClassByType[getStatusStyleKey(incident.status)]
                                 }`}
                               >
-                                {incident.status}
+                                {getDisplayStatus(incident.status)}
                               </span>
                             </div>
 
@@ -1086,10 +1247,10 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
                     <span className="font-semibold text-slate-800">Status:</span>{' '}
                     <span
                       className={`rounded-full px-2 py-1 text-[10px] font-bold uppercase ${
-                        statusClassByType[selectedIncident.status]
+                        statusClassByType[getStatusStyleKey(selectedIncident.status)]
                       }`}
                     >
-                      {selectedIncident.status}
+                      {getDisplayStatus(selectedIncident.status)}
                     </span>
                   </p>
                   <p className="text-slate-600">
