@@ -189,7 +189,7 @@ export const ResponderReportsPage: FC = () => {
               </div>
 
               <button
-                onClick={() => navigate('/responder-incident-reports')}
+                onClick={() => navigate('/responder-incidents')}
                 className="inline-flex items-center justify-center gap-2 bg-blue-600 text-white text-sm font-bold px-6 py-3 rounded-xl hover:bg-blue-700 active:scale-95 shadow-sm transition-all"
               >
                 Go to Incident Reports
