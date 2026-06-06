@@ -39,6 +39,7 @@ INSTALLED_APPS = [
     'locations',
     'incidents',
     'resources',
+    'analytics',
 ]
 
 MIDDLEWARE = [
