@@ -13,6 +13,11 @@ from incidents.models import (
     AccomplishmentReport,
 )
 
+try:
+    from locations.models import Barangay
+except Exception:  # pragma: no cover - keeps command import-safe if locations app is unavailable
+    Barangay = None
+
 fake = Faker('fil_PH')
 
 INCIDENT_TYPES = [
@@ -199,8 +204,101 @@ def get_random_created_at(start_year, end_year):
     return timezone.make_aware(random_date)
 
 
+def has_model_field(model, field_name):
+    return any(field.name == field_name for field in model._meta.get_fields())
+
+
+def normalize_barangay_name(location):
+    """Return a barangay name that can match the Barangay table."""
+    if not location:
+        return ''
+
+    name = str(location).split(',')[0].strip()
+
+    # Keep numbered barangays as Barangay 1, Barangay 2, etc.
+    if name.lower().startswith('barangay '):
+        return name
+
+    return name
+
+
+def get_barangay_name_candidates(location):
+    name = normalize_barangay_name(location)
+    if not name:
+        return []
+
+    candidates = [name]
+
+    if name.lower().startswith('barangay '):
+        number = name.split(' ', 1)[1].strip()
+        candidates.extend([
+            f'Brgy. {number}',
+            f'Brgy {number}',
+            number,
+        ])
+    else:
+        candidates.extend([
+            f'Barangay {name}',
+            f'Brgy. {name}',
+            f'Brgy {name}',
+        ])
+
+    # Remove duplicates while preserving order.
+    unique_candidates = []
+    seen = set()
+    for candidate in candidates:
+        key = candidate.lower()
+        if key not in seen:
+            unique_candidates.append(candidate)
+            seen.add(key)
+
+    return unique_candidates
+
+
+def find_barangay_for_location(location):
+    if Barangay is None:
+        return None
+
+    candidates = get_barangay_name_candidates(location)
+    if not candidates:
+        return None
+
+    # Try the most common barangay field names used in Django projects.
+    possible_name_fields = [
+        'name',
+        'barangay_name',
+        'brgy_name',
+        'title',
+    ]
+
+    actual_name_fields = [
+        field_name
+        for field_name in possible_name_fields
+        if has_model_field(Barangay, field_name)
+    ]
+
+    for field_name in actual_name_fields:
+        for candidate in candidates:
+            exact_match = Barangay.objects.filter(**{f'{field_name}__iexact': candidate}).first()
+            if exact_match:
+                return exact_match
+
+        for candidate in candidates:
+            contains_match = Barangay.objects.filter(**{f'{field_name}__icontains': candidate}).first()
+            if contains_match:
+                return contains_match
+
+    return None
+
+
+def build_report_create_kwargs(**kwargs):
+    """Only pass fields that exist on IncidentReport to avoid TypeError on different model versions."""
+    allowed_fields = {field.name for field in IncidentReport._meta.get_fields()}
+    return {key: value for key, value in kwargs.items() if key in allowed_fields}
+
+
 class Command(BaseCommand):
-    help = 'Generate pending incident reports from selected years. No approved reports and no accomplishment reports are generated.'
+    help = 'Generate pending incident reports from selected years with Barangay FK linked when available.'
 
     def add_arguments(self, parser):
         parser.add_argument('--count', type=int, default=50)
@@ -221,7 +319,6 @@ class Command(BaseCommand):
             return
 
         User = get_user_model()
-
         responders = list(User.objects.filter(is_staff=True))
 
         if not responders:
@@ -239,11 +336,27 @@ class Command(BaseCommand):
             VictimDetail.objects.all().delete()
             IncidentReport.objects.all().delete()
 
+        barangay_field_exists = has_model_field(IncidentReport, 'barangay')
+
+        if Barangay is None:
+            self.stdout.write(
+                self.style.WARNING('locations.models.Barangay could not be imported. Reports will use location text only.')
+            )
+        elif not barangay_field_exists:
+            self.stdout.write(
+                self.style.WARNING('IncidentReport has no barangay field. Add a barangay ForeignKey first if you want barangay_id saved.')
+            )
+        else:
+            self.stdout.write(self.style.SUCCESS('Barangay FK detected. Generated reports will be linked to Barangay records.'))
+
         self.stdout.write(
             self.style.WARNING(
                 f'Generating {count} pending incident report records from {start_year} to {end_year}...'
             )
         )
+
+        linked_count = 0
+        unlinked_count = 0
 
         with transaction.atomic():
             for index in range(count):
@@ -253,6 +366,12 @@ class Command(BaseCommand):
                 victim_count = random.randint(0, 4)
                 location = random.choice(LOCATIONS)
                 latitude, longitude = get_randomized_coordinates(location)
+                barangay = find_barangay_for_location(location)
+
+                if barangay:
+                    linked_count += 1
+                else:
+                    unlinked_count += 1
 
                 incident_code = f'INC-{created_at.year}-{index + 1:04d}'
 
@@ -261,24 +380,23 @@ class Command(BaseCommand):
                     minute=random.randint(0, 59),
                 )
 
-                report = IncidentReport.objects.create(
+                create_kwargs = build_report_create_kwargs(
                     incident_code=incident_code,
                     time_occurred=occurred_time,
                     incident_type=incident_type,
                     responder_team=random.choice(TEAMS),
                     location=location,
+                    barangay=barangay if barangay_field_exists else None,
                     latitude=latitude,
                     longitude=longitude,
                     description=get_incident_description(incident_type, location),
                     victim_count=victim_count,
                     action_taken=random.choice(ACTIONS),
-
-                    # Keep all generated reports pending.
-                    # This prevents approved incidents from being plotted immediately.
                     status='Pending',
-
                     created_by=random.choice(responders),
                 )
+
+                report = IncidentReport.objects.create(**create_kwargs)
 
                 IncidentReport.objects.filter(id=report.id).update(created_at=created_at)
                 report.created_at = created_at
@@ -298,6 +416,8 @@ class Command(BaseCommand):
                 f'Successfully generated {count} pending incident reports from {start_year} to {end_year}. '
                 f'{VictimDetail.objects.count()} victim details created. '
                 f'Approved reports: 0. '
+                f'Barangay linked: {linked_count}. '
+                f'Barangay not matched: {unlinked_count}. '
                 f'All generated reports require manual admin approval.'
             )
         )
