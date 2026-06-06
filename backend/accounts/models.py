@@ -74,7 +74,10 @@ def ensure_account_profile(user: User, default_role: str | None = None) -> Accou
 	except (OperationalError, ProgrammingError):
 		return AccountProfile(user=user, role=resolved_role)
 
-	if not created and profile.role not in dict(AccountProfile.ROLE_CHOICES):
+	# Keep role consistent, but do NOT overwrite an explicit admin/staff profile role.
+	# Some deployments create staff/admin accounts via AccountProfile (not via Django flags).
+	# We only auto-correct the common bad case: profile is still "citizen".
+	if profile.role == AccountProfile.ROLE_CITIZEN and profile.role != resolved_role:
 		profile.role = resolved_role
 		profile.save(update_fields=['role', 'updated_at'])
 

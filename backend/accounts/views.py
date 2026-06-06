@@ -379,6 +379,15 @@ def login_user(request):
 	if not user.is_active:
 		return Response({'error': 'This account is inactive.'}, status=status.HTTP_403_FORBIDDEN)
 
+	# Ensure role/profile exists before checking OTP bypass rules.
+	# Staff/admin may be created outside the registration flow, so the OneToOne profile
+	# might not exist yet.
+	try:
+		ensure_account_profile(user)
+	except Exception:
+		# If profile creation fails, fall back to existing behavior (may require OTP).
+		pass
+
 	if user_bypasses_login_otp(user):
 		login(request, user)
 		response = _build_login_success_response(request, user, identifier)
