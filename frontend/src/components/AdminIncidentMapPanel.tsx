@@ -11,9 +11,7 @@ import {
 } from '../services/incidents'
 import {
   type EarthquakeEvent,
-  type FaultLineFeatureCollection,
   type HeatPoint,
-  fetchQuezonFaultLines,
   fetchQuezonRegionEarthquakes,
   toHeatPoints,
 } from '../services/earthquakes'
@@ -81,8 +79,6 @@ const quezonRegionBounds: LatLngBoundsExpression = [
   [14.12, 121.92],
 ]
 
-const lucenaCityCenter: [number, number] = [13.94, 121.62]
-const nearestFaultLinesLimit = 5
 
 const hazardColors: Record<HazardType, string> = {
   EQ: '#4ade80',
@@ -369,53 +365,43 @@ function getEarthquakeDescription(event: EarthquakeEvent): string {
   return `Minor-to-light event at ${event.depth.toFixed(1)} km depth. Continue routine monitoring.`
 }
 
-function getFaultLineDistanceScore(geometry: GeoJSON.Geometry | null | undefined): number {
-  if (!geometry) return Number.POSITIVE_INFINITY
 
-  const targetPoint = L.CRS.EPSG3857.project(L.latLng(lucenaCityCenter[0], lucenaCityCenter[1]))
-  let nearestDistance = Number.POSITIVE_INFINITY
 
-  const getPointDistanceToSegment = (startCoordinate: number[], endCoordinate: number[]) => {
-    const startPoint = L.CRS.EPSG3857.project(L.latLng(startCoordinate[1], startCoordinate[0]))
-    const endPoint = L.CRS.EPSG3857.project(L.latLng(endCoordinate[1], endCoordinate[0]))
+function createHeatCloudPoints(points: HeatPoint[]): HeatPoint[] {
+  const cloudOffsets: Array<[number, number, number]> = [
+    [0, 0, 1],
+    [0.0015, 0.0012, 0.78],
+    [-0.0015, -0.0012, 0.78],
+    [0.0028, -0.0018, 0.58],
+    [-0.0028, 0.0018, 0.58],
+    [0.0042, 0.0028, 0.38],
+    [-0.0042, -0.0028, 0.38],
+  ]
 
-    const deltaX = endPoint.x - startPoint.x
-    const deltaY = endPoint.y - startPoint.y
-    const segmentLengthSquared = deltaX ** 2 + deltaY ** 2
-
-    if (segmentLengthSquared === 0) {
-      return Math.hypot(targetPoint.x - startPoint.x, targetPoint.y - startPoint.y)
-    }
-
-    const projectionRatio = Math.max(
-      0,
-      Math.min(
-        1,
-        ((targetPoint.x - startPoint.x) * deltaX + (targetPoint.y - startPoint.y) * deltaY) /
-          segmentLengthSquared,
-      ),
-    )
-
-    const projectedPointX = startPoint.x + projectionRatio * deltaX
-    const projectedPointY = startPoint.y + projectionRatio * deltaY
-
-    return Math.hypot(targetPoint.x - projectedPointX, targetPoint.y - projectedPointY)
-  }
-
-  const inspectLine = (coordinates: number[][]) => {
-    for (let index = 0; index < coordinates.length - 1; index += 1) {
-      nearestDistance = Math.min(
-        nearestDistance,
-        getPointDistanceToSegment(coordinates[index], coordinates[index + 1]),
-      )
-    }
-  }
-
-  if (geometry.type === 'LineString') inspectLine(geometry.coordinates)
-  if (geometry.type === 'MultiLineString') geometry.coordinates.forEach((segment) => inspectLine(segment))
-
-  return nearestDistance
+  return points.flatMap(([lat, lng, intensity]) =>
+    cloudOffsets.map(([latOffset, lngOffset, multiplier]) => [
+      lat + latOffset,
+      lng + lngOffset,
+      Math.min(1, Math.max(0.08, intensity * multiplier)),
+    ] as HeatPoint),
+  )
 }
+
+function getIncidentHeatIntensity(severity: MapIncident['severity']): number {
+  switch (severity) {
+    case 'Critical':
+      return 0.95
+    case 'High':
+      return 0.75
+    case 'Moderate':
+      return 0.55
+    default:
+      return 0.35
+  }
+}
+
+
+
 
 export function AdminIncidentMapPanel({
   onIncidentReportApproved,
@@ -432,14 +418,12 @@ export function AdminIncidentMapPanel({
   const [reportsLoading, setReportsLoading] = useState(false)
   const [reportsError, setReportsError] = useState('')
   const [earthquakeEvents, setEarthquakeEvents] = useState<EarthquakeEvent[]>([])
-  const [faultLines, setFaultLines] = useState<FaultLineFeatureCollection | null>(null)
   const [barangayLayer, setBarangayLayer] =
     useState<GeoJSON.FeatureCollection<GeoJSON.Geometry, Record<string, unknown>> | null>(null)
   const [eqHeatPoints, setEqHeatPoints] = useState<HeatPoint[]>([])
   const [eqFetchStatus, setEqFetchStatus] = useState<'idle' | 'loading' | 'error'>('idle')
-  const [faultLineStatus, setFaultLineStatus] = useState<'idle' | 'loading' | 'error'>('idle')
   const [showHeatmap, setShowHeatmap] = useState(true)
-  const [showFaultLines, setShowFaultLines] = useState(true)
+  const [showIncidentHeatmap, setShowIncidentHeatmap] = useState(true)
   const [eqLastRefreshed, setEqLastRefreshed] = useState<Date | null>(null)
   const [eqIsRefreshing, setEqIsRefreshing] = useState(false)
   const [eqSearchQuery, setEqSearchQuery] = useState('')
@@ -605,6 +589,16 @@ export function AdminIncidentMapPanel({
     [incidentReports, selectedType],
   )
 
+  const incidentHeatPoints = useMemo(
+    () =>
+      plottableMapIncidents.map((incident) => [
+        incident.coordinates[0],
+        incident.coordinates[1],
+        getIncidentHeatIntensity(incident.severity),
+      ]) as HeatPoint[],
+    [plottableMapIncidents],
+  )
+
   const incidentCounts = useMemo(
     () => ({
       EQ:
@@ -664,42 +658,22 @@ export function AdminIncidentMapPanel({
     )
   }, [earthquakeIncidentCards, eqSearchQuery])
 
-  const nearestFaultLineFeatures = useMemo(() => {
-    if (!faultLines || !faultLines.features) return []
 
-    return faultLines.features
-      .map((feature, index) => ({
-        feature,
-        index,
-        distanceScore: getFaultLineDistanceScore(feature.geometry),
-      }))
-      .filter((item) => Number.isFinite(item.distanceScore))
-      .sort((left, right) => left.distanceScore - right.distanceScore)
-      .slice(0, nearestFaultLinesLimit)
-  }, [faultLines])
-
-  const nearestFaultLineIndexes = useMemo(
-    () => new Set(nearestFaultLineFeatures.map((item) => item.index)),
-    [nearestFaultLineFeatures],
-  )
-
-  const nonHighlightedFaultLineCollection = useMemo(() => {
-    if (!faultLines || !faultLines.features) return null
+  const earthquakeSummary = useMemo(() => {
+    const significantCount = earthquakeEvents.filter((event) => event.magnitude >= 4).length
+    const strongestMagnitude = earthquakeEvents.reduce((max, event) => Math.max(max, event.magnitude), 0)
+    const recentCount = earthquakeEvents.filter(
+      (event) => event.rawTimestamp >= Date.now() - 30 * 24 * 60 * 60 * 1000,
+    ).length
 
     return {
-      ...faultLines,
-      features: faultLines.features.filter((_, index) => !nearestFaultLineIndexes.has(index)),
+      total: earthquakeEvents.length,
+      significant: significantCount,
+      strongest: strongestMagnitude > 0 ? strongestMagnitude.toFixed(1) : '0.0',
+      recent: recentCount,
     }
-  }, [faultLines, nearestFaultLineIndexes])
+  }, [earthquakeEvents])
 
-  const highlightedFaultLineCollection = useMemo(() => {
-    if (!faultLines) return null
-
-    return {
-      ...faultLines,
-      features: nearestFaultLineFeatures.map((item) => item.feature),
-    }
-  }, [faultLines, nearestFaultLineFeatures])
 
   useEffect(() => {
     if (selectedType === 'EQ' && earthquakeEvents.length === 0 && eqFetchStatus === 'idle') {
@@ -707,27 +681,6 @@ export function AdminIncidentMapPanel({
     }
   }, [selectedType, earthquakeEvents.length, eqFetchStatus, loadEarthquakes])
 
-  useEffect(() => {
-    if (selectedType !== 'EQ' || faultLines) return
-
-    let isCancelled = false
-    setFaultLineStatus('loading')
-
-    void fetchQuezonFaultLines()
-      .then((data) => {
-        if (!isCancelled) {
-          setFaultLines(data)
-          setFaultLineStatus('idle')
-        }
-      })
-      .catch(() => {
-        if (!isCancelled) setFaultLineStatus('error')
-      })
-
-    return () => {
-      isCancelled = true
-    }
-  }, [selectedType, faultLines])
 
   useEffect(() => {
     if (selectedType !== 'EQ') return
@@ -778,14 +731,30 @@ export function AdminIncidentMapPanel({
       map.fitBounds(lucenaBounds, { padding: [18, 18] })
     }
 
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}{r}.png', {
       attribution: '&copy; OpenStreetMap &copy; CARTO',
     }).addTo(map)
 
+    const heatmapPane = map.getPane('heatmap-pane') ?? map.createPane('heatmap-pane')
+    heatmapPane.style.zIndex = '350'
+    heatmapPane.style.pointerEvents = 'none'
+
+    const barangayPane = map.getPane('barangay-pane') ?? map.createPane('barangay-pane')
+    barangayPane.style.zIndex = '590'
+    barangayPane.style.pointerEvents = 'auto'
+
+    const incidentMarkerPane = map.getPane('incident-marker-pane') ?? map.createPane('incident-marker-pane')
+    incidentMarkerPane.style.zIndex = '670'
+    incidentMarkerPane.style.pointerEvents = 'auto'
+
+    const mapLabelsPane = map.getPane('map-labels-pane') ?? map.createPane('map-labels-pane')
+    mapLabelsPane.style.zIndex = '650'
+    mapLabelsPane.style.pointerEvents = 'none'
+
+    const popupPane = map.getPane('popupPane')
+    if (popupPane) popupPane.style.zIndex = '1200'
+
     if (barangayLayer) {
-      const barangayPane = map.getPane('barangay-pane') ?? map.createPane('barangay-pane')
-      barangayPane.style.zIndex = '330'
-      barangayPane.style.pointerEvents = 'auto'
 
       const barangayBorderColors = [
         '#2563eb',
@@ -866,54 +835,31 @@ export function AdminIncidentMapPanel({
 
     if (isEqView) {
       if (showHeatmap && eqHeatPoints.length > 0) {
-        L.heatLayer(eqHeatPoints, {
-          minOpacity: 0.35,
-          radius: 28,
-          blur: 22,
+        ;(L as any).heatLayer(createHeatCloudPoints(eqHeatPoints), {
+          pane: 'heatmap-pane',
+          minOpacity: 0.24,
+          radius: 42,
+          blur: 32,
           max: 1.0,
+          maxZoom: 16,
           gradient: {
-            0.14: '#38bdf8',
-            0.4: '#22c55e',
-            0.6: '#facc15',
-            0.8: '#f97316',
+            0.12: '#2563eb',
+            0.32: '#22d3ee',
+            0.5: '#22c55e',
+            0.68: '#facc15',
+            0.84: '#f97316',
             1.0: '#dc2626',
           },
         }).addTo(map)
       }
 
-      if (showFaultLines && nonHighlightedFaultLineCollection) {
-        const faultPane = map.getPane('fault-lines-pane') ?? map.createPane('fault-lines-pane')
-        faultPane.style.zIndex = '420'
-
-        L.geoJSON(nonHighlightedFaultLineCollection, {
-          pane: 'fault-lines-pane',
-          style: {
-            color: '#ef4444',
-            weight: 2.5,
-            opacity: 0.78,
-          },
-        }).addTo(map)
-      }
-
-      if (showFaultLines && highlightedFaultLineCollection) {
-        const highlightPane = map.getPane('fault-highlights-pane') ?? map.createPane('fault-highlights-pane')
-        highlightPane.style.zIndex = '430'
-
-        L.geoJSON(highlightedFaultLineCollection, {
-          pane: 'fault-highlights-pane',
-          style: {
-            color: '#f59e0b',
-            weight: 5,
-            opacity: 0.98,
-          },
-        }).addTo(map)
-      }
 
       if (showHeatmap) {
         earthquakeEvents
           .filter((event) => event.magnitude >= 3.5)
           .forEach((event) => {
             L.circleMarker([event.lat, event.lng], {
+              pane: 'incident-marker-pane',
               radius: Math.max(4, (event.magnitude - 1) * 3),
               color: '#ffffff',
               weight: 1,
@@ -927,16 +873,24 @@ export function AdminIncidentMapPanel({
           })
       }
     } else {
-      const incidentPulsePane = map.getPane('incident-pulse-pane') ?? map.createPane('incident-pulse-pane')
-      incidentPulsePane.style.zIndex = '650'
-      incidentPulsePane.style.pointerEvents = 'auto'
-
-      const incidentMarkerPane = map.getPane('incident-marker-pane') ?? map.createPane('incident-marker-pane')
-      incidentMarkerPane.style.zIndex = '640'
-      incidentMarkerPane.style.pointerEvents = 'auto'
-
-      const popupPane = map.getPane('popupPane')
-      if (popupPane) popupPane.style.zIndex = '1200'
+      if (showIncidentHeatmap && incidentHeatPoints.length > 0 && typeof (L as any).heatLayer === 'function') {
+        ;(L as any).heatLayer(createHeatCloudPoints(incidentHeatPoints), {
+          pane: 'heatmap-pane',
+          minOpacity: 0.24,
+          radius: 46,
+          blur: 34,
+          max: 1.0,
+          maxZoom: 17,
+          gradient: {
+            0.12: '#2563eb',
+            0.32: '#22d3ee',
+            0.5: '#22c55e',
+            0.68: '#facc15',
+            0.84: '#f97316',
+            1.0: '#dc2626',
+          },
+        }).addTo(map)
+      }
 
       plottableMapIncidents.forEach((incident) => {
         const markerColor = hazardColors[incident.code]
@@ -972,6 +926,11 @@ export function AdminIncidentMapPanel({
       })
     }
 
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}{r}.png', {
+      pane: 'map-labels-pane',
+      attribution: '&copy; CARTO',
+    }).addTo(map)
+
     window.setTimeout(() => {
       map.invalidateSize()
     }, 0)
@@ -984,13 +943,12 @@ export function AdminIncidentMapPanel({
     }
   }, [
     plottableMapIncidents,
+    incidentHeatPoints,
+    showIncidentHeatmap,
     selectedType,
     eqHeatPoints,
     earthquakeEvents,
     showHeatmap,
-    showFaultLines,
-    nonHighlightedFaultLineCollection,
-    highlightedFaultLineCollection,
     barangayLayer,
   ])
 
@@ -1208,19 +1166,26 @@ export function AdminIncidentMapPanel({
                     Heatmap
                   </button>
 
+                </div>
+              ) : (
+                <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-200 bg-white/75 px-3 py-2 backdrop-blur lg:justify-end">
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                    Layers
+                  </span>
+
                   <button
                     className={`rounded-full border px-3 py-1 text-[11px] font-semibold transition ${
-                      showFaultLines
-                        ? 'border-rose-300 bg-rose-50 text-rose-700'
+                      showIncidentHeatmap
+                        ? 'border-emerald-500 bg-emerald-500 text-white'
                         : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
                     }`}
-                    onClick={() => setShowFaultLines((value) => !value)}
+                    onClick={() => setShowIncidentHeatmap((value) => !value)}
                     type="button"
                   >
-                    Fault Lines
+                    Heatmap
                   </button>
                 </div>
-              ) : null}
+              )}
             </div>
           </div>
 
@@ -1256,38 +1221,56 @@ export function AdminIncidentMapPanel({
 
         <aside className="overflow-x-hidden rounded-[28px] border border-slate-200 bg-white p-4 shadow-[0_12px_32px_rgba(15,23,42,0.08)] sm:p-5 md:h-[calc(100vh-13rem)] md:overflow-hidden">
           {selectedType === 'EQ' ? (
-            <div className="rounded-[24px] border border-emerald-200 bg-[linear-gradient(180deg,#ecfdf5_0%,#ffffff_100%)] p-4 sm:p-5">
-              <div className="flex items-center justify-between gap-3 border-b border-emerald-100 pb-3">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-700">
-                    Seismic Events
-                  </p>
+            <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-[28px] border border-emerald-100 bg-[radial-gradient(circle_at_top_left,#d1fae5_0%,#f0fdf4_34%,#ffffff_100%)] shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
+              <div className="border-b border-emerald-100 bg-white/70 px-4 py-4 backdrop-blur sm:px-5">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-[11px] font-black uppercase tracking-[0.18em] text-emerald-700">
+                      Seismic Events
+                    </p>
 
-                  <h3 className="mt-1 text-xl font-bold text-slate-900">
-                    PHIVOLCS / USGS Earthquakes
-                  </h3>
+                    <h3 className="mt-1 text-xl font-black tracking-tight text-slate-900">
+                      Earthquake Monitoring
+                    </h3>
+
+                    <p className="mt-1 text-xs leading-relaxed text-slate-500">
+                      Live earthquake records for Quezon Province and nearby areas.
+                    </p>
+                  </div>
+
+                  <span className="shrink-0 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-black text-emerald-800">
+                    {eqFetchStatus === 'loading' ? 'Loading' : `${earthquakeSummary.total} events`}
+                  </span>
                 </div>
 
-                <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-800">
-                  {eqFetchStatus === 'loading' ? '…' : earthquakeEvents.length}
-                </span>
+                <div className="mt-4 grid grid-cols-3 gap-2">
+                  <div className="rounded-2xl border border-emerald-100 bg-white/85 p-3 text-center shadow-sm">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-slate-400">Strongest</p>
+                    <p className="mt-1 text-xl font-black text-emerald-700">M{earthquakeSummary.strongest}</p>
+                  </div>
+                  <div className="rounded-2xl border border-orange-100 bg-white/85 p-3 text-center shadow-sm">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-slate-400">M4+</p>
+                    <p className="mt-1 text-xl font-black text-orange-600">{earthquakeSummary.significant}</p>
+                  </div>
+                  <div className="rounded-2xl border border-blue-100 bg-white/85 p-3 text-center shadow-sm">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-slate-400">30 Days</p>
+                    <p className="mt-1 text-xl font-black text-blue-600">{earthquakeSummary.recent}</p>
+                  </div>
+                </div>
+
+                <p className="mt-3 rounded-2xl border border-emerald-100 bg-emerald-50/70 px-3 py-2 text-xs leading-relaxed text-emerald-800">
+                  {eqLastRefreshed
+                    ? `Last updated ${eqLastRefreshed.toLocaleTimeString('en-PH', {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit',
+                      })}`
+                    : 'Waiting for earthquake data'}
+                  {eqIsRefreshing ? ' · Refreshing…' : ''}
+                </p>
               </div>
 
-              <p className="mt-3 text-xs leading-relaxed text-slate-600">
-                Quezon Province seismic log
-                {eqLastRefreshed
-                  ? ` · Updated ${eqLastRefreshed.toLocaleTimeString('en-PH', {
-                      hour: '2-digit',
-                      minute: '2-digit',
-                      second: '2-digit',
-                    })}`
-                  : ''}
-                {eqIsRefreshing ? ' · Refreshing…' : ''}
-              </p>
-
-              {faultLineStatus === 'error' ? (
-                <p className="mt-2 text-xs font-semibold text-rose-700">Fault lines failed to load.</p>
-              ) : null}
+              <div className="min-h-0 flex-1 overflow-hidden px-4 py-4 sm:px-5">
 
               {eqFetchStatus === 'loading' ? (
                 <div className="mt-4 flex items-center gap-3">
@@ -1310,26 +1293,26 @@ export function AdminIncidentMapPanel({
                 <>
                   <div className="mt-4">
                     <input
-                      className="w-full rounded-xl border border-[#0b6b50]/20 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none"
+                      className="w-full rounded-2xl border border-emerald-100 bg-white px-4 py-3 text-sm font-medium text-slate-800 shadow-sm outline-none transition focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
                       onChange={(event) => setEqSearchQuery(event.target.value)}
-                      placeholder="Search place or event"
+                      placeholder="Search earthquake location or event"
                       type="text"
                       value={eqSearchQuery}
                     />
                   </div>
 
-                  <div className="mt-4 max-h-[420px] space-y-2 overflow-y-auto pr-1">
+                  <div className="mt-4 max-h-[calc(100vh-27rem)] min-h-[320px] space-y-3 overflow-y-auto pr-1">
                     {filteredEarthquakeIncidentCards.length === 0 ? (
                       <div className="rounded-xl border border-slate-200 bg-white p-3 text-center text-xs text-slate-500">
                         No matching earthquake event found.
                       </div>
                     ) : (
                       filteredEarthquakeIncidentCards.map((incident) => (
-                        <article className="rounded-xl border border-slate-200 bg-white p-3" key={incident.id}>
+                        <article className="group rounded-2xl border border-slate-200 bg-white/95 p-4 shadow-sm transition hover:-translate-y-0.5 hover:border-emerald-200 hover:shadow-md" key={incident.id}>
                           <div className="flex items-start justify-between gap-2">
                             <div className="min-w-0">
                               <div className="flex items-center gap-2">
-                                <span className="inline-flex rounded-md bg-emerald-400 px-1.5 py-0.5 text-[10px] font-black text-slate-900">
+                                <span className="inline-flex rounded-lg bg-emerald-500 px-2 py-1 text-[10px] font-black text-white shadow-sm">
                                   EQ
                                 </span>
 
@@ -1342,7 +1325,7 @@ export function AdminIncidentMapPanel({
                               <p className="mt-1 pl-7 text-xs text-slate-500">{incident.location}</p>
                             </div>
 
-                            <span className="rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-bold text-emerald-700">
+                            <span className="shrink-0 rounded-full border border-emerald-100 bg-emerald-50 px-2.5 py-1 text-[10px] font-black text-emerald-700">
                               M{incident.magnitude.toFixed(1)}
                             </span>
                           </div>
@@ -1354,6 +1337,7 @@ export function AdminIncidentMapPanel({
                   </div>
                 </>
               )}
+              </div>
             </div>
           ) : (
             <div className="flex h-full min-h-0 flex-col">

@@ -6,6 +6,7 @@ import { RegisterPage } from '../pages/auth/register/RegisterPage'
 import { AdminDashboardPage } from '../pages/admin-dashboard/AdminDashboardPage'
 import { DisasterMapPage } from '../pages/disaster-map/DisasterMapPage'
 import { EmergencyHotlinesPage } from '../pages/emergency-hotlines/EmergencyHotlinesPage'
+import { EvacuationPage } from '../pages/evacuation/EvacuationPage'
 import { LandingPage } from '../pages/landing/LandingPage'
 import { SimulationPage } from '../pages/simulation/SimulationPage'
 
@@ -61,6 +62,7 @@ export function AppRouter() {
 
       {/* Shared / Feature Routes */}
       <Route path="/disaster-map" element={<DisasterMapPage />} />
+      <Route path="/evacuation" element={<EvacuationPage />} />
       <Route path="/emergency-hotlines" element={<EmergencyHotlinesPage />} />
       <Route path="/simulation" element={<SimulationPage />} />
 
