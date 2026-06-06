@@ -161,16 +161,18 @@ function matchesDashboardSearch(fields: Array<number | string>, query: string): 
 function getIncidentRecordId(record: any): string {
   return getRecordValue(
     record,
-    'id',
-    'incidentId',
-    'incident_id',
-    'reportCode',
-    'report_code',
+    // Prefer human-readable incident/report codes first so the same real incident
+    // is not counted twice when it exists in both Incident and IncidentReport APIs.
     'incidentCode',
     'incident_code',
+    'reportCode',
+    'report_code',
     'incident_reference_code_readonly',
     'reference_code',
     'referenceCode',
+    'id',
+    'incidentId',
+    'incident_id',
   )
 }
 
@@ -352,6 +354,39 @@ function toTitleCase(value: string): string {
 }
 
 function getDashboardBarangay(record: any): string {
+  const barangayObject = record?.barangay
+
+  if (barangayObject && typeof barangayObject === 'object') {
+    const objectName = getRecordValue(
+      barangayObject,
+      'name',
+      'barangay_name',
+      'brgy_name',
+      'title',
+    )
+
+    if (objectName) {
+      return objectName.toLowerCase().startsWith('barangay')
+        ? toTitleCase(objectName)
+        : `Barangay ${toTitleCase(objectName)}`
+    }
+  }
+
+  const explicitBarangay = getRecordValue(
+    record,
+    'barangayName',
+    'barangay_name',
+    'brgyName',
+    'brgy_name',
+    'barangay_label',
+  )
+
+  if (explicitBarangay && explicitBarangay !== '[object Object]') {
+    return explicitBarangay.toLowerCase().startsWith('barangay')
+      ? toTitleCase(explicitBarangay)
+      : `Barangay ${toTitleCase(explicitBarangay)}`
+  }
+
   const location = getDashboardLocation(record)
 
   if (isPlaceholderLocation(location)) return 'Unspecified location'
@@ -364,6 +399,17 @@ function getDashboardBarangay(record: any): string {
   }
 
   const knownAreas: Array<[string, string]> = [
+    ['barangay 1', 'Barangay 1'],
+    ['barangay 2', 'Barangay 2'],
+    ['barangay 3', 'Barangay 3'],
+    ['barangay 4', 'Barangay 4'],
+    ['barangay 5', 'Barangay 5'],
+    ['barangay 6', 'Barangay 6'],
+    ['barangay 7', 'Barangay 7'],
+    ['barangay 8', 'Barangay 8'],
+    ['barangay 9', 'Barangay 9'],
+    ['barangay 10', 'Barangay 10'],
+    ['barangay 11', 'Barangay 11'],
     ['gulang-gulang', 'Barangay Gulang-Gulang'],
     ['gulang gulang', 'Barangay Gulang-Gulang'],
     ['dalahican', 'Barangay Dalahican'],
@@ -371,20 +417,22 @@ function getDashboardBarangay(record: any): string {
     ['ilayang dupay', 'Barangay Ilayang Dupay'],
     ['ilayang iyam', 'Barangay Ilayang Iyam'],
     ['ibabang iyam', 'Barangay Ibabang Iyam'],
+    ['ibabang talim', 'Barangay Ibabang Talim'],
+    ['ilayang talim', 'Barangay Ilayang Talim'],
     ['mayao crossing', 'Barangay Mayao Crossing'],
     ['mayao kanluran', 'Barangay Mayao Kanluran'],
     ['mayao silangan', 'Barangay Mayao Silangan'],
+    ['mayao castillo', 'Barangay Mayao Castillo'],
+    ['mayao parada', 'Barangay Mayao Parada'],
     ['cotta', 'Barangay Cotta'],
     ['bocohan', 'Barangay Bocohan'],
+    ['barra', 'Barangay Barra'],
     ['isabang', 'Barangay Isabang'],
     ['market view', 'Barangay Market View'],
     ['domoit', 'Barangay Domoit'],
-    ['city proper', 'Lucena City Proper'],
-    ['quezon avenue', 'Quezon Avenue Area'],
-    ['pacific mall', 'Pacific Mall Area'],
-    ['sm city lucena', 'SM City Lucena Area'],
-    ['grand central terminal', 'Grand Terminal Area'],
-    ['diversion road', 'Diversion Road Area'],
+    ['ransohan', 'Barangay Ransohan'],
+    ['salinas', 'Barangay Salinas'],
+    ['talao-talao', 'Barangay Talao-Talao'],
   ]
 
   const matchedArea = knownAreas.find(([keyword]) => lower.includes(keyword))
@@ -395,7 +443,10 @@ function getDashboardBarangay(record: any): string {
     .map((part) => part.trim())
     .filter((part) => part && !/lucena city/i.test(part))
 
-  return cleanParts.at(-1) || 'Lucena City'
+  const fallback = cleanParts.at(-1) || 'Lucena City'
+  return fallback.toLowerCase().startsWith('barangay')
+    ? toTitleCase(fallback)
+    : `Barangay ${toTitleCase(fallback)}`
 }
 
 function buildCountData<T extends string>(items: any[], getKey: (item: any) => T): Array<{ name: T; count: number }> {
@@ -974,6 +1025,12 @@ export function AdminDashboardPage() {
 
       const reportId = getIncidentRecordId(report)
       const readableType = getDashboardIncidentType({ ...report, code })
+      const latitude = Number(getRecordValue(report, 'latitude', 'lat'))
+      const longitude = Number(getRecordValue(report, 'longitude', 'lng', 'lon'))
+      const coordinates: [number, number] =
+        Number.isFinite(latitude) && Number.isFinite(longitude)
+          ? [latitude, longitude]
+          : [0, 0]
 
       return {
         ...report,
@@ -986,16 +1043,25 @@ export function AdminDashboardPage() {
         time: getRecordDate(report).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }),
         responseTeam: report.responderTeam || report.responder_team || report.responder_username || report.responder || '-',
         description: getDashboardDescription(report) || '-',
-        coordinates: [0, 0] as [number, number],
+        coordinates,
       }
     })
   }, [responderReports, reports])
 
   const filteredReports = useMemo(() => {
+    // Use ONE authoritative source for dashboard/report counts to avoid 20 Incident
+    // records + 20 IncidentReport records being displayed as 40.
+    // IncidentReport is preferred because it is the responder-submitted report table.
+    const sourceRecords: HazardIncident[] =
+      responderReportIncidents.length > 0 ? responderReportIncidents : reports
+
     const uniqueReports = new Map<string, HazardIncident>()
 
-    ;[...reports, ...responderReportIncidents].forEach((incident) => {
-      const key = String(getIncidentRecordId(incident) || incident.id || `${incident.title}-${incident.time}-${incident.location}`)
+    sourceRecords.forEach((incident) => {
+      const key = String(
+        getIncidentRecordId(incident) ||
+          `${getDashboardIncidentType(incident)}-${getRecordDate(incident).toISOString()}-${getDashboardBarangay(incident)}-${getDashboardLocation(incident)}`,
+      )
 
       if (!uniqueReports.has(key)) {
         uniqueReports.set(key, incident)
@@ -1005,11 +1071,12 @@ export function AdminDashboardPage() {
     return Array.from(uniqueReports.values()).filter((incident) =>
       matchesDashboardSearch(
         [
-          incident.id,
+          getIncidentRecordId(incident),
           incident.title,
           getDashboardIncidentType(incident),
           incident.status,
           incident.severity,
+          getDashboardBarangay(incident),
           incident.location,
           incident.time,
           incident.responseTeam,
@@ -1702,7 +1769,7 @@ export function AdminDashboardPage() {
                         Top 5 Barangays with Most Incidents
                       </h2>
                       <p className="mt-1.5 text-xs text-slate-500 leading-relaxed">
-                        Highest incident concentration based on the report location field.
+                        Highest incident concentration based on barangay-linked report data.
                       </p>
                     </div>
 
