@@ -14,8 +14,13 @@ from incidents.models import (
 )
 
 try:
+    from incidents.models import Incident
+except Exception:
+    Incident = None
+
+try:
     from locations.models import Barangay
-except Exception:  # pragma: no cover - keeps command import-safe if locations app is unavailable
+except Exception:
     Barangay = None
 
 fake = Faker('fil_PH')
@@ -30,82 +35,79 @@ INCIDENT_TYPES = [
     'Drowning',
 ]
 
-TEAMS = [
-    'Alpha',
-    'Bravo',
-    'Charlie',
-]
+TEAMS = ['Alpha', 'Bravo', 'Charlie']
 
-LOCATIONS = [
-    'Barangay 1, Lucena City',
-    'Barangay 2, Lucena City',
-    'Barangay 3, Lucena City',
-    'Barangay 4, Lucena City',
-    'Barangay 5, Lucena City',
-    'Barangay 6, Lucena City',
-    'Barangay 7, Lucena City',
-    'Barangay 8, Lucena City',
-    'Barangay 9, Lucena City',
-    'Barangay 10, Lucena City',
-    'Barangay 11, Lucena City',
-    'Barra, Lucena City',
-    'Bocohan, Lucena City',
-    'Cotta, Lucena City',
-    'Dalahican, Lucena City',
-    'Domoit, Lucena City',
-    'Gulang-Gulang, Lucena City',
-    'Ibabang Dupay, Lucena City',
-    'Ibabang Iyam, Lucena City',
-    'Ibabang Talim, Lucena City',
-    'Ilayang Dupay, Lucena City',
-    'Ilayang Iyam, Lucena City',
-    'Ilayang Talim, Lucena City',
-    'Isabang, Lucena City',
-    'Market View, Lucena City',
-    'Mayao Castillo, Lucena City',
-    'Mayao Crossing, Lucena City',
-    'Mayao Kanluran, Lucena City',
-    'Mayao Parada, Lucena City',
-    'Mayao Silangan, Lucena City',
-    'Ransohan, Lucena City',
-    'Salinas, Lucena City',
-    'Talao-Talao, Lucena City',
+# Official 33 barangays of Lucena City.
+BARANGAY_NAMES = [
+    'Barangay 1',
+    'Barangay 2',
+    'Barangay 3',
+    'Barangay 4',
+    'Barangay 5',
+    'Barangay 6',
+    'Barangay 7',
+    'Barangay 8',
+    'Barangay 9',
+    'Barangay 10',
+    'Barangay 11',
+    'Barra',
+    'Bocohan',
+    'Cotta',
+    'Dalahican',
+    'Domoit',
+    'Gulang-Gulang',
+    'Ibabang Dupay',
+    'Ibabang Iyam',
+    'Ibabang Talim',
+    'Ilayang Dupay',
+    'Ilayang Iyam',
+    'Ilayang Talim',
+    'Isabang',
+    'Market View',
+    'Mayao Castillo',
+    'Mayao Crossing',
+    'Mayao Kanluran',
+    'Mayao Parada',
+    'Mayao Silangan',
+    'Ransohan',
+    'Salinas',
+    'Talao-Talao',
 ]
 
 LOCATION_COORDINATES = {
-    'Barangay 1, Lucena City': (13.9389702, 121.6124776),
-    'Barangay 2, Lucena City': (13.939363479614258, 121.6145248413086),
-    'Barangay 3, Lucena City': (13.9374033, 121.6122379),
-    'Barangay 4, Lucena City': (13.9368604, 121.6128604),
-    'Barangay 5, Lucena City': (13.935468, 121.6116846),
-    'Barangay 6, Lucena City': (13.9342259, 121.6139289),
-    'Barangay 7, Lucena City': (13.9332718, 121.6118396),
-    'Barangay 8, Lucena City': (13.9268764, 121.6135034),
-    'Barangay 9, Lucena City': (13.931232452392578, 121.6135482788086),
-    'Barangay 10, Lucena City': (13.9268764, 121.6135034),
-    'Barangay 11, Lucena City': (13.9416713, 121.61457),
-    'Barra, Lucena City': (13.899703613473259, 121.60599681715252),
-    'Bocohan, Lucena City': (13.958983421325684, 121.59123992919922),
-    'Cotta, Lucena City': (13.916782260591965, 121.606392873038),
-    'Dalahican, Lucena City': (13.906243324279785, 121.61962890625),
-    'Domoit, Lucena City': (13.9656741, 121.5954539),
-    'Gulang-Gulang, Lucena City': (13.964309692382812, 121.6095962524414),
-    'Ibabang Dupay, Lucena City': (13.9413972, 121.6235766),
-    'Ibabang Iyam, Lucena City': (13.9262972, 121.6012926),
-    'Ibabang Talim, Lucena City': (13.933329582214355, 121.61666870117188),
-    'Ilayang Dupay, Lucena City': (13.975142616912596, 121.62297889588788),
-    'Ilayang Iyam, Lucena City': (13.9421715, 121.6046099),
-    'Ilayang Talim, Lucena City': (13.933329582214355, 121.61666870117188),
-    'Isabang, Lucena City': (13.9485716, 121.5838776),
-    'Market View, Lucena City': (13.933917045593262, 121.61720275878906),
-    'Mayao Castillo, Lucena City': (13.931166648864746, 121.66316986083984),
-    'Mayao Crossing, Lucena City': (13.9257621, 121.6217745),
-    'Mayao Kanluran, Lucena City': (13.9493974, 121.634851),
-    'Mayao Parada, Lucena City': (13.927044090129849, 121.6437013480862),
-    'Mayao Silangan, Lucena City': (13.9544415, 121.6468125),
-    'Ransohan, Lucena City': (13.893268843518467, 121.5923653381981),
-    'Salinas, Lucena City': (13.904104586584326, 121.57631428841128),
-    'Talao-Talao, Lucena City': (13.908086776733398, 121.62608337402344),
+    'Barangay 1': (13.9389702, 121.6124776),
+    'Barangay 2': (13.939363479614258, 121.6145248413086),
+    'Barangay 3': (13.9374033, 121.6122379),
+    'Barangay 4': (13.9368604, 121.6128604),
+    'Barangay 5': (13.935468, 121.6116846),
+    'Barangay 6': (13.9342259, 121.6139289),
+    'Barangay 7': (13.9332718, 121.6118396),
+    'Barangay 8': (13.9268764, 121.6135034),
+    'Barangay 9': (13.931232452392578, 121.6135482788086),
+    'Barangay 10': (13.9268764, 121.6135034),
+    'Barangay 11': (13.9416713, 121.61457),
+    'Barra': (13.899703613473259, 121.60599681715252),
+    'Bocohan': (13.958983421325684, 121.59123992919922),
+    'Cotta': (13.916782260591965, 121.606392873038),
+    'Dalahican': (13.906243324279785, 121.61962890625),
+    'Domoit': (13.9656741, 121.5954539),
+    'Gulang-Gulang': (13.964309692382812, 121.6095962524414),
+    'Ibabang Dupay': (13.9413972, 121.6235766),
+    'Ibabang Iyam': (13.9262972, 121.6012926),
+    'Ibabang Talim': (13.933329582214355, 121.61666870117188),
+    'Ilayang Dupay': (13.975142616912596, 121.62297889588788),
+    'Ilayang Iyam': (13.9421715, 121.6046099),
+    'Ilayang Talim': (13.933329582214355, 121.61666870117188),
+    'Isabang': (13.9485716, 121.5838776),
+    'Market View': (13.933917045593262, 121.61720275878906),
+    'Mayao Castillo': (13.931166648864746, 121.66316986083984),
+    'Mayao Crossing': (13.9257621, 121.6217745),
+    'Mayao Kanluran': (13.9493974, 121.634851),
+    'Mayao Parada': (13.927044090129849, 121.6437013480862),
+    'Mayao Silangan': (13.9544415, 121.6468125),
+    'Ransohan': (13.893268843518467, 121.5923653381981),
+    'Salinas': (13.904104586584326, 121.57631428841128),
+    'Talao-Talao': (13.908086776733398, 121.62608337402344),
 }
 
 CONDITIONS = [
@@ -169,29 +171,99 @@ INCIDENT_DESCRIPTIONS = {
 }
 
 
-def get_incident_description(incident_type, location):
-    descriptions = INCIDENT_DESCRIPTIONS.get(
-        incident_type,
-        ['Incident reported in the area. Responders conducted assessment and provided necessary emergency assistance.'],
-    )
-    return f'{random.choice(descriptions)} Location: {location}.'
+def has_model_field(model, field_name):
+    if model is None:
+        return False
+    return any(field.name == field_name for field in model._meta.get_fields())
 
 
-def get_randomized_coordinates(location):
-    base_lat, base_lng = LOCATION_COORDINATES.get(location, (13.9414, 121.6236))
+def get_first_existing_field(model, field_names):
+    for field_name in field_names:
+        if has_model_field(model, field_name):
+            return field_name
+    return None
 
+
+def get_model_field_names(model):
+    if model is None:
+        return set()
+    return {field.name for field in model._meta.get_fields()}
+
+
+def normalize_name(value):
+    return str(value or '').strip().lower().replace('brgy.', 'barangay').replace('brgy ', 'barangay ')
+
+
+def barangay_candidates(name):
+    name = str(name or '').strip()
+    if not name:
+        return []
+
+    candidates = [name]
+    if name.lower().startswith('barangay '):
+        number = name.split(' ', 1)[1].strip()
+        candidates.extend([f'Brgy. {number}', f'Brgy {number}', number])
+    else:
+        candidates.extend([f'Barangay {name}', f'Brgy. {name}', f'Brgy {name}'])
+
+    unique = []
+    seen = set()
+    for candidate in candidates:
+        key = normalize_name(candidate)
+        if key not in seen:
+            seen.add(key)
+            unique.append(candidate)
+    return unique
+
+
+def find_or_create_barangay(name):
+    if Barangay is None:
+        return None, False
+
+    name_field = get_first_existing_field(Barangay, ['name', 'barangay_name', 'brgy_name', 'title'])
+    if not name_field:
+        return None, False
+
+    for candidate in barangay_candidates(name):
+        barangay = Barangay.objects.filter(**{f'{name_field}__iexact': candidate}).first()
+        if barangay:
+            return barangay, False
+
+    for candidate in barangay_candidates(name):
+        barangay = Barangay.objects.filter(**{f'{name_field}__icontains': candidate}).first()
+        if barangay:
+            return barangay, False
+
+    create_kwargs = {name_field: name}
+
+    # Fill optional coordinate fields if the Barangay model has them.
+    lat, lng = LOCATION_COORDINATES.get(name, (None, None))
+    if lat is not None:
+        for lat_field in ['latitude', 'lat']:
+            if has_model_field(Barangay, lat_field):
+                create_kwargs[lat_field] = lat
+                break
+    if lng is not None:
+        for lng_field in ['longitude', 'lng', 'lon']:
+            if has_model_field(Barangay, lng_field):
+                create_kwargs[lng_field] = lng
+                break
+
+    barangay = Barangay.objects.create(**create_kwargs)
+    return barangay, True
+
+
+def get_randomized_coordinates(barangay_name):
+    base_lat, base_lng = LOCATION_COORDINATES.get(barangay_name, (13.9414, 121.6236))
     latitude = round(base_lat + random.uniform(-0.0018, 0.0018), 6)
     longitude = round(base_lng + random.uniform(-0.0018, 0.0018), 6)
-
     latitude = min(max(latitude, 13.89), 13.98)
     longitude = min(max(longitude, 121.57), 121.69)
-
     return latitude, longitude
 
 
 def get_random_created_at(start_year, end_year):
     random_year = random.randint(start_year, end_year)
-
     random_date = datetime(
         year=random_year,
         month=random.randint(1, 12),
@@ -200,127 +272,58 @@ def get_random_created_at(start_year, end_year):
         minute=random.randint(0, 59),
         second=random.randint(0, 59),
     )
-
     return timezone.make_aware(random_date)
 
 
-def has_model_field(model, field_name):
-    return any(field.name == field_name for field in model._meta.get_fields())
+def get_incident_description(incident_type, location):
+    descriptions = INCIDENT_DESCRIPTIONS.get(
+        incident_type,
+        ['Incident reported in the area. Responders conducted assessment and provided necessary emergency assistance.'],
+    )
+    return f'{random.choice(descriptions)} Location: {location}.'
 
 
-def normalize_barangay_name(location):
-    """Return a barangay name that can match the Barangay table."""
-    if not location:
-        return ''
-
-    name = str(location).split(',')[0].strip()
-
-    # Keep numbered barangays as Barangay 1, Barangay 2, etc.
-    if name.lower().startswith('barangay '):
-        return name
-
-    return name
-
-
-def get_barangay_name_candidates(location):
-    name = normalize_barangay_name(location)
-    if not name:
-        return []
-
-    candidates = [name]
-
-    if name.lower().startswith('barangay '):
-        number = name.split(' ', 1)[1].strip()
-        candidates.extend([
-            f'Brgy. {number}',
-            f'Brgy {number}',
-            number,
-        ])
-    else:
-        candidates.extend([
-            f'Barangay {name}',
-            f'Brgy. {name}',
-            f'Brgy {name}',
-        ])
-
-    # Remove duplicates while preserving order.
-    unique_candidates = []
-    seen = set()
-    for candidate in candidates:
-        key = candidate.lower()
-        if key not in seen:
-            unique_candidates.append(candidate)
-            seen.add(key)
-
-    return unique_candidates
-
-
-def find_barangay_for_location(location):
-    if Barangay is None:
-        return None
-
-    candidates = get_barangay_name_candidates(location)
-    if not candidates:
-        return None
-
-    # Try the most common barangay field names used in Django projects.
-    possible_name_fields = [
-        'name',
-        'barangay_name',
-        'brgy_name',
-        'title',
-    ]
-
-    actual_name_fields = [
-        field_name
-        for field_name in possible_name_fields
-        if has_model_field(Barangay, field_name)
-    ]
-
-    for field_name in actual_name_fields:
-        for candidate in candidates:
-            exact_match = Barangay.objects.filter(**{f'{field_name}__iexact': candidate}).first()
-            if exact_match:
-                return exact_match
-
-        for candidate in candidates:
-            contains_match = Barangay.objects.filter(**{f'{field_name}__icontains': candidate}).first()
-            if contains_match:
-                return contains_match
-
-    return None
-
-
-def build_report_create_kwargs(**kwargs):
-    """Only pass fields that exist on IncidentReport to avoid TypeError on different model versions."""
-    allowed_fields = {field.name for field in IncidentReport._meta.get_fields()}
+def build_create_kwargs(model, **kwargs):
+    allowed_fields = get_model_field_names(model)
     return {key: value for key, value in kwargs.items() if key in allowed_fields}
 
 
+def set_created_at(model, object_id, created_at):
+    if model is not None and has_model_field(model, 'created_at'):
+        model.objects.filter(id=object_id).update(created_at=created_at)
+
+
 class Command(BaseCommand):
-    help = 'Generate pending incident reports from selected years with Barangay FK linked when available.'
+    help = 'Generate pending incident reports connected to Barangay records.'
 
     def add_arguments(self, parser):
         parser.add_argument('--count', type=int, default=50)
         parser.add_argument('--clear', action='store_true')
         parser.add_argument('--start-year', type=int, default=2020)
         parser.add_argument('--end-year', type=int, default=2026)
+        parser.add_argument(
+            '--also-create-incidents',
+            action='store_true',
+            help='Also create records in Incident model when your project uses Incident for analytics/map barangay FK.',
+        )
 
     def handle(self, *args, **options):
         count = options['count']
         should_clear = options['clear']
         start_year = options['start_year']
         end_year = options['end_year']
+        also_create_incidents = options['also_create_incidents']
 
         if start_year > end_year:
-            self.stdout.write(
-                self.style.ERROR('Invalid year range. start-year must be less than or equal to end-year.')
-            )
+            self.stdout.write(self.style.ERROR('Invalid year range. start-year must be <= end-year.'))
+            return
+
+        if Barangay is None:
+            self.stdout.write(self.style.ERROR('locations.models.Barangay could not be imported. Cannot connect barangays.'))
             return
 
         User = get_user_model()
         responders = list(User.objects.filter(is_staff=True))
-
         if not responders:
             responder = User.objects.create_user(
                 username='field_responder',
@@ -335,71 +338,98 @@ class Command(BaseCommand):
             AccomplishmentReport.objects.all().delete()
             VictimDetail.objects.all().delete()
             IncidentReport.objects.all().delete()
+            if also_create_incidents and Incident is not None:
+                Incident.objects.all().delete()
 
-        barangay_field_exists = has_model_field(IncidentReport, 'barangay')
+        report_has_barangay = has_model_field(IncidentReport, 'barangay')
+        incident_has_barangay = has_model_field(Incident, 'barangay') if Incident is not None else False
 
-        if Barangay is None:
-            self.stdout.write(
-                self.style.WARNING('locations.models.Barangay could not be imported. Reports will use location text only.')
-            )
-        elif not barangay_field_exists:
-            self.stdout.write(
-                self.style.WARNING('IncidentReport has no barangay field. Add a barangay ForeignKey first if you want barangay_id saved.')
-            )
+        if not report_has_barangay:
+            self.stdout.write(self.style.WARNING('IncidentReport has no barangay FK. Add/migrate barangay field to IncidentReport if reports must store barangay_id.'))
         else:
-            self.stdout.write(self.style.SUCCESS('Barangay FK detected. Generated reports will be linked to Barangay records.'))
+            self.stdout.write(self.style.SUCCESS('IncidentReport barangay FK detected.'))
 
-        self.stdout.write(
-            self.style.WARNING(
-                f'Generating {count} pending incident report records from {start_year} to {end_year}...'
-            )
-        )
+        if also_create_incidents:
+            if Incident is None:
+                self.stdout.write(self.style.WARNING('Incident model could not be imported. Skipping Incident creation.'))
+            elif not incident_has_barangay:
+                self.stdout.write(self.style.WARNING('Incident has no barangay FK. Incident records will not have barangay_id.'))
+            else:
+                self.stdout.write(self.style.SUCCESS('Incident barangay FK detected. Incident records will be linked too.'))
 
-        linked_count = 0
-        unlinked_count = 0
+        linked_reports = 0
+        linked_incidents = 0
+        created_barangays = 0
+        unlinked_reports = 0
+
+        self.stdout.write(self.style.WARNING(f'Generating {count} pending records from {start_year} to {end_year}...'))
 
         with transaction.atomic():
             for index in range(count):
                 created_at = get_random_created_at(start_year, end_year)
-
                 incident_type = random.choice(INCIDENT_TYPES)
                 victim_count = random.randint(0, 4)
-                location = random.choice(LOCATIONS)
-                latitude, longitude = get_randomized_coordinates(location)
-                barangay = find_barangay_for_location(location)
+                barangay_name = random.choice(BARANGAY_NAMES)
+                barangay, was_created = find_or_create_barangay(barangay_name)
+                if was_created:
+                    created_barangays += 1
 
-                if barangay:
-                    linked_count += 1
-                else:
-                    unlinked_count += 1
-
+                location = f'{barangay_name}, Lucena City'
+                latitude, longitude = get_randomized_coordinates(barangay_name)
                 incident_code = f'INC-{created_at.year}-{index + 1:04d}'
+                occurred_time = time(hour=random.randint(0, 23), minute=random.randint(0, 59))
+                responder = random.choice(responders)
+                description = get_incident_description(incident_type, location)
+                action_taken = random.choice(ACTIONS)
 
-                occurred_time = time(
-                    hour=random.randint(0, 23),
-                    minute=random.randint(0, 59),
-                )
-
-                create_kwargs = build_report_create_kwargs(
+                report_kwargs = build_create_kwargs(
+                    IncidentReport,
                     incident_code=incident_code,
                     time_occurred=occurred_time,
                     incident_type=incident_type,
                     responder_team=random.choice(TEAMS),
                     location=location,
-                    barangay=barangay if barangay_field_exists else None,
+                    address=location,
+                    barangay=barangay if report_has_barangay else None,
                     latitude=latitude,
                     longitude=longitude,
-                    description=get_incident_description(incident_type, location),
+                    description=description,
                     victim_count=victim_count,
-                    action_taken=random.choice(ACTIONS),
+                    action_taken=action_taken,
                     status='Pending',
-                    created_by=random.choice(responders),
+                    created_by=responder,
                 )
 
-                report = IncidentReport.objects.create(**create_kwargs)
+                report = IncidentReport.objects.create(**report_kwargs)
+                set_created_at(IncidentReport, report.id, created_at)
 
-                IncidentReport.objects.filter(id=report.id).update(created_at=created_at)
-                report.created_at = created_at
+                if report_has_barangay and barangay is not None:
+                    linked_reports += 1
+                else:
+                    unlinked_reports += 1
+
+                if also_create_incidents and Incident is not None:
+                    incident_kwargs = build_create_kwargs(
+                        Incident,
+                        incident_code=incident_code,
+                        code=incident_code,
+                        title=incident_type,
+                        name=incident_type,
+                        incident_type=incident_type,
+                        type=incident_type,
+                        status='Pending',
+                        location=location,
+                        address=location,
+                        barangay=barangay if incident_has_barangay else None,
+                        latitude=latitude,
+                        longitude=longitude,
+                        description=description,
+                        created_by=responder,
+                    )
+                    incident = Incident.objects.create(**incident_kwargs)
+                    set_created_at(Incident, incident.id, created_at)
+                    if incident_has_barangay and barangay is not None:
+                        linked_incidents += 1
 
                 for _ in range(victim_count):
                     VictimDetail.objects.create(
@@ -407,17 +437,17 @@ class Command(BaseCommand):
                         name=fake.name(),
                         age=str(random.randint(1, 85)),
                         gender=random.choice(['M', 'F']),
-                        address=random.choice(LOCATIONS),
+                        address=random.choice([f'{name}, Lucena City' for name in BARANGAY_NAMES]),
                         condition=random.choice(CONDITIONS),
                     )
 
         self.stdout.write(
             self.style.SUCCESS(
-                f'Successfully generated {count} pending incident reports from {start_year} to {end_year}. '
-                f'{VictimDetail.objects.count()} victim details created. '
-                f'Approved reports: 0. '
-                f'Barangay linked: {linked_count}. '
-                f'Barangay not matched: {unlinked_count}. '
-                f'All generated reports require manual admin approval.'
+                f'Successfully generated {count} pending incident reports. '
+                f'Report barangay linked: {linked_reports}. '
+                f'Report not linked: {unlinked_reports}. '
+                f'Incident barangay linked: {linked_incidents}. '
+                f'Barangays auto-created: {created_barangays}. '
+                f'Victim details total: {VictimDetail.objects.count()}.'
             )
         )
