@@ -364,6 +364,9 @@ class Command(BaseCommand):
 
         self.stdout.write(self.style.WARNING(f'Generating {count} pending records from {start_year} to {end_year}...'))
 
+        linked_count = 0
+        unlinked_count = 0
+
         with transaction.atomic():
             for index in range(count):
                 created_at = get_random_created_at(start_year, end_year)
