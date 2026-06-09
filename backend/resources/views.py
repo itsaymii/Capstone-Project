@@ -3,11 +3,7 @@ from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.authentication import TokenAuthentication, SessionAuthentication
 from django.db.models import Count, Sum
-<<<<<<< HEAD
 from django.db import transaction
-=======
-
->>>>>>> b03bade9610d5127843d56dc993084d778591651
 from .models import SupplyCategory, Supply, EvacuationCenter, Equipment, Volunteer
 from locations.models import Barangay
 from .serializers import (
