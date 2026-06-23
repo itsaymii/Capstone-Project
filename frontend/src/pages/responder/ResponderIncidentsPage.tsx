@@ -37,6 +37,8 @@ interface IncidentReport {
   status_update?: string
   createdAt?: string
   created_at?: string
+  createdBy?: string
+  createdByRole?: string
 }
 
 const API_BASE_URL = 'http://127.0.0.1:8000'
@@ -213,24 +215,22 @@ const IncidentReportPage: FC = () => {
     return () => window.clearInterval(intervalId)
   }, [fetchReports])
 
-  const isWithinThreeDays = (createdAt: string) => {
-    if (!createdAt) return false
 
-    const reportTime = new Date(createdAt).getTime()
-    const now = new Date().getTime()
-    const threeDays = 3 * 24 * 60 * 60 * 1000
-
-    return Number.isFinite(reportTime) && now - reportTime <= threeDays
-  }
 
   const isResponderTeamUnknown = (team: ResponderTeamCode) => team === 'unknown'
 
   const canSelectReport = (report: IncidentReport): boolean => {
-    if (!isWithinThreeDays(getCreatedAt(report))) {
+    if (isResponderTeamUnknown(currentResponderTeam)) {
       return false
     }
 
-    if (isResponderTeamUnknown(currentResponderTeam)) {
+    const normalized = normalizeStatus(getStatusValue(report))
+    if (normalized !== 'approved') {
+      return false
+    }
+
+    // Disallow selecting reports created by admin or staff accounts.
+    if (report.createdByRole === 'admin' || report.createdByRole === 'staff') {
       return false
     }
 
@@ -242,12 +242,17 @@ const IncidentReportPage: FC = () => {
       return 'Your account has no assigned responder team. Select only your own team reports.'
     }
 
+    if (report.createdByRole === 'admin' || report.createdByRole === 'staff') {
+      return 'Reports created by admin or staff cannot be selected for responder compilation.'
+    }
+
     if (!isReportOwnedByResponderTeam(report, currentResponderTeam)) {
       return `Only ${getTeamDisplayName(currentResponderTeam)} reports can be selected by this account.`
     }
 
-    if (!isWithinThreeDays(getCreatedAt(report))) {
-      return 'Only reports created within the last 3 days can be selected.'
+    const normalized = normalizeStatus(getStatusValue(report))
+    if (normalized !== 'approved') {
+      return 'Only approved incident reports can be selected for compilation.'
     }
 
     return 'Select for accomplishment report'
@@ -287,13 +292,13 @@ const IncidentReportPage: FC = () => {
       return
     }
 
-    if (!isReportOwnedByResponderTeam(report, currentResponderTeam)) {
-      addNotification(`Only ${getTeamDisplayName(currentResponderTeam)} reports can be selected by this account.`)
+    if (report.createdByRole === 'admin' || report.createdByRole === 'staff') {
+      addNotification('Reports created by admin or staff cannot be selected for responder compilation.')
       return
     }
 
-    if (!isWithinThreeDays(getCreatedAt(report))) {
-      addNotification('Only reports created within the last 3 days can be selected.')
+    if (!isReportOwnedByResponderTeam(report, currentResponderTeam)) {
+      addNotification(`Only ${getTeamDisplayName(currentResponderTeam)} reports can be selected by this account.`)
       return
     }
 
@@ -313,7 +318,7 @@ const IncidentReportPage: FC = () => {
     const selectableReports = filteredAndSortedReports.filter((report) => canSelectReport(report))
 
     if (selectableReports.length === 0) {
-      addNotification(`No ${getTeamDisplayName(currentResponderTeam)} reports within the last 3 days can be selected.`)
+      addNotification(`No ${getTeamDisplayName(currentResponderTeam)} reports can be selected.`)
       return
     }
 
@@ -349,17 +354,34 @@ const IncidentReportPage: FC = () => {
           reportIds: selectedIds,
         }),
       })
-
       if (!response.ok) {
-        throw new Error('Failed to compile reports')
+        let errText = 'Failed to compile reports'
+        try {
+          const errData = await response.json()
+          console.error('Compile error response:', errData)
+          if (errData && errData.missing_reports) {
+            errText = errData.missing_reports
+          } else if (errData && typeof errData === 'object') {
+            errText = Object.entries(errData)
+              .map(([k, v]) => `${k}: ${JSON.stringify(v)}`)
+              .join(' | ')
+          } else if (typeof errData === 'string') {
+            errText = errData
+          }
+        } catch (e) {
+          console.error('Failed to parse error response', e)
+        }
+
+        throw new Error(errText)
       }
 
       addNotification('Reports compiled successfully!')
       setSelectedIds([])
-      navigate('/responder-reports')
+      navigate('/responder-reports', { replace: true })
     } catch (error) {
       console.error('Error compiling reports:', error)
-      addNotification('Failed to compile reports.')
+      const message = error instanceof Error ? error.message : 'Failed to compile reports.'
+      addNotification(message)
     }
   }
 
@@ -427,7 +449,7 @@ const IncidentReportPage: FC = () => {
             <div className="rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-800">
               {isResponderTeamUnknown(currentResponderTeam)
                 ? 'Team assignment not detected. You cannot select reports until your account is assigned to a team.'
-                : `Logged-in team: ${getTeamDisplayName(currentResponderTeam)}. You can select only ${getTeamDisplayName(currentResponderTeam)} reports created within the last 3 days.`}
+                : `Logged-in team: ${getTeamDisplayName(currentResponderTeam)}. You can select only ${getTeamDisplayName(currentResponderTeam)} reports.`}
             </div>
 
             <div className="flex flex-col items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:flex-row">
@@ -543,7 +565,14 @@ const IncidentReportPage: FC = () => {
                         </td>
 
                         <td className="px-6 py-4 font-mono text-sm font-bold tracking-tight text-slate-900 transition-colors group-hover:text-blue-600">
-                          {getReportCode(report)}
+                          <div className="flex items-center gap-2">
+                            <span>{getReportCode(report)}</span>
+                            {(report.createdByRole === 'admin' || report.createdByRole === 'staff') && (
+                              <span className={`rounded-md px-2 py-0.5 text-[10px] font-extrabold ${report.createdByRole === 'admin' ? 'bg-red-50 text-red-600 border border-red-100' : 'bg-orange-50 text-orange-700 border border-orange-100'}`}>
+                                {report.createdByRole}
+                              </span>
+                            )}
+                          </div>
                         </td>
 
                         <td className="px-6 py-4 font-mono text-sm text-slate-500">
@@ -561,12 +590,15 @@ const IncidentReportPage: FC = () => {
                         </td>
 
                         <td className="px-6 py-4 text-xs font-medium text-slate-500">
-                          {getCreatedAt(report)
-                            ? new Date(getCreatedAt(report)).toLocaleString(undefined, {
-                                dateStyle: 'medium',
-                                timeStyle: 'short',
-                              })
-                            : 'N/A'}
+                          {(() => {
+                            const createdAt = getCreatedAt(report)
+                            if (!createdAt) return 'N/A'
+                            const date = new Date(createdAt)
+                            return isNaN(date.getTime()) ? 'N/A' : date.toLocaleString(undefined, {
+                              dateStyle: 'medium',
+                              timeStyle: 'short',
+                            })
+                          })()}
                         </td>
 
                         <td className="px-6 py-4">
@@ -581,13 +613,9 @@ const IncidentReportPage: FC = () => {
                             <span className="rounded-md border border-emerald-100 bg-emerald-50 px-2 py-1 text-[10px] font-bold text-emerald-700">
                               Available
                             </span>
-                          ) : !isReportOwnedByResponderTeam(report, currentResponderTeam) ? (
+                          ) : (
                             <span className="rounded-md border border-red-100 bg-red-50 px-2 py-1 text-[10px] font-bold text-red-600">
                               Team Locked
-                            </span>
-                          ) : (
-                            <span className="rounded-md border border-slate-200 bg-slate-100 px-2 py-1 text-[10px] font-bold text-slate-500">
-                              Expired
                             </span>
                           )}
                         </td>
@@ -773,23 +801,34 @@ const DetailItem = ({
   value: string | number
   isMono?: boolean
   isStatus?: boolean
-}) => (
-  <div className="space-y-0.5">
-    <span className="block text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
-      {label}
-    </span>
+}) => {
+  let displayValue: string | number = value
 
-    {isStatus ? (
-      <span className={`mt-1 inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-bold ${getStatusBadgeClass(String(value))}`}>
-        <span className={`mr-1.5 h-1.5 w-1.5 rounded-full ${getStatusDotClass(String(value))}`} />
-        {getStatusLabel(String(value))}
+  if (label.toLowerCase().includes('time') && value && typeof value === 'string') {
+    const date = new Date(value)
+    if (isNaN(date.getTime())) {
+      displayValue = 'N/A'
+    }
+  }
+
+  return (
+    <div className="space-y-0.5">
+      <span className="block text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
+        {label}
       </span>
-    ) : (
-      <span className={`block text-sm font-semibold text-slate-800 ${isMono ? 'font-mono tracking-tight text-blue-600' : ''}`}>
-        {value || 'N/A'}
-      </span>
-    )}
-  </div>
-)
+
+      {isStatus ? (
+        <span className={`mt-1 inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-bold ${getStatusBadgeClass(String(value))}`}>
+          <span className={`mr-1.5 h-1.5 w-1.5 rounded-full ${getStatusDotClass(String(value))}`} />
+          {getStatusLabel(String(value))}
+        </span>
+      ) : (
+        <span className={`block text-sm font-semibold text-slate-800 ${isMono ? 'font-mono tracking-tight text-blue-600' : ''}`}>
+          {displayValue || 'N/A'}
+        </span>
+      )}
+    </div>
+  )
+}
 
 export default IncidentReportPage

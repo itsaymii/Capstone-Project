@@ -58,15 +58,14 @@ type USGSResponse = {
 
 /**
  * Fetch recent earthquake events from the USGS FDSN catalog.
- * The bounding box covers Quezon Province and immediately surrounding areas
- * (with a buffer) so that earthquakes originating near the province but still
- * capable of impacting it are included.
+ * The bounding box covers the entire Philippine archipelago so the UI can
+ * display all earthquakes affecting the country.
  *
- * @param days      How many days back to query (default: 1825 — 5 years)
+ * @param days      How many days back to query (default: 730 — 2 years)
  * @param minMag    Minimum magnitude to include (default: 1.0)
  */
-export async function fetchQuezonRegionEarthquakes(
-  days = 1825,
+export async function fetchPhilippinesEarthquakes(
+  days = 730,
   minMag = 1.0,
 ): Promise<EarthquakeEvent[]> {
   const endTime = new Date().toISOString()
@@ -76,13 +75,13 @@ export async function fetchQuezonRegionEarthquakes(
     format: 'geojson',
     starttime: startTime,
     endtime: endTime,
-    minlatitude: '13.0',
-    maxlatitude: '15.5',
-    minlongitude: '120.3',
-    maxlongitude: '123.2',
+    minlatitude: '4.0',
+    maxlatitude: '21.8',
+    minlongitude: '116.0',
+    maxlongitude: '127.8',
     minmagnitude: String(minMag),
     orderby: 'time',
-    limit: '2000',
+    limit: '20000',
   })
 
   const response = await fetch(`${USGS_FDSN_API}?${params}`)

@@ -18,7 +18,7 @@ import { getIncidentReports } from '../../services/incidents'
 import {
   type EarthquakeEvent,
   type HeatPoint,
-  fetchQuezonRegionEarthquakes,
+  fetchPhilippinesEarthquakes,
   toHeatPoints,
 } from '../../services/earthquakes'
 
@@ -377,7 +377,7 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
     }
 
     try {
-      const events = await fetchQuezonRegionEarthquakes(1825, 1.0)
+      const events = await fetchPhilippinesEarthquakes(730, 1.0)
       setEarthquakeEvents(events)
       setEqHeatPoints(toHeatPoints(events))
       setEqFetchStatus('idle')

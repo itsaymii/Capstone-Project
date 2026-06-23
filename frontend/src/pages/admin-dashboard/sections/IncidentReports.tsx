@@ -402,7 +402,7 @@ export function IncidentReports() {
             </p>
           </div>
 
-          <div className="flex flex-col gap-4 lg:flex-1 lg:px-6">
+          {/* <div className="flex flex-col gap-4 lg:flex-1 lg:px-6">
             <div className="mx-auto w-full max-w-lg rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 lg:px-5">
               <input
                 className="min-w-0 w-full bg-transparent text-sm text-slate-900 outline-none placeholder:text-slate-400"
@@ -412,7 +412,7 @@ export function IncidentReports() {
                 value={searchQuery}
               />
             </div>
-          </div>
+          </div> */}
 
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
             <label className="flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-xs uppercase tracking-[0.14em] text-slate-500">
@@ -435,9 +435,9 @@ export function IncidentReports() {
                 value={teamFilter}
               >
                 <option value="All">All Teams</option>
-                <option value="Alpha">Alpha Responder Squad</option>
-                <option value="Charlie">Charlie Medical Unit</option>
-                <option value="Bravo">Bravo Rescue Team</option>
+                <option value="Alpha">Alpha</option>
+                <option value="Charlie">Charlie</option>
+                <option value="Bravo">Bravo</option>
               </select>
             </label>
           </div>

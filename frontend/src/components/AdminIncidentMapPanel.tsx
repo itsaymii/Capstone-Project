@@ -12,7 +12,7 @@ import {
 import {
   type EarthquakeEvent,
   type HeatPoint,
-  fetchQuezonRegionEarthquakes,
+  fetchPhilippinesEarthquakes,
   toHeatPoints,
 } from '../services/earthquakes'
 
@@ -410,6 +410,8 @@ export function AdminIncidentMapPanel({
 }: AdminIncidentMapPanelProps) {
   const mapContainerRef = useRef<HTMLDivElement | null>(null)
   const mapInstanceRef = useRef<L.Map | null>(null)
+  const savedMapViewRef = useRef<{ center: [number, number]; zoom: number } | null>(null)
+  const previousSelectedTypeRef = useRef<IncidentMapFilter>(selectedType)
 
   const [selectedIncident, setSelectedIncident] = useState<MapIncident | null>(null)
   const [editingIncident, setEditingIncident] = useState<MapIncident | null>(null)
@@ -618,7 +620,7 @@ export function AdminIncidentMapPanel({
     }
 
     try {
-      const events = await fetchQuezonRegionEarthquakes(1825, 1.0)
+      const events = await fetchPhilippinesEarthquakes(730, 1.0)
       setEarthquakeEvents(events)
       setEqHeatPoints(toHeatPoints(events))
       setEqFetchStatus('idle')
@@ -710,6 +712,16 @@ export function AdminIncidentMapPanel({
     }
 
     if (mapInstanceRef.current) {
+      if (previousSelectedTypeRef.current === selectedType) {
+        const currentCenter = mapInstanceRef.current.getCenter()
+        savedMapViewRef.current = {
+          center: [currentCenter.lat, currentCenter.lng],
+          zoom: mapInstanceRef.current.getZoom(),
+        }
+      } else {
+        savedMapViewRef.current = null
+      }
+
       mapInstanceRef.current.remove()
       mapInstanceRef.current = null
     }
@@ -725,7 +737,9 @@ export function AdminIncidentMapPanel({
       maxZoom: 18,
     })
 
-    if (isEqView) {
+    if (savedMapViewRef.current && previousSelectedTypeRef.current === selectedType) {
+      map.setView(savedMapViewRef.current.center, savedMapViewRef.current.zoom)
+    } else if (isEqView) {
       map.fitBounds(quezonRegionBounds)
     } else {
       map.fitBounds(lucenaBounds, { padding: [18, 18] })
@@ -936,6 +950,7 @@ export function AdminIncidentMapPanel({
     }, 0)
 
     mapInstanceRef.current = map
+    previousSelectedTypeRef.current = selectedType
 
     return () => {
       map.remove()

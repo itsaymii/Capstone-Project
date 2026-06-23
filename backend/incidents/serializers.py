@@ -406,6 +406,10 @@ class IncidentReportSerializer(serializers.ModelSerializer):
     coordinates = serializers.SerializerMethodField()
     createdAt = serializers.DateTimeField(source='created_at', read_only=True)
 
+    # Include creator info to help the frontend decide selection eligibility
+    createdBy = serializers.CharField(source='created_by.username', read_only=True)
+    createdByRole = serializers.SerializerMethodField()
+
     class Meta:
         model = IncidentReport
         fields = [
@@ -425,6 +429,8 @@ class IncidentReportSerializer(serializers.ModelSerializer):
             'actionTaken',
             'status',
             'createdAt',
+            'createdBy',
+            'createdByRole',
         ]
         read_only_fields = ['id', 'reportCode', 'createdAt']
 
@@ -461,6 +467,24 @@ class IncidentReportSerializer(serializers.ModelSerializer):
         # Incidents are created only when status transitions to 'Approved'.
 
         return incident_report
+
+    def get_createdByRole(self, obj):
+        # Return a simple role for frontend consumption: 'anonymous', 'admin', 'staff', or 'responder'
+        if not obj.created_by:
+            return 'anonymous'
+
+        try:
+            role = obj.created_by.account_profile.role
+        except Exception:
+            role = None
+
+        if role == 'admin':
+            return 'admin'
+        if role == 'staff':
+            return 'staff'
+
+        # Default to 'responder' for other roles
+        return 'responder'
 
     def create_admin_incident(self, incident_report, request):
         hazard_name = map_incident_type_to_hazard_name(incident_report.incident_type)
@@ -590,20 +614,69 @@ class AccomplishmentReportSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         report_ids = validated_data.pop('reportIds', [])
         request = self.context.get('request')
-        # Only allow reports that were submitted by responder users (non-dashboard roles)
-        from accounts.models import AccountProfile
-        eligible_reports = IncidentReport.objects.filter(
-            id__in=report_ids,
-            created_by__isnull=False,
-        ).exclude(created_by__account_profile__role__in=[
-            AccountProfile.ROLE_ADMIN, AccountProfile.ROLE_STAFF
-        ])
 
-        # If any requested report ids are not eligible, raise a validation error
-        if eligible_reports.count() != len(report_ids):
-            raise serializers.ValidationError(
-                "Only responder-submitted reports can be compiled into an Accomplishment Report."
-            )
+        # Accept either UUID primary keys or human-readable codes (report_code / incident_code)
+        # Build lists for matching
+        uuid_like = []
+        code_like = []
+        for rid in report_ids:
+            try:
+                # try treating as UUID by importing uuid
+                import uuid as _uuid
+
+                _uuid.UUID(str(rid))
+                uuid_like.append(rid)
+            except Exception:
+                # treat as code (IR-..., INC-...)
+                code_like.append(str(rid).strip())
+
+        from django.db.models import Q
+        from accounts.models import AccountProfile
+
+        query = Q()
+        if uuid_like:
+            query |= Q(id__in=uuid_like)
+        if code_like:
+            query |= Q(report_code__in=code_like) | Q(incident_code__in=code_like)
+
+        requested_reports = IncidentReport.objects.filter(query).select_related('created_by')
+        already_compiled_reports = requested_reports.filter(accomplishment_reports__isnull=False).distinct()
+
+        if already_compiled_reports.exists():
+            duplicate_codes = [r.report_code or str(r.id) for r in already_compiled_reports]
+            raise serializers.ValidationError({
+                'reportIds': [
+                    'The following report(s) have already been compiled and cannot be recompiled: ' + ', '.join(duplicate_codes)
+                ]
+            })
+
+        eligible_reports = requested_reports.exclude(
+            created_by__account_profile__role__in=[AccountProfile.ROLE_ADMIN, AccountProfile.ROLE_STAFF]
+        )
+
+        # Build sets of found identifiers for clearer diagnostics
+        found_uuid_set = set(str(r.id) for r in eligible_reports)
+        found_code_set = set()
+        for r in eligible_reports:
+            if r.report_code:
+                found_code_set.add(r.report_code)
+            if r.incident_code:
+                found_code_set.add(r.incident_code)
+
+        # Determine which requested ids did not match any eligible report
+        missing = []
+        for rid in report_ids:
+            if rid in found_uuid_set or str(rid).strip() in found_code_set:
+                continue
+            missing.append(rid)
+
+        if missing:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning('Accomplishment compile: missing requested reports: %s', missing)
+            # Do not fail the request; proceed with the reports that were found.
+            # The frontend will receive a successful response and can be notified
+            # that some requested items were not included.
 
         accomplishment = AccomplishmentReport.objects.create(
             title=validated_data.get('title', 'Accomplishment Report'),

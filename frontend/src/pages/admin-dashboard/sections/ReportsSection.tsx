@@ -1,9 +1,12 @@
 import { useMemo, useState } from 'react'
+import { jsPDF } from 'jspdf'
 import type { HazardIncident } from '../../../data/adminOperations'
 import type { EarthquakeEvent } from '../../../services/earthquakes'
 import { glassPanelClass, glassPanelSoftClass } from './constants'
 
 type ReportHazardFilter = 'all' | 'FR' | 'EQ' | 'AC'
+
+type PdfAction = 'save' | 'print'
 
 type ReportTableColumn<T> = {
   key: keyof T
@@ -368,51 +371,95 @@ export function ReportsSection({
     URL.revokeObjectURL(downloadUrl)
   }
 
-  function printReportTable<T extends Record<string, string | number>>(
+  function sanitizeFilenamePart(value: string): string {
+    return value.replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '').toLowerCase() || 'hazard-report'
+  }
+
+  function buildReportPdf<T extends Record<string, string | number>>(
     title: string,
     description: string,
     columns: ReportTableColumn<T>[],
     rows: T[],
-  ): void {
-    const printWindow = window.open('', '_blank', 'noopener,noreferrer,width=1200,height=900')
-    if (!printWindow) return
+  ) {
+    const document = new jsPDF({ unit: 'mm', format: 'a4' })
+    const pageWidth = document.internal.pageSize.getWidth()
+    const pageHeight = document.internal.pageSize.getHeight()
+    const margin = 14
+    const maxLineWidth = pageWidth - margin * 2
+    let cursorY = 18
 
-    const headerCells = columns.map((column) => `<th>${escapeHtmlCell(String(column.label))}</th>`).join('')
-    const bodyRows = rows
-      .map(
-        (row) =>
-          `<tr>${columns.map((column) => `<td>${escapeHtmlCell(String(row[column.key] ?? ''))}</td>`).join('')}</tr>`,
-      )
-      .join('')
+    const ensureSpace = (height: number): void => {
+      if (cursorY + height > pageHeight - 18) {
+        document.addPage()
+        cursorY = 18
+      }
+    }
 
-    printWindow.document.write(`
-      <html>
-        <head>
-          <title>${escapeHtmlCell(title)}</title>
-          <style>
-            body { font-family: Arial, sans-serif; margin: 24px; color: #0f172a; }
-            h1 { font-size: 22px; margin-bottom: 4px; }
-            p { margin: 0 0 16px; color: #475569; }
-            table { width: 100%; border-collapse: collapse; font-size: 12px; }
-            th, td { border: 1px solid #cbd5e1; padding: 10px 12px; text-align: left; vertical-align: top; }
-            th { background: #e2e8f0; text-transform: uppercase; font-size: 11px; letter-spacing: 0.08em; }
-            tr:nth-child(even) td { background: #f8fafc; }
-          </style>
-        </head>
-        <body>
-          <h1>${escapeHtmlCell(title)}</h1>
-          <p>${escapeHtmlCell(description)}</p>
-          <table>
-            <thead><tr>${headerCells}</tr></thead>
-            <tbody>${bodyRows || '<tr><td colspan="99">No rows available for the selected filters.</td></tr>'}</tbody>
-          </table>
-        </body>
-      </html>
-    `)
+    const drawText = (text: string, fontSize: number, style: 'normal' | 'bold' = 'normal') => {
+      document.setFont('helvetica', style)
+      document.setFontSize(fontSize)
+      const lines = document.splitTextToSize(text, maxLineWidth)
+      const lineHeight = fontSize * 0.42 + 1.4
+      ensureSpace(lines.length * lineHeight + 2)
+      document.text(lines, margin, cursorY)
+      cursorY += lines.length * lineHeight + 2
+    }
 
-    printWindow.document.close()
-    printWindow.focus()
-    printWindow.print()
+    const generatedAt = new Date().toLocaleString('en-PH', {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+    })
+
+    drawText(title, 16, 'bold')
+    drawText(description, 10)
+    drawText(`Generated: ${generatedAt}`, 8)
+    cursorY += 4
+
+    if (rows.length === 0) {
+      drawText('No report rows match the current filters.', 10)
+      return document
+    }
+
+    rows.forEach((row, index) => {
+      ensureSpace(32)
+      drawText(`${index + 1}. ${String(row[columns[0].key] ?? '')}`, 11, 'bold')
+      columns.slice(1).forEach((column) => {
+        const value = String(row[column.key] ?? '-')
+        drawText(`${column.label}: ${value}`, 9)
+      })
+      cursorY += 4
+    })
+
+    return document
+  }
+
+  function handlePdfAction<T extends Record<string, string | number>>(
+    action: PdfAction,
+    title: string,
+    description: string,
+    columns: ReportTableColumn<T>[],
+    rows: T[],
+  ) {
+    const document = buildReportPdf(title, description, columns, rows)
+    const filename = `${sanitizeFilenamePart(title)}-${new Date().toISOString().slice(0, 10)}.pdf`
+
+    if (action === 'save') {
+      document.save(filename)
+      return
+    }
+
+    document.autoPrint()
+    const blobUrl = document.output('bloburl')
+    const printWindow = window.open(blobUrl, '_blank', 'noopener,noreferrer')
+
+    if (!printWindow) {
+      document.save(filename)
+      return
+    }
+
+    setTimeout(() => {
+      URL.revokeObjectURL(blobUrl)
+    }, 60_000)
   }
 
   function renderReportTable<T extends Record<string, string | number>>(options: {
@@ -437,10 +484,18 @@ export function ReportsSection({
           <div className="flex flex-wrap gap-2">
             <button
               className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-700 transition hover:bg-slate-50"
-              onClick={() => printReportTable(title, description, columns, rows)}
+              onClick={() => handlePdfAction('save', title, description, columns, rows)}
               type="button"
             >
-              Print / Save PDF
+              Save PDF
+            </button>
+
+            <button
+              className="rounded-xl border border-sky-300 bg-sky-50 px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-sky-700 transition hover:bg-sky-100"
+              onClick={() => handlePdfAction('print', title, description, columns, rows)}
+              type="button"
+            >
+              Print PDF
             </button>
 
             <button

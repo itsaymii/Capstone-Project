@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import type { HazardIncident } from '../../../data/adminOperations'
 import { glassPanelClass } from './constants'
-import { fetchQuezonRegionEarthquakes, type EarthquakeEvent } from '../../../services/earthquakes'
+import { fetchPhilippinesEarthquakes, type EarthquakeEvent } from '../../../services/earthquakes'
 
 type MetricCard = {
   label: string
@@ -66,7 +66,7 @@ export function OverviewSection({
     setEqStatus('loading')
 
     try {
-      const events = await fetchQuezonRegionEarthquakes()
+      const events = await fetchPhilippinesEarthquakes()
       setEqEvents(events)
       setEqStatus('idle')
     } catch {

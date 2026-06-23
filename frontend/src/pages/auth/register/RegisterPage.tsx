@@ -5,6 +5,10 @@ import { Link } from 'react-router-dom'
 import { useNavigate } from 'react-router-dom'
 import { requestRegisterOtp, verifyRegisterOtpCode } from '../../../services/auth'
 
+// Import ng background image at logo na katulad ng sa LoginPage.tsx
+import landingPageImage from '../../../images/LandingPage.jpg'
+import drrmoLogo from '../../../images/drrmo.png'
+
 interface RegisterPageProps {
   onRequestLogin?: () => void
   onRegistered?: () => void
@@ -167,35 +171,28 @@ export function RegisterPage({ onRequestLogin, onRegistered, modalMode = false }
   }
 
   function getPostRegistrationPath(): string {
-    // Newly registered users are citizens by default
-    // Redirect to landing page for citizens
     return '/landing'
   }
 
   async function handleCredentialSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-
     const fullName = buildFullName()
     if (!fullName) {
       setErrorMessage('Please provide your first name and last name.')
       return
     }
-
     if (!email.trim()) {
       setErrorMessage('Email address is required.')
       return
     }
-
     if (!password) {
       setErrorMessage('Password is required.')
       return
     }
-
     if (password.length < 6) {
       setErrorMessage('Password must be at least 6 characters.')
       return
     }
-
     if (password !== confirmPassword) {
       setErrorMessage('Password and confirm password do not match.')
       return
@@ -242,7 +239,6 @@ export function RegisterPage({ onRequestLogin, onRegistered, modalMode = false }
     clearCooldown()
     setErrorMessage('')
     
-    // If automatic login happened (skipOtp = true), redirect to dashboard
     if (result.skipOtp) {
       setSuccessMessage(result.message ?? 'Registration successful! Redirecting...')
       window.setTimeout(() => {
@@ -259,7 +255,6 @@ export function RegisterPage({ onRequestLogin, onRegistered, modalMode = false }
       return
     }
     
-    // Otherwise, redirect to login page
     if (onRegistered) {
       onRegistered()
       return
@@ -277,7 +272,6 @@ export function RegisterPage({ onRequestLogin, onRegistered, modalMode = false }
     if (cooldownRemaining > 0) {
       return
     }
-
     setIsSubmitting(true)
     const result = await requestRegisterOtp({
       fullName: buildFullName(),
@@ -302,58 +296,78 @@ export function RegisterPage({ onRequestLogin, onRegistered, modalMode = false }
 
   return (
     <main
-      className={`flex min-h-screen items-center justify-center p-4 text-slate-800 sm:p-8 ${
-        modalMode ? 'bg-transparent' : 'bg-[radial-gradient(circle_at_top,#e7efff_0%,#f8fbff_42%,#eef3f9_100%)]'
+      // Idinagdag ang bg-cover background ng LandingPage.jpg na may navy blend overlay para maging kamukha ng Login Page
+      className={`relative flex min-h-screen items-center justify-center p-4 text-slate-800 sm:p-8 ${
+        modalMode ? 'bg-transparent' : 'bg-cover bg-center'
       }`}
+      style={
+        modalMode
+          ? undefined
+          : {
+              backgroundImage: `url(${landingPageImage})`,
+              backgroundRepeat: 'no-repeat',
+              backgroundAttachment: 'fixed',
+              backgroundColor: 'rgba(15, 32, 67, 0.85)',
+              backgroundBlendMode: 'multiply',
+            }
+      }
     >
       <div
-        className="mx-auto w-full max-w-5xl overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-[0_24px_60px_rgba(15,23,42,0.14)]"
+        className="mx-auto w-full max-w-5xl overflow-hidden rounded-[2.5rem] border border-slate-200 bg-white/95 backdrop-blur-md shadow-[0_32px_64px_rgba(15,23,42,0.12)]"
         onClick={(event) => {
           if (modalMode) {
             event.stopPropagation()
           }
         }}
       >
-        <div className="grid min-h-[640px] md:grid-cols-2">
+        <div className="grid min-h-[680px] md:grid-cols-12">
+          
+          {/* LEFT SIDE: REGISTRATION FORM PANEL (Nasa Kaliwa na ito ngayon) */}
           <motion.section
             animate={{ opacity: 1, x: 0 }}
-            className="bg-white p-10 pt-14"
-            initial={{ opacity: 0, x: -70 }}
-            transition={{ duration: 0.35, ease: 'easeOut' }}
+            className="md:col-span-7 p-8 sm:p-10 flex flex-col justify-center bg-[radial-gradient(circle_at_bottom_left,#f7faff_0%,#ffffff_70%)] relative order-2 md:order-1"
+            initial={{ opacity: 0, x: -40 }}
+            transition={{ duration: 0.5, ease: 'easeOut' }}
           >
-            <h1 className="text-4xl font-bold tracking-tight text-slate-900">Create Your Account</h1>
-            <p className="mt-2 text-sm text-slate-500">
-              {otpStep ? 'Enter the OTP sent to your email' : 'Create an account'}
-            </p>
+            {/* Soft Ambient Subtle Light Highlight */}
+            <div className="absolute top-0 left-1/4 h-56 w-56 rounded-full bg-blue-50/40 blur-3xl pointer-events-none" />
 
-            <div className="mt-6 flex items-center gap-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
+            <div className="relative z-10">
+              <h1 className="text-3xl font-bold tracking-tight text-slate-900">Create Account</h1>
+              <p className="mt-1.5 text-sm text-slate-500">
+                {otpStep ? 'Enter the security key sent to your email.' : 'Sign up to create your workspace dashboard credentials.'}
+              </p>
+            </div>
+
+            {/* Progress Stepper */}
+            <div className="relative z-10 mt-6 flex items-center gap-3 text-xs font-semibold uppercase tracking-wide text-slate-400">
               <span
-                className={`inline-flex h-7 w-7 items-center justify-center rounded-full border ${
-                  !otpStep ? 'border-[#0b2a57] bg-[#0b2a57] text-white' : 'border-emerald-600 bg-emerald-600 text-white'
+                className={`inline-flex h-6 w-6 items-center justify-center rounded-full text-[11px] border font-bold ${
+                  !otpStep ? 'border-[#0b2a57] bg-[#0b2a57] text-white shadow-[0_4px_10px_rgba(11,42,87,0.25)]' : 'border-emerald-600 bg-emerald-600 text-white'
                 }`}
               >
                 1
               </span>
-              <span className={!otpStep ? 'text-slate-800' : 'text-slate-500'}>Details</span>
-              <span className="h-px w-8 bg-slate-300" />
+              <span className={!otpStep ? 'text-slate-800 font-bold' : 'text-slate-400'}>Credentials</span>
+              <span className="h-px w-6 bg-slate-200" />
               <span
-                className={`inline-flex h-7 w-7 items-center justify-center rounded-full border ${
-                  otpStep ? 'border-[#0b2a57] bg-[#0b2a57] text-white' : 'border-slate-300 bg-white text-slate-500'
+                className={`inline-flex h-6 w-6 items-center justify-center rounded-full text-[11px] border font-bold ${
+                  otpStep ? 'border-[#0b2a57] bg-[#0b2a57] text-white shadow-[0_4px_10px_rgba(11,42,87,0.25)]' : 'border-slate-200 bg-white text-slate-400'
                 }`}
               >
                 2
               </span>
-              <span className={otpStep ? 'text-slate-800' : 'text-slate-500'}>OTP</span>
+              <span className={otpStep ? 'text-slate-800 font-bold' : 'text-slate-400'}>Verification</span>
             </div>
 
-            <form className="mt-10 space-y-7" onSubmit={otpStep ? handleOtpSubmit : handleCredentialSubmit}>
+            <form className="relative z-10 mt-8 space-y-5" onSubmit={otpStep ? handleOtpSubmit : handleCredentialSubmit}>
               {!otpStep ? (
                 <>
-                  <div className="grid gap-5 sm:grid-cols-2">
+                  <div className="grid gap-4 sm:grid-cols-2">
                     <label className="block">
-                      <span className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">First Name</span>
+                      <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500">First Name</span>
                       <input
-                        className="w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-base outline-none placeholder:text-slate-400 transition focus:border-[#0b2a57] focus:ring-2 focus:ring-[#0b2a57]/10"
+                        className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-3.5 py-2.5 text-sm outline-none placeholder:text-slate-400 transition focus:border-slate-400 focus:bg-white focus:ring-4 focus:ring-slate-100"
                         type="text"
                         value={firstName}
                         onChange={(event) => setFirstName(event.target.value)}
@@ -363,9 +377,9 @@ export function RegisterPage({ onRequestLogin, onRegistered, modalMode = false }
                     </label>
 
                     <label className="block">
-                      <span className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">Last Name</span>
+                      <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500">Last Name</span>
                       <input
-                        className="w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-base outline-none placeholder:text-slate-400 transition focus:border-[#0b2a57] focus:ring-2 focus:ring-[#0b2a57]/10"
+                        className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-3.5 py-2.5 text-sm outline-none placeholder:text-slate-400 transition focus:border-slate-400 focus:bg-white focus:ring-4 focus:ring-slate-100"
                         type="text"
                         value={lastName}
                         onChange={(event) => setLastName(event.target.value)}
@@ -376,9 +390,9 @@ export function RegisterPage({ onRequestLogin, onRegistered, modalMode = false }
                   </div>
 
                   <label className="block">
-                    <span className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">Email Address</span>
+                    <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500">Email Address</span>
                     <input
-                      className="w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-base outline-none placeholder:text-slate-400 transition focus:border-[#0b2a57] focus:ring-2 focus:ring-[#0b2a57]/10"
+                      className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-3.5 py-2.5 text-sm outline-none placeholder:text-slate-400 transition focus:border-slate-400 focus:bg-white focus:ring-4 focus:ring-slate-100"
                       type="email"
                       value={email}
                       onChange={(event) => setEmail(event.target.value)}
@@ -388,9 +402,9 @@ export function RegisterPage({ onRequestLogin, onRegistered, modalMode = false }
                   </label>
 
                   <label className="block">
-                    <span className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">Username (Optional)</span>
+                    <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500">Username (Optional)</span>
                     <input
-                      className="w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-base outline-none placeholder:text-slate-400 transition focus:border-[#0b2a57] focus:ring-2 focus:ring-[#0b2a57]/10"
+                      className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-3.5 py-2.5 text-sm outline-none placeholder:text-slate-400 transition focus:border-slate-400 focus:bg-white focus:ring-4 focus:ring-slate-100"
                       type="text"
                       value={username}
                       onChange={(event) => setUsername(event.target.value)}
@@ -398,64 +412,65 @@ export function RegisterPage({ onRequestLogin, onRegistered, modalMode = false }
                     />
                   </label>
 
-                  <label className="block">
-                    <span className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">Password</span>
-                    <div className="flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3">
-                      <input
-                        className="w-full border-0 bg-transparent px-0 py-3 text-base outline-none placeholder:text-slate-400"
-                        type={showPassword ? 'text' : 'password'}
-                        value={password}
-                        onChange={(event) => setPassword(event.target.value)}
-                        placeholder="Password"
-                        required
-                      />
-                      <button
-                        className="text-xs font-semibold uppercase tracking-wide text-slate-600 hover:text-slate-800"
-                        onClick={() => setShowPassword((previous) => !previous)}
-                        type="button"
-                      >
-                        {showPassword ? 'Hide' : 'Show'}
-                      </button>
-                    </div>
-                  </label>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <label className="block">
+                      <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500">Password</span>
+                      <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50/50 px-3.5 focus-within:border-slate-400 focus-within:bg-white focus-within:ring-4 focus-within:ring-slate-100 transition">
+                        <input
+                          className="w-full border-0 bg-transparent py-2.5 text-sm outline-none placeholder:text-slate-400"
+                          type={showPassword ? 'text' : 'password'}
+                          value={password}
+                          onChange={(event) => setPassword(event.target.value)}
+                          placeholder="Password"
+                          required
+                        />
+                        <button
+                          className="text-[11px] font-bold uppercase tracking-wider text-slate-400 hover:text-slate-600 transition"
+                          onClick={() => setShowPassword((previous) => !previous)}
+                          type="button"
+                        >
+                          {showPassword ? 'Hide' : 'Show'}
+                        </button>
+                      </div>
+                    </label>
 
-                  <label className="block">
-                    <span className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">Confirm Password</span>
-                    <div className="flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3">
-                      <input
-                        className="w-full border-0 bg-transparent px-0 py-3 text-base outline-none placeholder:text-slate-400"
-                        type={showConfirmPassword ? 'text' : 'password'}
-                        value={confirmPassword}
-                        onChange={(event) => setConfirmPassword(event.target.value)}
-                        placeholder="Confirm Password"
-                        required
-                      />
-                      <button
-                        className="text-xs font-semibold uppercase tracking-wide text-slate-600 hover:text-slate-800"
-                        onClick={() => setShowConfirmPassword((previous) => !previous)}
-                        type="button"
-                      >
-                        {showConfirmPassword ? 'Hide' : 'Show'}
-                      </button>
-                    </div>
-                  </label>
-
+                    <label className="block">
+                      <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500">Confirm Password</span>
+                      <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50/50 px-3.5 focus-within:border-slate-400 focus-within:bg-white focus-within:ring-4 focus-within:ring-slate-100 transition">
+                        <input
+                          className="w-full border-0 bg-transparent py-2.5 text-sm outline-none placeholder:text-slate-400"
+                          type={showConfirmPassword ? 'text' : 'password'}
+                          value={confirmPassword}
+                          onChange={(event) => setConfirmPassword(event.target.value)}
+                          placeholder="Confirm"
+                          required
+                        />
+                        <button
+                          className="text-[11px] font-bold uppercase tracking-wider text-slate-400 hover:text-slate-600 transition"
+                          onClick={() => setShowConfirmPassword((previous) => !previous)}
+                          type="button"
+                        >
+                          {showConfirmPassword ? 'Hide' : 'Show'}
+                        </button>
+                      </div>
+                    </label>
+                  </div>
                 </>
               ) : (
-                <section className={`rounded-2xl border border-slate-200 bg-slate-50/80 px-4 py-4 ${otpShakeActive ? 'otp-shake' : ''}`}>
-                  <div className="mb-3">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">One-Time Password</p>
-                    <p className="mt-1 text-sm text-slate-600">Enter the 6-digit code sent to your email.</p>
+                <section className={`rounded-xl border border-slate-200 bg-slate-50/60 p-5 ${otpShakeActive ? 'otp-shake' : ''}`}>
+                  <div className="mb-4">
+                    <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500">One-Time Password Verification</p>
+                    <p className="mt-0.5 text-xs text-slate-400">Please provide the 6-digit confirmation key sequence.</p>
                   </div>
 
-                  <div className="flex items-center gap-2 sm:gap-2.5">
+                  <div className="flex items-center gap-2 justify-between">
                     {Array.from({ length: OTP_LENGTH }).map((_, index) => (
                       <input
                         key={`register-otp-${index}`}
                         ref={(element) => {
                           otpInputRefs.current[index] = element
                         }}
-                        className="h-12 w-10 rounded-xl border border-slate-300 bg-white text-center text-lg font-bold text-slate-800 shadow-[inset_0_1px_2px_rgba(15,23,42,0.06)] outline-none transition focus:border-[#0b2a57] focus:ring-2 focus:ring-[#0b2a57]/15 sm:h-14 sm:w-12"
+                        className="h-12 w-full rounded-xl border border-slate-200 bg-white text-center text-lg font-bold text-slate-800 shadow-sm outline-none transition focus:border-slate-400 focus:ring-4 focus:ring-[#0b2a57]/5"
                         type="text"
                         inputMode="numeric"
                         autoComplete="one-time-code"
@@ -471,32 +486,32 @@ export function RegisterPage({ onRequestLogin, onRegistered, modalMode = false }
               )}
 
               <button
-                className="w-full rounded-xl bg-gradient-to-r from-[#0b2a57] to-[#1d4f93] px-4 py-3 text-lg font-semibold text-white shadow-[0_12px_22px_rgba(11,42,87,0.25)] transition hover:from-[#123a73] hover:to-[#2563b0] disabled:cursor-not-allowed disabled:from-[#7f93b2] disabled:to-[#7f93b2]"
+                className="w-full rounded-xl bg-gradient-to-r from-[#0b2a57] to-[#123e7a] px-4 py-3 text-sm font-semibold text-white shadow-[0_8px_20px_rgba(11,42,87,0.2)] transition hover:from-[#081e3f] hover:to-[#0d3161] disabled:cursor-not-allowed disabled:opacity-50"
                 type="submit"
                 disabled={isSubmitting}
               >
-                {otpStep ? 'Verify Code and Create Account' : 'Send Verification Code'}
+                {otpStep ? 'Verify Key & Complete Registry' : 'Register'}
               </button>
 
               {!otpStep ? (
-                <p className="text-center text-sm text-slate-600">
+                <p className="text-center text-xs text-slate-500">
                   Already have an account?{' '}
                   {onRequestLogin ? (
-                    <button className="font-semibold text-[#0b2a57]" onClick={onRequestLogin} type="button">
-                      Sign in
+                    <button className="font-semibold text-slate-700 hover:text-[#0b2a57] transition" onClick={onRequestLogin} type="button">
+                      Log In
                     </button>
                   ) : (
-                    <Link className="font-semibold text-[#0b2a57]" to="/login">
-                      Sign in
+                    <Link className="font-semibold text-slate-700 hover:text-[#0b2a57] transition" to="/login">
+                      Log In
                     </Link>
                   )}
                 </p>
               ) : null}
 
               {otpStep ? (
-                <div className="flex items-center justify-between gap-4 text-sm">
+                <div className="flex items-center justify-between gap-4 text-xs pt-1">
                   <button
-                    className="inline-flex items-center rounded-full border border-slate-300 bg-white px-3 py-1.5 font-semibold text-slate-700 transition hover:border-slate-400 hover:bg-slate-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-400"
+                    className="inline-flex items-center rounded-lg border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-600 hover:bg-slate-50 transition disabled:cursor-not-allowed disabled:opacity-50"
                     onClick={handleResendOtp}
                     type="button"
                     disabled={cooldownRemaining > 0 || isSubmitting}
@@ -505,7 +520,7 @@ export function RegisterPage({ onRequestLogin, onRegistered, modalMode = false }
                   </button>
 
                   <button
-                    className="inline-flex items-center rounded-full border border-slate-300 bg-white px-3 py-1.5 font-semibold text-slate-700 transition hover:border-slate-400 hover:bg-slate-100"
+                    className="inline-flex items-center rounded-lg border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-600 hover:bg-slate-50 transition"
                     onClick={() => {
                       setOtpStep(false)
                       setOtp('')
@@ -521,39 +536,57 @@ export function RegisterPage({ onRequestLogin, onRegistered, modalMode = false }
               ) : null}
 
               {successMessage ? (
-                <div className="rounded-lg border border-[#0b2a57]/20 bg-gradient-to-r from-[#0b2a57]/5 via-white to-sky-50 px-3 py-2">
-                  <p className="text-sm font-medium text-[#0b2a57]">{successMessage}</p>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5">
+                  <p className="text-xs text-slate-600 leading-relaxed">{successMessage}</p>
                 </div>
               ) : null}
 
               {errorMessage ? (
-                <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{errorMessage}</p>
+                <div className="rounded-xl border border-red-100 bg-red-50 px-3.5 py-2.5 text-xs text-red-600">
+                  <span>{errorMessage}</span>
+                </div>
               ) : null}
 
             </form>
           </motion.section>
 
+          {/* RIGHT SIDE: BRANDING PANEL WITH LOGO (Nasa Kanan at ginamitan ng justify-center para maging pantay ang posisyon) */}
           <motion.section
             animate={{ opacity: 1, x: 0 }}
-            className="relative flex flex-col justify-between overflow-hidden bg-[linear-gradient(140deg,#0d2f60_0%,#174b8f_55%,#2563b0_100%)] p-10"
-            initial={{ opacity: 0, x: 70 }}
-            transition={{ duration: 0.35, ease: 'easeOut' }}
+            className="relative md:col-span-5 flex flex-col justify-center overflow-hidden bg-gradient-to-t from-[#0b2a57] via-[#10356c] to-[#0b2a57] p-6 border-t md:border-t-0 md:border-l border-slate-100 order-1 md:order-2"
+            initial={{ opacity: 0, x: 40 }}
+            transition={{ duration: 0.5, ease: 'easeOut' }}
           >
-            <div className="pointer-events-none absolute -right-20 -top-20 h-56 w-56 rounded-full bg-white/10 blur-2xl" />
-            <div className="pointer-events-none absolute -bottom-24 -left-16 h-64 w-64 rounded-full bg-cyan-200/20 blur-2xl" />
-
-            <div>
-              <p className="text-3xl font-semibold text-white">Community Access</p>
-              <p className="mt-2 text-sm text-blue-100">
-                For Citizens and LCDRRMO Admin responders
-              </p>
+            {/* Soft Ambient Radial Highlights */}
+            <div className="absolute -right-16 -top-16 h-64 w-64 rounded-full bg-white/10 blur-3xl pointer-events-none" />
+            <div className="absolute -left-20 -bottom-20 h-72 w-72 rounded-full bg-sky-400/10 blur-3xl pointer-events-none" />
+            
+            <div className="relative mx-auto flex h-full w-full flex-col items-center justify-center text-center gap-4">
+              
+              {/* DRRMO LOGO */}
+              <motion.button
+                whileHover={{ scale: 1.03 }}
+                whileTap={{ scale: 0.98 }}
+                type="button"
+                onClick={() => navigate('/emergency-hotlines')}
+                className="group relative flex h-90 w-90 items-center justify-center p-0 bg-transparent transition-transform duration-300 focus:outline-none"
+                aria-label="Open emergency contact directory"
+              >
+                <img 
+                  src={drrmoLogo} 
+                  alt="DRRMO logo" 
+                  className="h-full w-full object-contain filter drop-shadow-[0_16px_32px_rgba(0,0,0,0.35)]" 
+                />
+              </motion.button>
+              
+              {/* Lucena City DRRMO Titles */}
+              <div className="space-y-1 z-10">
+                <h2 className="text-xl mt-[-1px] font-bold tracking-tight text-white">Lucena City DRRMO</h2>
+                <p className="text-xs text-sky-200 leading-relaxed font-normal opacity-90">Disaster Risk Reduction and Management Office</p>
+              </div>
             </div>
-            <div className="space-y-2 py-6 text-sm text-blue-100">
-              <p className="inline-flex rounded-full border border-white/30 bg-white/10 px-3 py-1">Citizen Access</p>
-              <p className="inline-flex rounded-full border border-white/30 bg-white/10 px-3 py-1">Admin Access</p>
-            </div>
-            <p className="text-sm text-blue-100">Secure and monitored onboarding for community members.</p>
           </motion.section>
+
         </div>
       </div>
     </main>

@@ -195,12 +195,23 @@ class AccomplishmentReportViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         queryset = super().get_queryset()
 
+        # Only include accomplishment reports that originated from the responder
+        # side: either compiled anonymously (compiled_by is NULL) or compiled by
+        # non-dashboard users (exclude admin/staff compiled reports).
+        from accounts.models import AccountProfile
+
         search = self.request.query_params.get('search')
         if search:
             queryset = queryset.filter(
                 Q(compiled_code__icontains=search) |
                 Q(title__icontains=search)
             )
+
+        # Filter to responder-originated reports
+        dashboard_roles = [AccountProfile.ROLE_ADMIN, AccountProfile.ROLE_STAFF]
+        queryset = queryset.filter(
+            Q(compiled_by__isnull=True) | ~Q(compiled_by__account_profile__role__in=dashboard_roles)
+        )
 
         ordering = self.request.query_params.get('ordering', '-created_at')
         return queryset.order_by(ordering)

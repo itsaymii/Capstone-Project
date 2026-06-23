@@ -8,7 +8,7 @@ import {
 } from '../../data/adminOperations'
 import type { AdminNavKey } from '../../data/adminNavigation'
 import { getCurrentUserProfile, logoutUser } from '../../services/auth'
-import { fetchQuezonRegionEarthquakes, type EarthquakeEvent } from '../../services/earthquakes'
+import { fetchPhilippinesEarthquakes, type EarthquakeEvent } from '../../services/earthquakes'
 import { getIncidents, getIncidentReports } from '../../services/incidents'
 import {
   NOTIFICATIONS_CHANGED_EVENT,
@@ -481,9 +481,9 @@ function DashboardLineChart({ data }: { data: TrendDataItem[] }) {
     return <EmptyChartState message="No incident trend data available yet." />
   }
 
-  const width = 900
-  const height = 340
-  const padding = { top: 72, right: 62, bottom: 62, left: 72 }
+  const width = 760
+  const height = 280
+  const padding = { top: 60, right: 48, bottom: 50, left: 60 }
   const chartWidth = width - padding.left - padding.right
   const chartHeight = height - padding.top - padding.bottom
   const maxCount = Math.max(1, ...data.map((item) => item.count))
@@ -681,9 +681,9 @@ function DashboardDonutChart({ data }: { data: CountDataItem[] }) {
       <div className="pointer-events-none absolute -right-12 bottom-8 h-36 w-36 rounded-full bg-emerald-400/10 blur-3xl" />
 
       <div className="relative flex w-full items-center justify-center pb-3">
-        <div className="absolute inset-0 m-auto h-48 w-48 rounded-full bg-white/70 shadow-[0_18px_50px_rgba(37,99,235,0.12)]" />
+        <div className="absolute inset-0 m-auto h-40 w-40 rounded-full bg-white/70 shadow-[0_18px_50px_rgba(37,99,235,0.12)]" />
 
-        <svg className="relative h-[190px] w-[190px] drop-shadow-sm sm:h-[220px] sm:w-[220px] lg:h-[230px] lg:w-[230px]" viewBox="0 0 240 240">
+        <svg className="relative h-[160px] w-[160px] drop-shadow-sm sm:h-[175px] sm:w-[175px] lg:h-[180px] lg:w-[180px]" viewBox="0 0 240 240">
           <defs>
             <filter id="donutGlow" height="180%" width="180%" x="-40%" y="-40%">
               <feGaussianBlur result="coloredBlur" stdDeviation="3" />
@@ -822,7 +822,7 @@ function DashboardBarChart({ data }: { data: CountDataItem[] }) {
   const maxCount = Math.max(1, ...data.map((item) => item.count))
 
   return (
-    <div className="flex h-full min-h-[300px] flex-col justify-center gap-3 rounded-[22px] bg-gradient-to-br from-amber-50 via-white to-slate-50 p-3 sm:p-4">
+    <div className="flex h-full min-h-[240px] flex-col justify-center gap-3 rounded-[22px] bg-gradient-to-br from-amber-50 via-white to-slate-50 p-3 sm:p-4">
       {data.map((item, index) => {
         const width = `${Math.max(10, (item.count / maxCount) * 100)}%`
         const percentage = Math.round((item.count / maxCount) * 100)
@@ -1114,7 +1114,7 @@ export function AdminDashboardPage() {
       }
 
       try {
-        const events = await fetchQuezonRegionEarthquakes(1825, 1.0)
+        const events = await fetchPhilippinesEarthquakes(730, 1.0)
         if (cancelled) return
 
         setLiveEarthquakeEvents(events)
@@ -1711,7 +1711,7 @@ export function AdminDashboardPage() {
                   </div>
                 </div>
 
-                <div className="h-[300px] w-full sm:h-[330px] lg:h-[360px]">
+                <div className="h-[230px] w-full sm:h-[250px] lg:h-[270px]">
                   <DashboardLineChart data={incidentTrendData} />
                 </div>
 
