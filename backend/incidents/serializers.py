@@ -1,5 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
+from .utils import get_nearest_barangay
 
 from django.utils import timezone
 from rest_framework import serializers
@@ -374,8 +375,13 @@ class IncidentSerializer(serializers.ModelSerializer):
 
         validated_data['hazard_type_id'] = hazard_type_id
 
-        if barangay_id:
-            validated_data['barangay_id'] = barangay_id
+        # ✅ AUTO-LINK: If no barangay provided, find nearest by coordinates
+        if not barangay_id:
+            lat = validated_data.get('latitude')
+            lng = validated_data.get('longitude')
+            nearest = get_nearest_barangay(lat, lng)
+            if nearest:
+                validated_data['barangay_id'] = nearest.id
 
         request = self.context.get('request')
         if request and hasattr(request, 'user') and request.user.is_authenticated:

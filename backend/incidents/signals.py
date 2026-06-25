@@ -1,4 +1,5 @@
 from django.db.models.signals import post_save
+from .utils import get_nearest_barangay
 from django.dispatch import receiver
 from django.utils import timezone
 from datetime import datetime
@@ -69,12 +70,18 @@ def create_incident_on_approval(sender, instance: IncidentReport, created, **kwa
 
             severity = _map_severity(instance.incident_type, instance.victim_count)
 
+            # ✅ AUTO-LINK: Find nearest barangay if none provided
+            barangay = None
+            if lat and lng:
+                barangay = get_nearest_barangay(float(lat), float(lng))
+
             incident = Incident.objects.create(
                 reference_code=instance.incident_code,
                 hazard_type=hazard_type,
                 latitude=Decimal(str(lat)),
                 longitude=Decimal(str(lng)),
                 address=instance.location or '',
+                barangay=barangay,
                 reported_by=instance.created_by,
                 incident_datetime=incident_datetime,
                 severity_level=severity,
