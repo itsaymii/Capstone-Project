@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { FC, FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { MobileNavBar } from "../../components/MobileNavBar";

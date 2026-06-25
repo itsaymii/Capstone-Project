@@ -5,13 +5,6 @@ type ReportStatus = 'pending' | 'approved'
 type DateGrouping = 'weekly' | 'monthly' | 'yearly'
 type TeamFilter = 'All' | 'Alpha' | 'Charlie' | 'Bravo'
 
-const TEAM_NAMES: Record<TeamFilter, string> = {
-  'All': 'All Teams',
-  'Alpha': 'Alpha Responder Squad',
-  'Bravo': 'Bravo Rescue Team',
-  'Charlie': 'Charlie Medical Unit',
-}
-
 function normalizeStatus(status?: string): ReportStatus {
   const value = String(status || '').trim().toLowerCase()
 
@@ -108,7 +101,7 @@ function compareResponderTeams(left: string, right: string): number {
 
 export function IncidentReports() {
   const [reports, setReports] = useState<IncidentReport[]>([])
-  const [searchQuery, setSearchQuery] = useState('')
+  const [searchQuery] = useState('')
   const [isLoading, setIsLoading] = useState(true)
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [dateGrouping, setDateGrouping] = useState<DateGrouping>('weekly')

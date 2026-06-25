@@ -8,10 +8,10 @@ import { NavigationBar } from '../../components/NavigationBar'
 import { Link } from 'react-router-dom'
 
 const lucenaCenter: [number, number] = [13.94, 121.62]
-const lucenaBounds = [
+const lucenaBounds: [[number, number], [number, number]] = [
   [13.88, 121.54],
   [14.0, 121.7],
-] as const
+]
 
 const evacuationIcon = icon({
   iconUrl: `data:image/svg+xml,${encodeURIComponent(

@@ -65,6 +65,73 @@ export interface AdminDashboardSummaryResponse {
   summary: AdminDashboardSummary
 }
 
+export interface Barangay {
+  id: string
+  name: string
+  city?: string
+  province?: string
+}
+
+export interface BarangayRiskScoreBreakdown {
+  frequency: number
+  severity: number
+  recency: number
+}
+
+export interface BarangayHazardProfileItem {
+  id: string | null
+  frequency: number
+  severity_weight: number
+  combined_score: number
+}
+
+export interface BarangayProfileResponse {
+  total: number
+  hazards: Record<string, BarangayHazardProfileItem>
+  top_hazard: string | null
+}
+
+export interface BarangayScoreHistoryItem {
+  date: string
+  score: number
+  frequency: number
+  severity: number
+  recency: number
+}
+
+export interface BarangayIncidentTrendItem {
+  date: string
+  count: number
+}
+
+export interface BarangayHazardShareItem {
+  hazard: string
+  frequency: number
+  combined_score: number
+  share: number
+}
+
+export interface BarangayRiskScoreResponse {
+  barangay_id: string
+  timeframe_days: number | null
+  risk_score: {
+    score: number
+    breakdown: BarangayRiskScoreBreakdown
+  }
+  hazard_prediction: {
+    hazard: string | null
+    hazard_id: string | null
+    confidence: string
+    reason: string
+    driver: string
+    prediction_window_days: number
+  }
+  barangay_profile: BarangayProfileResponse
+  score_history: BarangayScoreHistoryItem[]
+  incident_trend: BarangayIncidentTrendItem[]
+  hazard_share: BarangayHazardShareItem[]
+}
+
 export interface DashboardCreateAccountPayload {
   fullName: string
   email: string

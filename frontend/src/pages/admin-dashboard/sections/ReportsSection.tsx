@@ -458,8 +458,150 @@ export function ReportsSection({
     }
 
     setTimeout(() => {
-      URL.revokeObjectURL(blobUrl)
+      URL.revokeObjectURL(blobUrl.toString())
     }, 60_000)
+  }
+
+  function buildPrintHtml<T extends Record<string, string | number>>(
+    title: string,
+    description: string,
+    columns: ReportTableColumn<T>[],
+    rows: T[],
+  ): string {
+    const headerCells = columns
+      .map((column) => `<th>${escapeHtmlCell(column.label)}</th>`)
+      .join('')
+
+    const bodyRows = rows
+      .map((row) => {
+        const cells = columns
+          .map((column) => `<td>${escapeHtmlCell(String(row[column.key] ?? '-'))}</td>`)
+          .join('')
+        return `<tr>${cells}</tr>`
+      })
+      .join('')
+
+    return `
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>${escapeHtmlCell(title)}</title>
+          <style>
+            body {
+              font-family: Arial, sans-serif;
+              margin: 14mm;
+              color: #111;
+              background: #fff;
+            }
+            @page {
+              size: landscape;
+              margin: 14mm;
+            }
+            .report-header {
+              margin-bottom: 18px;
+            }
+            .report-header h1 {
+              margin: 0 0 8px;
+              font-size: 22px;
+            }
+            .report-header p {
+              margin: 0;
+              font-size: 13px;
+              color: #4b5563;
+              line-height: 1.6;
+            }
+            table {
+              width: 100%;
+              border-collapse: collapse;
+              page-break-inside: auto;
+              margin-top: 18px;
+            }
+            thead tr {
+              page-break-inside: avoid;
+              page-break-after: auto;
+            }
+            th,
+            td {
+              border: 1px solid #374151;
+              padding: 8px 10px;
+              text-align: left;
+              vertical-align: top;
+              font-size: 11px;
+              word-break: break-word;
+              white-space: pre-wrap;
+            }
+            th {
+              background: #e5e7eb;
+              font-weight: 700;
+            }
+            tbody tr:nth-child(even) {
+              background: #f9fafb;
+            }
+            .summary {
+              margin-top: 12px;
+              font-size: 12px;
+              color: #1f2937;
+            }
+            @media print {
+              body {
+                margin: 0;
+              }
+              .no-print {
+                display: none;
+              }
+              table {
+                page-break-inside: avoid;
+              }
+              tr {
+                page-break-inside: avoid;
+                page-break-after: auto;
+              }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="report-header">
+            <h1>${escapeHtmlCell(title)}</h1>
+            <p>${escapeHtmlCell(description)}</p>
+            <p class="summary">Generated: ${escapeHtmlCell(
+              new Date().toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' }),
+            )}</p>
+          </div>
+
+          <table>
+            <thead>
+              <tr>${headerCells}</tr>
+            </thead>
+            <tbody>${bodyRows}</tbody>
+          </table>
+
+          <script>
+            window.onload = () => {
+              window.focus();
+              window.print();
+            }
+          </script>
+        </body>
+      </html>
+    `
+  }
+
+  function openPrintWindow<T extends Record<string, string | number>>(
+    title: string,
+    description: string,
+    columns: ReportTableColumn<T>[],
+    rows: T[],
+  ) {
+    const printWindow = window.open('', '_blank')
+    if (!printWindow) {
+      alert('Unable to open print window. Please disable your popup blocker and try again.')
+      return
+    }
+
+    const html = buildPrintHtml(title, description, columns, rows)
+    printWindow.document.write(html)
+    printWindow.document.close()
+    printWindow.focus()
   }
 
   function renderReportTable<T extends Record<string, string | number>>(options: {
@@ -492,10 +634,10 @@ export function ReportsSection({
 
             <button
               className="rounded-xl border border-sky-300 bg-sky-50 px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-sky-700 transition hover:bg-sky-100"
-              onClick={() => handlePdfAction('print', title, description, columns, rows)}
+              onClick={() => openPrintWindow(title, description, columns, rows)}
               type="button"
             >
-              Print PDF
+              Print Table
             </button>
 
             <button

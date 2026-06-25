@@ -235,9 +235,10 @@ function getTextField(record: unknown, keys: string[]): string {
 function normalizeAnalyticsStatus(status: unknown): IncidentStatus {
   const value = String(status || '').trim().toLowerCase()
 
-  if (value.includes('approve') || value.includes('verified')) return 'approved'
-  if (value.includes('resolve') || value.includes('complete') || value.includes('closed')) return 'resolved'
-  if (value.includes('active') || value.includes('ongoing') || value.includes('on-going')) return 'active'
+  if (value.includes('approve') || value.includes('verified') || value === 'approved') return 'approved'
+  if (value.includes('resolve') || value.includes('complete') || value.includes('closed') || value === 'resolved') return 'resolved'
+  if (value.includes('active') || value.includes('ongoing') || value.includes('on-going') || value === 'active') return 'active'
+  if (value.includes('pending') || value === 'pending') return 'pending'
   return 'pending'
 }
 
@@ -257,10 +258,25 @@ function getDisplayReportStatus(report: HazardIncident): 'active' | 'pending' | 
 
 function getReportVictimCount(report: HazardIncident): number {
   const victims = (report as any).victims
-  const directValue = getNumberField(report, ['victimCount', 'victim_count', 'totalVictims', 'total_victims', 'casualties', 'affected_count'])
+  const directValue = getNumberField(report, [
+    'victimCount',
+    'victim_count',
+    'totalVictims',
+    'total_victims',
+    'casualties',
+    'affected_count',
+    'affected',
+    'injured',
+    'deaths',
+    'missing',
+    'displaced',
+    'victimCountByType',
+  ])
 
-  if (directValue !== null) return Math.max(0, directValue)
-  if (Array.isArray(victims)) return victims.length
+  if (directValue !== null && directValue > 0) return Math.max(0, directValue)
+  if (Array.isArray(victims) && victims.length > 0) return victims.length
+  if (typeof (report as any).people_affected === 'number') return Math.max(0, (report as any).people_affected)
+  if (typeof (report as any).number_of_persons === 'number') return Math.max(0, (report as any).number_of_persons)
 
   return 0
 }
@@ -326,6 +342,7 @@ function getActualResponseMinutes(report: HazardIncident): number | null {
     'responseMinutes',
     'response_minutes',
     'arrival_minutes',
+    'response_duration',
   ])
 
   if (directValue !== null && directValue >= 0) return Math.round(directValue)
@@ -336,7 +353,8 @@ function getActualResponseMinutes(report: HazardIncident): number | null {
   if (!startedAt || !completedAt) return null
 
   const minutes = Math.round((completedAt.getTime() - startedAt.getTime()) / (1000 * 60))
-  return minutes >= 0 && minutes <= 24 * 60 ? minutes : null
+  // Accept any non-negative response time, don't limit to 24 hours to capture extended operations
+  return minutes >= 0 ? minutes : null
 }
 
 function getEvacuationCenterCapacity(center: EvacuationCenterRecord): number {
@@ -1392,7 +1410,8 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
       map.set(location, current)
     })
 
-    filteredEarthquakeEvents.slice(0, 60).forEach((event) => {
+    // Process all earthquake events without artificial limits to ensure comprehensive risk assessment
+    filteredEarthquakeEvents.forEach((event) => {
       const location = event.place || 'Near Quezon Region'
       const current = map.get(location) || {
         location,

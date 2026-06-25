@@ -43,8 +43,19 @@ type AccomplishmentItem = {
   reports?: IncidentReport[]
   totalReports?: number
   status?: string
+  status_update?: string
+  location?: string
   createdAt?: string
   created_at?: string
+  report_time?: string
+  reportCode?: string
+  report_code?: string
+  incidentCode?: string
+  incident_code?: string
+  incidentReferenceCode?: string
+  incident_reference_code_readonly?: string
+  incidentType?: string
+  incident_type?: string
 }
 
 function getReportCode(item: AccomplishmentItem): string {
@@ -137,7 +148,7 @@ function getAccomplishmentReportTime(item: AccomplishmentItem): string {
 
   const hours = date.getHours().toString().padStart(2, '0')
   const minutes = date.getMinutes().toString().padStart(2, '0')
-  return `${hours}00H - ${hours}00H`
+  return `${hours}${minutes}H - ${hours}${minutes}H`
 }
 
 function getAccomplishmentChecklist(item: AccomplishmentItem): Record<string, boolean> {
@@ -202,7 +213,7 @@ function getActivityRows(item: AccomplishmentItem): string {
 
   return item.reports
     .map((report) => {
-      const time = report.timeOccurred || report.time_occurred || getAccomplishmentCreatedAt(item)
+      const time = getAccomplishmentCreatedAt(item)
       const activityLines = []
 
       if (report.incidentType || report.incident_type) {
@@ -318,20 +329,6 @@ export function AccomplishmentReports() {
   }, [reports, searchQuery])
 
   const handlePrintAccomplishmentReport = (report: AccomplishmentItem) => {
-    const incidentRows = report.reports?.map((item) => {
-      return `
-        <tr>
-          <td>${item.reportCode || item.report_code || item.id || 'N/A'}</td>
-          <td>${item.incidentCode || item.incident_code || item.incidentReferenceCode || item.incident_reference_code_readonly || 'N/A'}</td>
-          <td>${getIncidentType(item)}</td>
-          <td>${getResponderTeam(item)}</td>
-          <td>${item.location || 'N/A'}</td>
-          <td>${getVictimCount(item)}</td>
-          <td>${item.actionTaken || item.action_taken || item.report_text || item.description || 'None'}</td>
-        </tr>
-      `
-    }).join('')
-
     const checklist = getAccomplishmentChecklist(report)
     const activityRows = getActivityRows(report)
     const victimDetailsHtml = getAccomplishmentVictimDetails(report)

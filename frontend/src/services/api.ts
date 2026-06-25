@@ -1,6 +1,8 @@
 import axios from 'axios'
 import type {
   AdminDashboardSummaryResponse,
+  Barangay,
+  BarangayRiskScoreResponse,
   DashboardAccountsResponse,
   DashboardCreateAccountPayload,
   DashboardCreateAccountResponse,
@@ -17,6 +19,8 @@ import type {
   RegisterApiPayload,
   TestApiResponse,
   VerifyOtpPayload,
+  CreateEvacuationCenterPayload,
+  EvacuationCenter,
 } from '../types/api'
 
 function getDefaultApiBaseUrl(): string {
@@ -80,6 +84,22 @@ function getCookieValue(cookieName: string): string | null {
   return decodeURIComponent(cookieMatch.split('=').slice(1).join('='))
 }
 
+function addCsrfHeader(headers: unknown, csrfToken: string): unknown {
+  if (!headers || typeof headers !== 'object') {
+    return { 'X-CSRFToken': csrfToken }
+  }
+
+  if ('set' in headers && typeof (headers as any).set === 'function') {
+    ;(headers as any).set('X-CSRFToken', csrfToken)
+    return headers
+  }
+
+  return {
+    ...(headers as Record<string, unknown>),
+    'X-CSRFToken': csrfToken,
+  }
+}
+
 api.interceptors.request.use((config) => {
   const requestMethod = config.method?.toUpperCase()
   const isSafeMethod = requestMethod === 'GET' || requestMethod === 'HEAD' || requestMethod === 'OPTIONS'
@@ -87,16 +107,7 @@ api.interceptors.request.use((config) => {
   if (!isSafeMethod) {
     const csrfToken = getCookieValue('csrftoken')
     if (csrfToken) {
-      if (!config.headers) {
-        config.headers = {
-          'X-CSRFToken': csrfToken,
-        }
-      } else {
-        config.headers = {
-          ...config.headers,
-          'X-CSRFToken': csrfToken,
-        }
-      }
+      config.headers = addCsrfHeader(config.headers, csrfToken) as any
     }
   }
 
@@ -199,6 +210,41 @@ export async function getEvacuationCenters(): Promise<EvacuationCenter[]> {
 
 export async function getDashboardAccounts(): Promise<DashboardAccountsResponse> {
   const { data } = await api.get<DashboardAccountsResponse>('/dashboard/admin/accounts/')
+  return data
+}
+
+export async function getBarangays(): Promise<Barangay[]> {
+  const response = await api.get<Barangay[] | PaginatedResponse<Barangay>>('/api/locations/barangays/')
+
+  if (Array.isArray(response.data)) {
+    return response.data
+  }
+
+  return (response.data as PaginatedResponse<Barangay>).results || []
+}
+
+export async function getBarangayRiskScore(
+  barangayId: string,
+  options?: { days?: number; startDate?: string; endDate?: string },
+): Promise<BarangayRiskScoreResponse> {
+  const params = new URLSearchParams()
+  params.append('barangay_id', barangayId)
+
+  if (options?.days !== undefined) {
+    params.append('days', String(options.days))
+  }
+
+  if (options?.startDate) {
+    params.append('start_date', options.startDate)
+  }
+
+  if (options?.endDate) {
+    params.append('end_date', options.endDate)
+  }
+
+  const { data } = await api.get<BarangayRiskScoreResponse>('/api/analytics/barangay-risk/', {
+    params,
+  })
   return data
 }
 

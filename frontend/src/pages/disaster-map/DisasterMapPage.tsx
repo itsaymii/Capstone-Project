@@ -829,7 +829,7 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
           </section>
 
           <section className="w-full p-4 sm:p-5">
-            <div className="grid w-full gap-4 xl:grid-cols-[minmax(0,2.3fr)_minmax(380px,1fr)]">
+            <div className="grid w-full gap-4 items-start xl:grid-cols-[minmax(0,2.3fr)_minmax(380px,1fr)]">
               <div
                 className={`overflow-hidden rounded-3xl shadow-[0_20px_44px_rgba(15,23,42,0.16)] ${
                   isAdminVariant
@@ -900,14 +900,14 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
               </div>
 
               <aside
-                className={`h-full max-h-[740px] rounded-3xl p-4 shadow-[0_20px_44px_rgba(15,23,42,0.16)] sm:p-5 ${
+                className={`self-stretch rounded-3xl p-4 shadow-[0_20px_44px_rgba(15,23,42,0.16)] sm:p-5 ${
                   isAdminVariant
                     ? 'border border-slate-600/70 bg-[#202a3d]/95'
                     : 'border border-slate-200 bg-white/95 backdrop-blur'
                 }`}
               >
                 {selectedType === 'EQ' ? (
-                  <div className="flex h-full min-h-0 flex-col overflow-hidden">
+                  <div className="flex min-h-0 flex-col overflow-hidden">
                     <div
                       className={`relative overflow-hidden rounded-[26px] border p-5 ${
                         isAdminVariant

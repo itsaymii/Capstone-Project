@@ -18,6 +18,7 @@ import {
 } from '../../services/notifications'
 import notificationIcon from '../../images/notification.png'
 import { InlineModuleSection } from './sections/InlineModuleSection'
+import { RiskScoringSection } from './sections/RiskScoringSection'
 import { AnalyticsSection } from './sections/AnalyticsSection'
 import { MapSection } from './sections/MapSection'
 import { ReportsSection } from './sections/ReportsSection'
@@ -1827,11 +1828,7 @@ export function AdminDashboardPage() {
           ) : null}
 
           {activeSection === 'scoring' ? (
-            <InlineModuleSection
-              description="Risk scoring now opens inside the main dashboard so the workflow stays on the same page as Overview."
-              eyebrow="Admin Operations"
-              title="Risk Scoring"
-            />
+            <RiskScoringSection />
           ) : null}
 
           {activeSection === 'trends' ? (
