@@ -478,6 +478,13 @@ The main admin control center. Reads the `?section=` URL query parameter to dete
 - Left sidebar (`AdminSidebar`)
 - Main content area that renders one of the 7 section components
 
+**Recent updates:**
+- Stabilized the admin dashboard by fixing frontend compile errors and TypeScript strict-mode issues.
+- Updated the incident and accomplishment report sections with better layout, filter/search controls, status badges, and clearer action states.
+- Added robust report selection controls for responder-owned reports and improved modal detail presentation.
+- Installed `recharts` and added missing type declarations to support dashboard charts without build failure.
+- Verified the frontend build with `npm run build` after all fixes.
+
 #### Disaster Map Page (`/disaster-map`)
 **File**: `pages/disaster-map/DisasterMapPage.tsx`
 

@@ -1,0 +1,86 @@
+[
+  {
+    "model": "auth.user",
+    "pk": 2,
+    "fields": {
+      "password": "pbkdf2_sha256$600000$abcdefghijklmnop$1234567890abcdefghijklmnopqrstuvwxyz123456=",
+      "last_login": null,
+      "is_superuser": false,
+      "username": "staff_responder",
+      "first_name": "John",
+      "last_name": "Responder",
+      "email": "staff@responder.com",
+      "is_staff": true,
+      "is_active": true,
+      "date_joined": "2024-05-15T10:00:00Z",
+      "groups": [],
+      "user_permissions": []
+    }
+  },
+  {
+    "model": "auth.user",
+    "pk": 3,
+    "fields": {
+      "password": "pbkdf2_sha256$600000$abcdefghijklmnop$1234567890abcdefghijklmnopqrstuvwxyz123456=",
+      "last_login": null,
+      "is_superuser": false,
+      "username": "fire_team_lead",
+      "first_name": "Maria",
+      "last_name": "Santos",
+      "email": "maria.santos@fire.com",
+      "is_staff": true,
+      "is_active": true,
+      "date_joined": "2024-05-15T10:00:00Z",
+      "groups": [],
+      "user_permissions": []
+    }
+  },
+  {
+    "model": "auth.user",
+    "pk": 4,
+    "fields": {
+      "password": "pbkdf2_sha256$600000$abcdefghijklmnop$1234567890abcdefghijklmnopqrstuvwxyz123456=",
+      "last_login": null,
+      "is_superuser": false,
+      "username": "medical_responder",
+      "first_name": "Carlos",
+      "last_name": "Cruz",
+      "email": "carlos.cruz@ems.com",
+      "is_staff": true,
+      "is_active": true,
+      "date_joined": "2024-05-15T10:00:00Z",
+      "groups": [],
+      "user_permissions": []
+    }
+  },
+  {
+    "model": "accounts.accountprofile",
+    "pk": 2,
+    "fields": {
+      "user": 2,
+      "role": "staff",
+      "created_at": "2024-05-15T10:00:00Z",
+      "updated_at": "2024-05-15T10:00:00Z"
+    }
+  },
+  {
+    "model": "accounts.accountprofile",
+    "pk": 3,
+    "fields": {
+      "user": 3,
+      "role": "staff",
+      "created_at": "2024-05-15T10:00:00Z",
+      "updated_at": "2024-05-15T10:00:00Z"
+    }
+  },
+  {
+    "model": "accounts.accountprofile",
+    "pk": 4,
+    "fields": {
+      "user": 4,
+      "role": "staff",
+      "created_at": "2024-05-15T10:00:00Z",
+      "updated_at": "2024-05-15T10:00:00Z"
+    }
+  }
+]

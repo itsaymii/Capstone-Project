@@ -87,7 +87,16 @@ api.interceptors.request.use((config) => {
   if (!isSafeMethod) {
     const csrfToken = getCookieValue('csrftoken')
     if (csrfToken) {
-      config.headers.set('X-CSRFToken', csrfToken)
+      if (!config.headers) {
+        config.headers = {
+          'X-CSRFToken': csrfToken,
+        }
+      } else {
+        config.headers = {
+          ...config.headers,
+          'X-CSRFToken': csrfToken,
+        }
+      }
     }
   }
 
@@ -153,6 +162,39 @@ export async function createDashboardAccount(payload: DashboardCreateAccountPayl
   await ensureCsrfCookie()
   const { data } = await api.post<DashboardCreateAccountResponse>('/dashboard/admin/accounts/create/', payload)
   return data
+}
+
+export async function createEvacuationCenter(payload: CreateEvacuationCenterPayload): Promise<void> {
+  await ensureCsrfCookie()
+  await api.post('/api/resources/evacuation-centers/', payload)
+}
+
+export async function createEvacuationCenters(payload: CreateEvacuationCenterPayload[]): Promise<void> {
+  await ensureCsrfCookie()
+  await Promise.all(payload.map((item) => api.post('/api/resources/evacuation-centers/', item)))
+}
+
+interface PaginatedResponse<T> {
+  count: number
+  next: string | null
+  previous: string | null
+  results: T[]
+}
+
+export async function getEvacuationCenters(): Promise<EvacuationCenter[]> {
+  const response = await api.get<EvacuationCenter[] | PaginatedResponse<EvacuationCenter>>(
+    '/api/resources/evacuation-centers/',
+  )
+
+  if (Array.isArray(response.data)) {
+    return response.data
+  }
+
+  if (response.data && Array.isArray((response.data as PaginatedResponse<EvacuationCenter>).results)) {
+    return (response.data as PaginatedResponse<EvacuationCenter>).results
+  }
+
+  return []
 }
 
 export async function getDashboardAccounts(): Promise<DashboardAccountsResponse> {

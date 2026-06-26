@@ -18,13 +18,21 @@ type MapSectionProps = {
   mapFilter: MapFilter
   onSelectType: (filter: MapFilter) => void
   onCreateIncident: (incident: NewIncidentInput) => void
+  onIncidentReportApproved?: () => void
 }
 
-export function MapSection({ incidents, mapFilter, onSelectType, onCreateIncident }: MapSectionProps) {
+export function MapSection({
+  incidents,
+  mapFilter,
+  onSelectType,
+  onCreateIncident,
+  onIncidentReportApproved,
+}: MapSectionProps) {
   return (
     <AdminIncidentMapPanel
       incidents={incidents}
       onCreateIncident={onCreateIncident}
+      onIncidentReportApproved={onIncidentReportApproved}
       onSelectType={onSelectType}
       selectedType={mapFilter}
     />

@@ -1,6 +1,8 @@
 export type AdminNavKey =
   | 'dashboardOverview'
   | 'gisMapping'
+  | 'incidentReports'
+  | 'accomplishmentReports'
   | 'riskScoring'
   | 'predictiveTrends'
   | 'evacuationResources'
@@ -30,6 +32,8 @@ export type AdminNavItem = {
 export const adminNavItems: AdminNavItem[] = [
   { key: 'dashboardOverview', label: 'Dashboard', to: '/admin-dashboard', icon: 'dashboard' },
   { key: 'gisMapping', label: 'Mapping', to: '/admin-dashboard?section=map', icon: 'mapping' },
+  { key: 'incidentReports', label: 'Incidents', to: '/admin-dashboard?section=incidents', icon: 'reports' },
+  { key: 'accomplishmentReports', label: 'Accomplishment', to: '/admin-dashboard?section=accomplishment', icon: 'reports' },
   { key: 'riskScoring', label: 'Scoring', to: '/admin-dashboard?section=scoring', icon: 'risk' },
   { key: 'predictiveTrends', label: 'Analytics', to: '/admin-dashboard?section=trends', icon: 'trend' },
   { key: 'evacuationResources', label: 'Resources', to: '/admin-dashboard?section=resources', icon: 'resources' },

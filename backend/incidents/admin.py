@@ -62,6 +62,7 @@ class HazardTypeAdmin(admin.ModelAdmin):
 @admin.register(Incident)
 class IncidentAdmin(admin.ModelAdmin):
     list_display = [
+        'reference_code',
         'hazard_type', 
         'address', 
         'severity_level', 
@@ -71,13 +72,14 @@ class IncidentAdmin(admin.ModelAdmin):
         'reported_by'
     ]
     list_filter = ['status', 'severity_level', 'impact_level', 'hazard_type']
-    search_fields = ['description', 'address', 'id']
+    search_fields = ['description', 'address', 'reference_code', 'id']
     ordering = ['-incident_datetime']
     date_hierarchy = 'incident_datetime'
+    readonly_fields = ['id', 'reference_code', 'date_reported', 'created_at', 'updated_at']
     
     fieldsets = (
         ('Basic Information', {
-            'fields': ('hazard_type', 'incident_datetime', 'description')
+            'fields': ('id', 'reference_code', 'hazard_type', 'incident_datetime', 'description')
         }),
         ('Location', {
             'fields': ('latitude', 'longitude', 'address', 'barangay')
@@ -87,6 +89,10 @@ class IncidentAdmin(admin.ModelAdmin):
         }),
         ('Reporter', {
             'fields': ('reported_by', 'date_reported')
+        }),
+        ('Timestamps', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',)
         }),
     )
     

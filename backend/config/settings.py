@@ -13,7 +13,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Security Settings (from .env)
 # ============================================
 SECRET_KEY = config('SECRET_KEY', default='django-insecure-change-this-in-production')
-DEBUG = config('DEBUG', default=False, cast=bool)
+DEBUG = config('DEBUG', default=True, cast=bool)
 ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1', cast=Csv())
 
 # ============================================
@@ -39,6 +39,8 @@ INSTALLED_APPS = [
     'locations',
     'incidents',
     'resources',
+    'analytics',
+    'sms',
 ]
 
 MIDDLEWARE = [
@@ -161,13 +163,24 @@ REST_FRAMEWORK = {
         'rest_framework.permissions.IsAuthenticatedOrReadOnly',
     ],
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
-    'PAGE_SIZE': 20,
+    'PAGE_SIZE': 100,  # Increased from 20 to 100 for better performance
+    'MAX_PAGE_SIZE': 10000,  # Allow clients to request up to 10000 items
     'DEFAULT_FILTER_BACKENDS': [
         'rest_framework.filters.SearchFilter',
         'rest_framework.filters.OrderingFilter',
     ],
 }
 
+import os
+from dotenv import load_dotenv
+load_dotenv()
+
+# Add these lines to settings.py (make sure python-dotenv is loaded at the top)
+SMS_BASE_URL = os.getenv('SMS_BASE_URL')
+SMS_USERNAME = os.getenv('SMS_USERNAME')
+SMS_PASSWORD = os.getenv('SMS_PASSWORD')
+
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 # ============================================
 # Custom Permission Classes
 # ============================================
