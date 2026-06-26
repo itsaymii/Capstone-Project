@@ -55,14 +55,6 @@ export function AdminSidebar({ activeKey, actionOverrides }: AdminSidebarProps) 
   const navigate = useNavigate()
   const profile = getCurrentUserProfile()
   const displayName = profile?.fullName?.trim() || 'Administrator'
-  const initials =
-    displayName
-      .split(/\s+/)
-      .filter(Boolean)
-      .slice(0, 2)
-      .map((part) => part[0])
-      .join('')
-      .toUpperCase() || 'AD'
 
   function handleLogout(): void {
     logoutUser()
