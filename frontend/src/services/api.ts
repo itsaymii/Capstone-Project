@@ -20,6 +20,7 @@ import type {
   RegisterApiPayload,
   TestApiResponse,
   VerifyOtpPayload,
+  UserProfileUpdatePayload,
   CreateEvacuationCenterPayload,
   EvacuationCenter,
 } from '../types/api'
@@ -152,6 +153,16 @@ export async function loginAccount(payload: LoginApiPayload): Promise<AuthApiRes
 
 export async function verifyLoginOtp(payload: VerifyOtpPayload): Promise<AuthApiResponse> {
   const { data } = await api.post<AuthApiResponse>('/accounts/auth/login/verify-otp/', payload)
+  return data
+}
+
+export async function getCurrentUserProfile(): Promise<AuthApiResponse> {
+  const { data } = await api.get<AuthApiResponse>('/accounts/auth/profile/')
+  return data
+}
+
+export async function updateCurrentUserProfile(payload: UserProfileUpdatePayload): Promise<AuthApiResponse> {
+  const { data } = await api.patch<AuthApiResponse>('/accounts/auth/profile/', payload)
   return data
 }
 

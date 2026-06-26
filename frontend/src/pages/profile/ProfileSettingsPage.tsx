@@ -6,6 +6,7 @@ import {
   getCurrentUserProfile,
   updateCurrentUserAvatar,
   updateCurrentUserPersonalInfo,
+  saveCurrentUserProfileToServer,
   updateCurrentUserProfile,
 } from '../../services/auth'
 
@@ -188,14 +189,24 @@ export function ProfileSettingsPage({ variant = 'citizen' }: ProfileSettingsPage
     ? 'mt-6 flex items-center gap-4 rounded-2xl border border-slate-700 bg-[#1d2230] p-4 shadow-sm'
     : 'mt-6 flex items-center gap-4 rounded-2xl border border-slate-200 bg-gradient-to-r from-slate-50 via-white to-sky-50 p-4 shadow-sm'
 
-  function handleSaveProfile(event: FormEvent<HTMLFormElement>) {
+  async function handleSaveProfile(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
 
     if (!isEditing) {
       return
     }
 
-    const updated = updateCurrentUserProfile(fullName)
+    const profileResult = await saveCurrentUserProfileToServer({
+      fullName,
+      phoneNumber,
+    })
+
+    if (!profileResult.success) {
+      setErrorMessage(profileResult.error || 'Unable to save profile right now. Please try again.')
+      setStatusMessage('')
+      return
+    }
+
     const avatarUpdated = updateCurrentUserAvatar(photoPreviewUrl)
     const personalInfoUpdated = updateCurrentUserPersonalInfo({
       phoneNumber,
@@ -210,7 +221,7 @@ export function ProfileSettingsPage({ variant = 'citizen' }: ProfileSettingsPage
       emergencyContactNumber,
     })
 
-    if (!updated || !avatarUpdated || !personalInfoUpdated) {
+    if (!avatarUpdated || !personalInfoUpdated) {
       setErrorMessage('Unable to update profile right now. Please try again.')
       setStatusMessage('')
       return

@@ -41,7 +41,7 @@ const hazardColors = {
   AC: '#facc15',
 }
 
-const mapLegendItems = [
+const earthquakeLegendItems = [
   { label: 'Philippine Fault Zone', color: '#dc2626' },
   { label: 'Valley Fault System', color: '#3b82f6' },
   { label: 'Other Active Faults', color: '#ef4444' },
@@ -749,7 +749,7 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
             container.style.lineHeight = '1.2'
             container.style.pointerEvents = 'auto'
 
-            mapLegendItems.forEach((item) => {
+            earthquakeLegendItems.forEach((item) => {
               const row = document.createElement('div')
               row.style.display = 'flex'
               row.style.alignItems = 'center'
@@ -1027,7 +1027,7 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
                       ))}
                       {selectedType === 'EQ' ? (
                         <div className="mt-2 border-t border-slate-200 pt-3 dark:border-slate-700">
-                          {mapLegendItems.map((item) => (
+                          {earthquakeLegendItems.map((item) => (
                             <div key={item.label} className="flex items-center gap-3">
                               <span
                                 className="inline-flex h-3.5 w-3.5 rounded-full"

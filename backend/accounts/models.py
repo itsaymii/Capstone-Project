@@ -46,6 +46,7 @@ class AccountProfile(models.Model):
 
 	user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='account_profile')
 	role = models.CharField(max_length=20, choices=ROLE_CHOICES, default=ROLE_CITIZEN, db_index=True)
+	phone_number = models.CharField(max_length=20, blank=True, null=True, db_index=True)
 	created_at = models.DateTimeField(auto_now_add=True)
 	updated_at = models.DateTimeField(auto_now=True)
 

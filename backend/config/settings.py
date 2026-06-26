@@ -178,12 +178,13 @@ try:
 except ImportError:
     pass
 
-# Add these lines to settings.py (make sure python-dotenv is loaded at the top)
-SMS_BASE_URL = os.getenv('SMS_BASE_URL')
-SMS_USERNAME = os.getenv('SMS_USERNAME')
-SMS_PASSWORD = os.getenv('SMS_PASSWORD')
+# Add these lines to settings.py
+# Use decouple.config to read from environment or .env automatically.
+SMS_BASE_URL = config('SMS_BASE_URL', default='')
+SMS_USERNAME = config('SMS_USERNAME', default='')
+SMS_PASSWORD = config('SMS_PASSWORD', default='')
 
-GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
+GEMINI_API_KEY = config('GEMINI_API_KEY', default='')
 
 # ============================================
 # Custom Permission Classes

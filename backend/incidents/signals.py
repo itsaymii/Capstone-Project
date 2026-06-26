@@ -27,6 +27,8 @@ def _get_coords_for_report(report):
 
 def _map_severity(incident_type, victim_count):
     lower = (incident_type or '').lower()
+    if victim_count >= 5:
+        return 'critical'
     if victim_count >= 3:
         return 'high'
     if 'fire' in lower or 'drowning' in lower or 'crime' in lower:
