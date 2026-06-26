@@ -10,6 +10,7 @@ export interface AuthUser {
   email: string
   username?: string
   role?: UserRole
+  phoneNumber?: string
   isAdmin?: boolean
   isStaff?: boolean
   hasDashboardAccess?: boolean
@@ -42,6 +43,11 @@ export interface LoginApiPayload {
 export interface VerifyOtpPayload {
   email: string
   otp: string
+}
+
+export interface UserProfileUpdatePayload {
+  fullName?: string
+  phoneNumber?: string
 }
 
 export interface PasswordResetRequestPayload {

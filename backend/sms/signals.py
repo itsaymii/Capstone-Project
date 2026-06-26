@@ -1,12 +1,27 @@
-# incidents/signals.py
-from django.db.models.signals import post_save
+from django.db.models.signals import post_save, pre_save
 from django.dispatch import receiver
 from django.utils import timezone
-from datetime import timedelta
+from django.contrib.auth import get_user_model
+from datetime import timedelta, datetime
 
-from .models import Incident
+from incidents.models import Incident, IncidentReport
 from sms.utils import send_critical_alert
-from accounts.models import User 
+from accounts.models import AccountProfile
+from .models import SMSLog
+
+User = get_user_model()
+
+# store old severity before save
+@receiver(pre_save, sender=Incident)
+def _capture_old_severity(sender, instance, **kwargs):
+    if instance.pk:
+        try:
+            old = Incident.objects.get(pk=instance.pk)
+            instance._old_severity = (old.severity_level or '').lower()
+        except Incident.DoesNotExist:
+            instance._old_severity = None
+    else:
+        instance._old_severity = None
 
 @receiver(post_save, sender=Incident)
 def trigger_critical_sms_alert(sender, instance, created, **kwargs):
@@ -14,12 +29,16 @@ def trigger_critical_sms_alert(sender, instance, created, **kwargs):
     Automatically sends an SMS to all Citizens when a CRITICAL incident 
     is created AND occurred within the last 24 hours.
     """
-    # 1. Only trigger when a NEW incident is created
-    if not created:
-        return
+    # Allow alerts when either:
+    # - a new Incident is created with severity 'critical', or
+    # - an existing Incident's severity transitions from non-critical -> 'critical'.
+    new_severity = (instance.severity_level or '').lower()
+    old_severity = getattr(instance, '_old_severity', None)
 
-    # 2. Check if the severity is Critical
-    if instance.severity_level != 'critical':
+    created_and_critical = created and new_severity == 'critical'
+    became_critical = (not created) and old_severity != 'critical' and new_severity == 'critical'
+
+    if not (created_and_critical or became_critical):
         return
 
     # 3. ✅ NEW: Check the 24-Hour Window
@@ -40,17 +59,104 @@ def trigger_critical_sms_alert(sender, instance, created, **kwargs):
     )
 
     # 5. Query all Citizens with a valid phone number
-    # ⚠️ ADJUST THIS: Change 'role' and 'Citizen' to your exact role field and value (e.g., 'user_type', 'CITIZEN').
-    # ⚠️ ADJUST THIS: Change 'phone_number' to your exact field name (e.g., 'phone_no').
+    # Accept stored phone numbers that start with '+63' or '09'
+    from django.db.models import Q
+
     citizens = User.objects.filter(
-        role='Citizen', 
-        phone_number__isnull=False
-    ).exclude(phone_number='')
+        account_profile__role=AccountProfile.ROLE_CITIZEN,
+        account_profile__phone_number__isnull=False,
+    ).filter(
+        Q(account_profile__phone_number__startswith='+63') | Q(account_profile__phone_number__startswith='09')
+    ).exclude(account_profile__phone_number='')
 
     # 6. Send the SMS to each citizen
     for citizen in citizens:
+        phone_number = citizen.account_profile.phone_number
+        if not phone_number:
+            continue
+
         send_critical_alert(
-            phone_number=citizen.phone_number,
+            phone_number=phone_number,
             message=message,
-            incident=instance # Link the SMS log to this specific incident
+            incident=instance,
         )
+
+
+def _map_severity(incident_type, victim_count):
+    lower = (incident_type or '').lower()
+    if victim_count >= 5:
+        return 'critical'
+    if victim_count >= 3:
+        return 'high'
+    if 'fire' in lower or 'drowning' in lower or 'crime' in lower:
+        return 'moderate'
+    if victim_count > 0:
+        return 'moderate'
+    return 'low'
+
+
+@receiver(post_save, sender=IncidentReport)
+def trigger_sms_on_report_approval(sender, instance, created, **kwargs):
+    """
+    Send critical SMS when an IncidentReport is approved by an admin.
+    This complements the Incident-created signal and provides a direct
+    alert path from approval -> citizens. Duplicate sends are avoided
+    by checking recent SMSLog entries containing the report's reference.
+    """
+    try:
+        if str(instance.status).lower() != 'approved':
+            return
+
+        # Compute a datetime for the report occurrence to enforce 24h cutoff
+        reported_time = instance.time_occurred
+        if reported_time:
+            occurred_dt = timezone.make_aware(
+                datetime.combine(timezone.localtime().date(), reported_time)
+            )
+        else:
+            occurred_dt = timezone.now()
+
+        if occurred_dt < (timezone.now() - timedelta(hours=24)):
+            return
+
+        severity = _map_severity(instance.incident_type, instance.victim_count)
+        if severity != 'critical':
+            return
+
+        # Prevent duplicate alerts for the same report/incident reference
+        ref = getattr(instance, 'incident_code', None) or ''
+        if ref and SMSLog.objects.filter(message__icontains=ref).exists():
+            return
+
+        location = instance.barangay.name if getattr(instance, 'barangay', None) else instance.location or ''
+        hazard = (instance.incident_type or 'HAZARD').upper()
+
+        message = (
+            f"DRRMO LUCENA ALERT: A CRITICAL {hazard} incident has been reported at/near {location}. "
+            f"Please take immediate precautions and follow safety protocols. Ref: {ref}"
+        )
+
+        # Accept stored phone numbers that start with '+63' or '09'
+        from django.db.models import Q
+
+        citizens = User.objects.filter(
+            account_profile__role=AccountProfile.ROLE_CITIZEN,
+            account_profile__phone_number__isnull=False,
+        ).filter(
+            Q(account_profile__phone_number__startswith='+63') | Q(account_profile__phone_number__startswith='09')
+        ).exclude(account_profile__phone_number='')
+
+        for citizen in citizens:
+            phone_number = citizen.account_profile.phone_number
+            if not phone_number:
+                continue
+
+            send_critical_alert(
+                phone_number=phone_number,
+                message=message,
+                incident=None,
+            )
+
+    except Exception:
+        # Fail silently in signal handlers
+        return

@@ -11,6 +11,7 @@
 
 const USGS_FDSN_API = 'https://earthquake.usgs.gov/fdsnws/event/1/query'
 const PHIVOLCS_ACTIVE_FAULTS_API = 'https://services8.arcgis.com/If57gH0ZAbByXwSk/arcgis/rest/services/Active_Faults_(PHIVOLCS)/FeatureServer/0/query'
+const PHIVOLCS_TOKEN = import.meta.env.VITE_PHIVOLCS_TOKEN || ''
 const LOCAL_PHILIPPINES_FAULTS_GEOJSON = '/philippines_fault_lines.geojson'
 
 export type EarthquakeEvent = {
@@ -193,7 +194,12 @@ export async function fetchPhilippinesFaultLines(): Promise<FaultLineFeatureColl
   })
 
   try {
-    const response = await fetch(`${PHIVOLCS_ACTIVE_FAULTS_API}?${params}`)
+    const headers = new Headers()
+    if (PHIVOLCS_TOKEN) {
+      headers.set('Authorization', `Bearer ${PHIVOLCS_TOKEN}`)
+    }
+
+    const response = await fetch(`${PHIVOLCS_ACTIVE_FAULTS_API}?${params}`, { headers })
     if (!response.ok) {
       throw new Error(`PHIVOLCS Active Faults API responded with status ${response.status}`)
     }

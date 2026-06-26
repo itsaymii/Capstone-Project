@@ -84,6 +84,8 @@ def map_incident_type_to_hazard_name(incident_type):
 def map_incident_type_to_severity(incident_type, victim_count):
     lower = (incident_type or '').lower()
 
+    if victim_count >= 5:
+        return 'critical'
     if victim_count >= 3:
         return 'high'
     if 'fire' in lower or 'drowning' in lower or 'crime' in lower:
@@ -459,7 +461,11 @@ class IncidentReportSerializer(serializers.ModelSerializer):
         if request and request.user and request.user.is_authenticated:
             validated_data['created_by'] = request.user
 
-        validated_data['victim_count'] = len(victims_data)
+        incoming_victim_count = validated_data.pop('victim_count', None)
+        if incoming_victim_count is None:
+            validated_data['victim_count'] = len(victims_data)
+        else:
+            validated_data['victim_count'] = max(int(incoming_victim_count), len(victims_data))
 
         incident_report = IncidentReport.objects.create(**validated_data)
 

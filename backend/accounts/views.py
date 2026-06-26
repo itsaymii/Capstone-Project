@@ -59,14 +59,20 @@ def _serialize_user(user: User, fallback_identifier: str = '') -> dict:
 	"""Shape authenticated user data for frontend responses."""
 	role = get_user_role(user)
 	contact_value = (user.email or '').strip() or fallback_identifier or user.username
+	phone_number = None
+	try:
+		phone_number = user.account_profile.phone_number
+	except Exception:
+		phone_number = None
 	return {
 		'fullName': _get_user_full_name(user),
 		'email': contact_value,
 		'role': role,
+		'phoneNumber': phone_number,
 		# Prefer explicit Django flags when available so frontend routing
 		# works even if AccountProfile hasn't been synchronized.
 		'isAdmin': bool(user.is_superuser) or role == AccountProfile.ROLE_ADMIN,
-		'isStaff': bool(user.is_staff) or role == AccountProfile.ROLE_STAFF,
+		'isStaff': role == AccountProfile.ROLE_STAFF,
 		'hasDashboardAccess': user_has_dashboard_access(user),
 	}
 
@@ -87,7 +93,22 @@ def _generate_otp_code() -> str:
 	"""Generate a six-digit OTP code."""
 	return ''.join(str(random.randint(0, 9)) for _ in range(6))
 
-	
+
+def _normalize_philippine_phone_number(phone_number: str) -> str:
+	"""Normalize Philippine mobile numbers to +63XXXXXXXXXX."""
+	if not phone_number:
+		return phone_number
+
+	cleaned = phone_number.strip()
+	if cleaned.startswith('09'):
+		return '+63' + cleaned[1:]
+
+	if cleaned.startswith('9') and len(cleaned) == 10:
+		return '+63' + cleaned
+
+	return cleaned
+
+
 def _send_otp_email(email: str, code: str, purpose: str) -> None:
 	# """Send the OTP email using configurable subject and body templates."""
 	"""Send the OTP email using configurable subject and body templates."""
@@ -243,9 +264,13 @@ def register_user(request):
 	email = (request.data.get('email') or '').strip().lower()
 	username = (request.data.get('username') or '').strip().lower()
 	password = request.data.get('password') or ''
+	phone_number = _normalize_philippine_phone_number(request.data.get('phoneNumber') or '')
 
-	if not full_name or not email or not password:
+	if not full_name or not email or not password or not phone_number:
 		return Response({'error': 'Please fill in all required fields.'}, status=status.HTTP_400_BAD_REQUEST)
+
+	if len(phone_number) < 10:
+		return Response({'error': 'Please provide a valid phone number.'}, status=status.HTTP_400_BAD_REQUEST)
 
 	try:
 		validate_email(email)
@@ -280,6 +305,7 @@ def register_user(request):
 			'fullName': full_name,
 			'username': username,
 			'passwordHash': make_password(password),
+			'phoneNumber': phone_number,
 		},
 	)
 
@@ -314,8 +340,9 @@ def verify_register_otp(request):
 	full_name = otp_record.payload.get('fullName', '')
 	username = (otp_record.payload.get('username') or '').strip().lower()
 	password_hash = otp_record.payload.get('passwordHash', '')
+	phone_number = _normalize_philippine_phone_number(otp_record.payload.get('phoneNumber') or '')
 
-	if not full_name or not password_hash:
+	if not full_name or not password_hash or not phone_number:
 		return Response({'error': 'Registration payload is incomplete. Please try again.'}, status=status.HTTP_400_BAD_REQUEST)
 
 	if username and User.objects.filter(username__iexact=username).exists():
@@ -326,7 +353,10 @@ def verify_register_otp(request):
 	user.first_name = full_name
 	user.password = password_hash
 	user.save()
-	ensure_account_profile(user, default_role=AccountProfile.ROLE_CITIZEN)
+	profile = ensure_account_profile(user, default_role=AccountProfile.ROLE_CITIZEN)
+	if phone_number:
+		profile.phone_number = phone_number
+		profile.save(update_fields=['phone_number'])
 
 	# Mark the OTP as consumed so it cannot be replayed.
 	otp_record.is_used = True
@@ -341,6 +371,55 @@ def verify_register_otp(request):
 			'user': _serialize_user(user, fallback_identifier=email),
 		},
 		status=status.HTTP_201_CREATED,
+	)
+
+
+@api_view(['GET', 'PATCH'])
+@permission_classes([IsAuthenticated])
+def current_user_profile(request):
+	"""Retrieve or update the authenticated user's profile."""
+	if request.method == 'GET':
+		return Response(
+			{'user': _serialize_user(request.user, fallback_identifier=request.user.email)},
+			status=status.HTTP_200_OK,
+		)
+
+	full_name = request.data.get('fullName')
+	phone_number = request.data.get('phoneNumber')
+
+	if full_name is None and phone_number is None:
+		return Response({'error': 'No profile fields provided.'}, status=status.HTTP_400_BAD_REQUEST)
+
+	user = request.user
+	user_needs_save = False
+
+	if full_name is not None:
+		normalized_full_name = (full_name or '').strip()
+		if not normalized_full_name:
+			return Response({'error': 'Full name must not be blank.'}, status=status.HTTP_400_BAD_REQUEST)
+		if normalized_full_name != user.first_name:
+			user.first_name = normalized_full_name
+			user_needs_save = True
+
+	if phone_number is not None:
+		normalized_phone = _normalize_philippine_phone_number(phone_number)
+		if normalized_phone and len(normalized_phone) < 10:
+			return Response({'error': 'Please provide a valid phone number.'}, status=status.HTTP_400_BAD_REQUEST)
+
+		profile = ensure_account_profile(user, default_role=AccountProfile.ROLE_CITIZEN)
+		if profile.phone_number != normalized_phone:
+			profile.phone_number = normalized_phone
+			profile.save(update_fields=['phone_number'])
+
+	if user_needs_save:
+		user.save(update_fields=['first_name'])
+
+	return Response(
+		{
+			'message': 'Profile updated successfully.',
+			'user': _serialize_user(user, fallback_identifier=user.email),
+		},
+		status=status.HTTP_200_OK,
 	)
 
 

@@ -17,6 +17,37 @@ def send_critical_alert(phone_number, message, incident=None):
     if phone_number.startswith("09"):
         normalized_phone = "+63" + phone_number[1:]
 
+    # 2. Normalize the base URL from .env to include scheme if missing
+    base_url = (settings.SMS_BASE_URL or '').strip()
+    if not base_url:
+        logger.error('SMS_BASE_URL is not configured. SMS not sent.')
+        SMSLog.objects.create(
+            phone_number=phone_number,
+            message=message,
+            status='failed',
+            incident=incident,
+        )
+        return False
+
+    if not settings.SMS_USERNAME or not settings.SMS_PASSWORD:
+        logger.error('SMS_USERNAME or SMS_PASSWORD is not configured. SMS not sent.')
+        SMSLog.objects.create(
+            phone_number=phone_number,
+            message=message,
+            status='failed',
+            incident=incident,
+        )
+        return False
+
+    if not base_url.startswith(('http://', 'https://')):
+        base_url = f'https://{base_url}'
+
+    normalized_base_url = base_url.rstrip('/')
+    if normalized_base_url.lower().endswith('/messages'):
+        sms_url = normalized_base_url
+    else:
+        sms_url = normalized_base_url + '/messages'
+
     # Mask phone number for secure logging
     masked_phone = f"{phone_number[:4]}****{phone_number[-2:]}" if len(phone_number) > 6 else phone_number
 
@@ -40,7 +71,7 @@ def send_critical_alert(phone_number, message, incident=None):
     # 3. Send the actual HTTP request to the SMS Gateway
     try:
         res = requests.post(
-            f"{settings.SMS_BASE_URL}/messages",
+            sms_url,
             auth=(settings.SMS_USERNAME, settings.SMS_PASSWORD),
             json={
                 "textMessage": {"text": message},

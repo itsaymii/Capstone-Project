@@ -1,5 +1,13 @@
 import axios from 'axios'
-import { confirmPasswordReset, loginAccount, registerAccount, requestPasswordReset, verifyLoginOtp, verifyRegisterOtp } from './api'
+import {
+  confirmPasswordReset,
+  loginAccount,
+  registerAccount,
+  requestPasswordReset,
+  verifyLoginOtp,
+  verifyRegisterOtp,
+  updateCurrentUserProfile as patchCurrentUserProfile,
+} from './api'
 import { addNotification } from './notifications'
 import type { UserRole } from '../types/api'
 
@@ -218,6 +226,7 @@ export async function verifyRegisterOtpCode(email: string, otp: string): Promise
           isAdmin: response.user.isAdmin,
           isStaff: response.user.isStaff,
           hasDashboardAccess: response.user.hasDashboardAccess,
+          phoneNumber: response.user.phoneNumber,
         },
         false, // Don't persist to localStorage for new users, use sessionStorage
       )
@@ -236,6 +245,38 @@ export async function verifyRegisterOtpCode(email: string, otp: string): Promise
     }
   } catch (error) {
     const parsedError = parseApiError(error, 'Unable to verify OTP right now.')
+    return {
+      success: false,
+      error: parsedError.message,
+    }
+  }
+}
+
+export async function saveCurrentUserProfileToServer(payload: { fullName?: string; phoneNumber?: string }): Promise<AuthResult> {
+  try {
+    const response = await patchCurrentUserProfile(payload)
+    if (response.user) {
+      const keepLoggedIn = getActiveAuthStore() === localStorage
+      persistAuthenticatedSession(
+        {
+          fullName: response.user.fullName,
+          email: response.user.email,
+          role: response.user.role,
+          isAdmin: response.user.isAdmin,
+          isStaff: response.user.isStaff,
+          hasDashboardAccess: response.user.hasDashboardAccess,
+          phoneNumber: response.user.phoneNumber,
+        },
+        keepLoggedIn,
+      )
+    }
+    addNotification('Profile saved successfully.')
+    return {
+      success: true,
+      message: response.message,
+    }
+  } catch (error) {
+    const parsedError = parseApiError(error, 'Unable to save profile right now.')
     return {
       success: false,
       error: parsedError.message,
