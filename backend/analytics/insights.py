@@ -116,7 +116,7 @@ Rules:
     ),
     safety_settings=safety_settings
     )
-
+    
     import time
 
     last_error = None

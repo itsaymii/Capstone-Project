@@ -40,6 +40,7 @@ INSTALLED_APPS = [
     'incidents',
     'resources',
     'analytics',
+    'sms',
 ]
 
 MIDDLEWARE = [
@@ -176,6 +177,11 @@ try:
     load_dotenv()
 except ImportError:
     pass
+
+# Add these lines to settings.py (make sure python-dotenv is loaded at the top)
+SMS_BASE_URL = os.getenv('SMS_BASE_URL')
+SMS_USERNAME = os.getenv('SMS_USERNAME')
+SMS_PASSWORD = os.getenv('SMS_PASSWORD')
 
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 
