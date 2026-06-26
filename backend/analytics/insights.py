@@ -1,12 +1,21 @@
 # analytics/insights.py
-from google import genai
 from django.conf import settings
+
+try:
+    from google import genai
+except ImportError:
+    genai = None
+
 
 def generate_hazard_insight(hazard_name, stats, days=365, start_date=None, end_date=None):
     """
     Generates a comprehensive insight using Google Gemini AI.
     Falls back to template-based generation if API fails.
     """
+    if genai is None:
+        print("⚠️  google.genai not installed, using fallback insight generator.")
+        return _generate_template_insight(hazard_name, stats, days, start_date, end_date)
+
     try:
         return _generate_gemini_insight(hazard_name, stats, days, start_date, end_date)
     except Exception as e:
@@ -211,11 +220,11 @@ Rules:
             "Gemini returned an incomplete response."
         )
 
-    return f""" AI-GENERATED INSIGHT: {hazard_name.upper()}
+    return f""" {hazard_name.upper()}
 
 {ai_text}
 
----
+
  QUICK STATS:
 • Total Incidents: {total}
 • Primary Hotspots: {', '.join(top_barangays) if top_barangays else 'N/A'}
@@ -270,8 +279,8 @@ def _generate_template_insight(hazard_name, stats, days=365, start_date=None, en
     # ✅ COMBINED INTO ONE SINGLE PARAGRAPH
     return f""" {hazard_name} OVERVIEW ({timeframe}): The data indicates a {trend}, with {total} total incidents recorded (~{monthly_avg:.1f}/month average). Primary hotspots include {hotspots}.{severity_note} To address this, the DRRMO should {recommendation}
 
----
-📈 QUICK STATS:
+
+ QUICK STATUS:
 • Total Incidents: {total}
 • Critical/High Severity: {critical_high}
 • Timeframe: {timeframe}

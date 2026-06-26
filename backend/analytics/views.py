@@ -1,5 +1,5 @@
 # analytics/views.py
-from datetime import timedelta
+from datetime import datetime, time, timedelta
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 from rest_framework.decorators import api_view, permission_classes
@@ -31,17 +31,36 @@ def build_score_history(barangay_id, window_days=30, points=6):
     return history
 
 
-def build_incident_trend(barangay_id, days=90, buckets=9):
-    now = timezone.now()
-    start_date = now - timedelta(days=days)
-    interval_days = max(1, days // buckets)
+def normalize_datetime_range(start_date, end_date):
+    if not isinstance(start_date, datetime):
+        start_date = datetime.combine(start_date, time.min)
+    if not isinstance(end_date, datetime):
+        end_date = datetime.combine(end_date, time.max)
+
+    if timezone.is_naive(start_date):
+        start_date = timezone.make_aware(start_date)
+    if timezone.is_naive(end_date):
+        end_date = timezone.make_aware(end_date)
+
+    return start_date, end_date
+
+
+def build_incident_trend(barangay_id, days=90, buckets=9, start_date=None, end_date=None):
+    if start_date and end_date:
+        window_start, window_end = normalize_datetime_range(start_date, end_date)
+    else:
+        window_end = timezone.now()
+        window_start = window_end - timedelta(days=days)
+
+    total_span_days = max(1, (window_end - window_start).days)
+    interval_days = max(1, total_span_days // buckets)
     trend = []
 
     for index in range(buckets):
-        bucket_start = start_date + timedelta(days=index * interval_days)
+        bucket_start = window_start + timedelta(days=index * interval_days)
         bucket_end = bucket_start + timedelta(days=interval_days)
-        if bucket_end > now:
-            bucket_end = now
+        if bucket_end > window_end:
+            bucket_end = window_end
 
         count = Incident.objects.filter(
             barangay_id=barangay_id,
@@ -90,17 +109,37 @@ def barangay_risk_view(request):
     except ValueError:
         return Response({'error': 'days must be an integer.'}, status=status.HTTP_400_BAD_REQUEST)
 
+    start_date_str = request.query_params.get('start_date')
+    end_date_str = request.query_params.get('end_date')
+    start_date = parse_date(start_date_str) if start_date_str else None
+    end_date = parse_date(end_date_str) if end_date_str else None
+
+    if (start_date_str or end_date_str) and not (start_date and end_date):
+        return Response(
+            {'error': 'Both start_date and end_date must be valid YYYY-MM-DD values when using a custom range.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if start_date and end_date and start_date > end_date:
+        return Response(
+            {'error': 'start_date must be earlier than or equal to end_date.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if start_date and end_date:
+        start_date, end_date = normalize_datetime_range(start_date, end_date)
+
     # 1. Build barangay profile for risk scoring and hazard breakdown
-    profile = get_barangay_profile(barangay_id, days=days)
+    profile = get_barangay_profile(barangay_id, days=days, start_date=start_date, end_date=end_date)
 
     # 2. Calculate Risk Score
-    risk_data = calculate_risk_score(barangay_id, days=days)
+    risk_data = calculate_risk_score(barangay_id, days=days, start_date=start_date, end_date=end_date)
 
     # 3. Calculate Prediction
-    prediction_data = predict_top_hazard(barangay_id, days=days)
+    prediction_data = predict_top_hazard(barangay_id, days=days, start_date=start_date, end_date=end_date)
 
     score_history = build_score_history(barangay_id, window_days=30, points=6)
-    incident_trend = build_incident_trend(barangay_id, days=days, buckets=9)
+    incident_trend = build_incident_trend(barangay_id, days=days, start_date=start_date, end_date=end_date, buckets=9)
     hazard_share = build_hazard_share(profile)
 
     # 4. Return combined tactical intelligence

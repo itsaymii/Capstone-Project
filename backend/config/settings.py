@@ -171,10 +171,14 @@ REST_FRAMEWORK = {
 }
 
 import os
-from dotenv import load_dotenv
-load_dotenv()
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
+
 # ============================================
 # Custom Permission Classes
 # ============================================

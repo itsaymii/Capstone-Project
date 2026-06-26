@@ -70,9 +70,9 @@ def create_incident_on_approval(sender, instance: IncidentReport, created, **kwa
 
             severity = _map_severity(instance.incident_type, instance.victim_count)
 
-            # ✅ AUTO-LINK: Find nearest barangay if none provided
-            barangay = None
-            if lat and lng:
+            # ✅ Prefer the report's barangay if provided; otherwise find nearest
+            barangay = instance.barangay if getattr(instance, 'barangay', None) else None
+            if barangay is None and lat and lng:
                 barangay = get_nearest_barangay(float(lat), float(lng))
 
             incident = Incident.objects.create(
