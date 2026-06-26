@@ -46,7 +46,7 @@ def send_critical_alert(phone_number, message, incident=None):
                 "textMessage": {"text": message},
                 "phoneNumbers": [normalized_phone]
             },
-            timeout=15
+            timeout=16
         )
         
         # 4. Log the result to the database
