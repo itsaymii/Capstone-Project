@@ -78,7 +78,7 @@ export const ResponderReportsPage: FC = () => {
     })
 
   const getIncidentBadgeStyle = (type: string) => {
-    const lower = type.toLowerCase()
+    const lower = String(type || '').toLowerCase()
 
     if (lower.includes('med')) {
       return 'bg-rose-50 text-rose-700 border-rose-100 ring-rose-500/10'
@@ -88,8 +88,22 @@ export const ResponderReportsPage: FC = () => {
       return 'bg-orange-50 text-orange-700 border-orange-100 ring-orange-500/10'
     }
 
-    if (lower.includes('rtc') || lower.includes('vehic') || lower.includes('rca')) {
+    if (
+      lower.includes('rtc') ||
+      lower.includes('rca') ||
+      lower.includes('vehic') ||
+      lower.includes('accident')
+    ) {
       return 'bg-amber-50 text-amber-700 border-amber-100 ring-amber-500/10'
+    }
+
+    if (
+      lower.includes('hazmat') ||
+      lower.includes('hazard') ||
+      lower.includes('chemical') ||
+      lower.includes('toxic')
+    ) {
+      return 'bg-purple-50 text-purple-700 border-purple-100 ring-purple-500/10'
     }
 
     return 'bg-purple-50 text-purple-700 border-purple-100 ring-purple-500/10'

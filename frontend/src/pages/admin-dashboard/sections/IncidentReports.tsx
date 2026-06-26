@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import { getIncidentReports, type IncidentReport } from '../../../services/incidents'
 
 type ReportStatus = 'pending' | 'approved'
@@ -74,6 +74,35 @@ function formatDate(value?: string): string {
   })
 }
 
+function getReportCreatedAt(report: IncidentReport): Date | null {
+  const value = report.createdAt || report.created_at
+  if (!value) return null
+
+  const parsed = new Date(value)
+  return Number.isNaN(parsed.getTime()) ? null : parsed
+}
+
+function getGroupingLabel(report: IncidentReport, grouping: DateGrouping): string {
+  const date = getReportCreatedAt(report)
+  if (!date) return 'Unknown date'
+
+  if (grouping === 'weekly') {
+    const dayOfWeek = (date.getDay() + 6) % 7 // Monday = 0
+    const weekStart = new Date(date)
+    weekStart.setDate(date.getDate() - dayOfWeek)
+    const weekEnd = new Date(weekStart)
+    weekEnd.setDate(weekStart.getDate() + 6)
+
+    return `${weekStart.toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })} – ${weekEnd.toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })}`
+  }
+
+  if (grouping === 'monthly') {
+    return date.toLocaleDateString('en-PH', { month: 'long', year: 'numeric' })
+  }
+
+  return date.getFullYear().toString()
+}
+
 function getIncidentBadgeClass(report: IncidentReport): string {
   const type = getIncidentType(report).toLowerCase()
 
@@ -101,7 +130,7 @@ function compareResponderTeams(left: string, right: string): number {
 
 export function IncidentReports() {
   const [reports, setReports] = useState<IncidentReport[]>([])
-  const [searchQuery] = useState('')
+  const [searchQuery, setSearchQuery] = useState('')
   const [isLoading, setIsLoading] = useState(true)
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [dateGrouping, setDateGrouping] = useState<DateGrouping>('weekly')
@@ -170,6 +199,24 @@ export function IncidentReports() {
       })
       .sort((left, right) => compareResponderTeams(getResponderTeam(left), getResponderTeam(right)))
   }, [filteredReports, teamFilter])
+
+  const groupedReports = useMemo(() => {
+    const groups = new Map<string, IncidentReport[]>()
+    const reportsToGroup = [...sortedFilteredReports].sort((left, right) => {
+      const leftDate = getReportCreatedAt(left)?.getTime() ?? 0
+      const rightDate = getReportCreatedAt(right)?.getTime() ?? 0
+      return rightDate - leftDate
+    })
+
+    reportsToGroup.forEach((report) => {
+      const label = getGroupingLabel(report, dateGrouping)
+      const bucket = groups.get(label) || []
+      bucket.push(report)
+      groups.set(label, bucket)
+    })
+
+    return Array.from(groups.entries()).map(([group, items]) => ({ group, items }))
+  }, [sortedFilteredReports, dateGrouping])
 
   const toggleSelect = (reportId: string) => {
     setSelectedIds((prev) =>
@@ -395,7 +442,7 @@ export function IncidentReports() {
             </p>
           </div>
 
-          {/* <div className="flex flex-col gap-4 lg:flex-1 lg:px-6">
+          <div className="flex flex-col gap-4 lg:flex-1 lg:px-6">
             <div className="mx-auto w-full max-w-lg rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 lg:px-5">
               <input
                 className="min-w-0 w-full bg-transparent text-sm text-slate-900 outline-none placeholder:text-slate-400"
@@ -405,7 +452,7 @@ export function IncidentReports() {
                 value={searchQuery}
               />
             </div>
-          </div> */}
+          </div>
 
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
             <label className="flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-xs uppercase tracking-[0.14em] text-slate-500">
@@ -538,52 +585,61 @@ export function IncidentReports() {
                     </td>
                   </tr>
                 ) : (
-                  sortedFilteredReports.map((report) => {
-                    const reportCode = getReportCode(report)
-                    const isSelected = selectedIds.includes(reportCode)
-
-                    return (
-                      <tr
-                        className={`transition ${isSelected ? 'bg-blue-50' : 'hover:bg-slate-50/90'}`}
-                        key={reportCode}
-                      >
-                        <td className="px-4 py-4">
-                          <input
-                            checked={isSelected}
-                            className="h-4 w-4 rounded accent-blue-600 transition"
-                            onChange={() => toggleSelect(reportCode)}
-                            onClick={(e) => e.stopPropagation()}
-                            type="checkbox"
-                          />
-                        </td>
-                        <td className="px-4 py-4 text-sm font-black text-blue-800">
-                          {reportCode}
-                        </td>
-                        <td className="px-4 py-4 text-sm text-slate-800">
-                          <span className={`inline-flex rounded-full border px-3 py-1 text-xs font-bold ${getIncidentBadgeClass(report)}`}>
-                            {getIncidentType(report)}
-                          </span>
-                        </td>
-                        <td className="px-4 py-4 text-sm text-slate-600">
-                          {report.location || '-'}
-                        </td>
-                        <td className="px-4 py-4 text-sm text-slate-600">
-                          {getResponderTeam(report)}
-                        </td>
-                        <td className="px-4 py-4 text-sm text-slate-600">
-                          {getVictimCount(report)}
-                        </td>
-                        <td className="px-4 py-4">
-                          <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700">
-                            Approved
-                          </span>
-                        </td>
-                        <td className="px-4 py-4 text-sm text-slate-600">
-                          {formatDate(report.createdAt || report.created_at)}
+                  groupedReports.map(({ group, items }) => (
+                    <Fragment key={group}>
+                      <tr className="bg-slate-100">
+                        <td className="px-4 py-3 text-sm font-semibold uppercase tracking-[0.12em] text-slate-700" colSpan={8}>
+                          {group} ({items.length})
                         </td>
                       </tr>
-                    )
-                  })
+                      {items.map((report) => {
+                        const reportCode = getReportCode(report)
+                        const isSelected = selectedIds.includes(reportCode)
+
+                        return (
+                          <tr
+                            className={`transition ${isSelected ? 'bg-blue-50' : 'hover:bg-slate-50/90'}`}
+                            key={reportCode}
+                          >
+                            <td className="px-4 py-4">
+                              <input
+                                checked={isSelected}
+                                className="h-4 w-4 rounded accent-blue-600 transition"
+                                onChange={() => toggleSelect(reportCode)}
+                                onClick={(e) => e.stopPropagation()}
+                                type="checkbox"
+                              />
+                            </td>
+                            <td className="px-4 py-4 text-sm font-black text-blue-800">
+                              {reportCode}
+                            </td>
+                            <td className="px-4 py-4 text-sm text-slate-800">
+                              <span className={`inline-flex rounded-full border px-3 py-1 text-xs font-bold ${getIncidentBadgeClass(report)}`}>
+                                {getIncidentType(report)}
+                              </span>
+                            </td>
+                            <td className="px-4 py-4 text-sm text-slate-600">
+                              {report.location || '-'}
+                            </td>
+                            <td className="px-4 py-4 text-sm text-slate-600">
+                              {getResponderTeam(report)}
+                            </td>
+                            <td className="px-4 py-4 text-sm text-slate-600">
+                              {getVictimCount(report)}
+                            </td>
+                            <td className="px-4 py-4">
+                              <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700">
+                                Approved
+                              </span>
+                            </td>
+                            <td className="px-4 py-4 text-sm text-slate-600">
+                              {formatDate(report.createdAt || report.created_at)}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </Fragment>
+                  ))
                 )}
               </tbody>
             </table>

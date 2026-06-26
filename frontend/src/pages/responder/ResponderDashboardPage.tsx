@@ -19,10 +19,34 @@ interface Incident {
 }
 
 const mapIncidentType = (type: string): Incident['type'] => {
-  const lowerType = type.toLowerCase()
-  if (lowerType.includes('medical') || lowerType.includes('ambulance')) return 'Medical'
-  if (lowerType.includes('fire')) return 'Fire'
-  if (lowerType.includes('rca') || lowerType.includes('vehicular') || lowerType.includes('rtc')) return 'RTC'
+  const lowerType = String(type || '').toLowerCase()
+
+  if (lowerType.includes('medical') || lowerType.includes('ambulance') || lowerType.includes('health')) {
+    return 'Medical'
+  }
+
+  if (lowerType.includes('fire')) {
+    return 'Fire'
+  }
+
+  if (
+    lowerType.includes('rtc') ||
+    lowerType.includes('rca') ||
+    lowerType.includes('vehicular') ||
+    lowerType.includes('accident')
+  ) {
+    return 'RTC'
+  }
+
+  if (
+    lowerType.includes('hazmat') ||
+    lowerType.includes('hazard') ||
+    lowerType.includes('chemical') ||
+    lowerType.includes('toxic')
+  ) {
+    return 'Hazmat'
+  }
+
   return 'Hazmat'
 }
 
@@ -40,18 +64,24 @@ export const ResponderDashboardPage: FC = () => {
       try {
         const reports = await getIncidentReports()
 
-        const mappedReports: Incident[] = reports.slice(0, 5).map((report) => ({
-          id: report.incidentCode || report.reportCode || report.id,
-          type: mapIncidentType(report.incidentType || report.incident_type || ''),
-          location: report.location || 'Unknown location',
-          timeOccurred: report.timeOccurred || report.time_occurred || 'N/A',
-          status: report.status === 'approved' || report.status_update === 'approved' ? 'Completed' : 'Pending Report',
-          victimCount: report.victimCount || report.victim_count || report.victims?.length || 0,
-          description: report.description,
-          responderTeam: report.responderTeam || report.responder_team,
-          actionTaken: report.actionTaken || report.action_taken || '',
-          victims: report.victims || [],
-        }))
+        const mappedReports: Incident[] = reports.slice(0, 5).map((report) => {
+          const normalizedStatus = `${report.status || ''}`.trim().toLowerCase()
+          const normalizedStatusUpdate = `${report.status_update || ''}`.trim().toLowerCase()
+          const isApproved = normalizedStatus.includes('approved') || normalizedStatusUpdate.includes('approved')
+
+          return {
+            id: report.incidentCode || report.reportCode || report.id,
+            type: mapIncidentType(report.incidentType || report.incident_type || ''),
+            location: report.location || 'Unknown location',
+            timeOccurred: report.timeOccurred || report.time_occurred || 'N/A',
+            status: isApproved ? 'Completed' : 'Pending Report',
+            victimCount: report.victimCount || report.victim_count || report.victims?.length || 0,
+            description: report.description,
+            responderTeam: report.responderTeam || report.responder_team,
+            actionTaken: report.actionTaken || report.action_taken || '',
+            victims: report.victims || [],
+          }
+        })
 
         setRecentIncidents(mappedReports)
       } catch (error) {

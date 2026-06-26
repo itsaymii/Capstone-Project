@@ -11,8 +11,10 @@ import {
 } from '../services/incidents'
 import {
   type EarthquakeEvent,
+  type FaultLineFeatureCollection,
   type HeatPoint,
   fetchPhilippinesEarthquakes,
+  fetchPhilippinesFaultLines,
   toHeatPoints,
 } from '../services/earthquakes'
 
@@ -74,12 +76,6 @@ const philippinesBounds: LatLngBoundsExpression = [
   [21.5, 127.5],
 ]
 
-const quezonRegionBounds: LatLngBoundsExpression = [
-  [13.72, 121.3],
-  [14.12, 121.92],
-]
-
-
 const hazardColors: Record<HazardType, string> = {
   EQ: '#4ade80',
   FR: '#fb923c',
@@ -91,6 +87,13 @@ const hazardTypeMeta: Record<HazardType, { label: string; color: string }> = {
   FR: { label: 'Fire', color: hazardColors.FR },
   AC: { label: 'Accident', color: hazardColors.AC },
 }
+
+const mapLegendItems = [
+  { label: 'Philippine Fault Zone', color: '#dc2626' },
+  { label: 'Valley Fault System', color: '#3b82f6' },
+  { label: 'Other Active Faults', color: '#ef4444' },
+  { label: 'Earthquake Epicenter', color: '#4ade80' },
+]
 
 const reviewStatusClass: Record<ReportReviewStatus, string> = {
   pending: 'border border-amber-200 bg-amber-50 text-amber-800',
@@ -424,7 +427,10 @@ export function AdminIncidentMapPanel({
     useState<GeoJSON.FeatureCollection<GeoJSON.Geometry, Record<string, unknown>> | null>(null)
   const [eqHeatPoints, setEqHeatPoints] = useState<HeatPoint[]>([])
   const [eqFetchStatus, setEqFetchStatus] = useState<'idle' | 'loading' | 'error'>('idle')
+  const [faultLines, setFaultLines] = useState<FaultLineFeatureCollection | null>(null)
+  const [faultLineFetchStatus, setFaultLineFetchStatus] = useState<'idle' | 'loading' | 'error'>('idle')
   const [showHeatmap, setShowHeatmap] = useState(true)
+  const [showFaultLines, setShowFaultLines] = useState(true)
   const [showIncidentHeatmap, setShowIncidentHeatmap] = useState(true)
   const [eqLastRefreshed, setEqLastRefreshed] = useState<Date | null>(null)
   const [eqIsRefreshing, setEqIsRefreshing] = useState(false)
@@ -683,6 +689,23 @@ export function AdminIncidentMapPanel({
     }
   }, [selectedType, earthquakeEvents.length, eqFetchStatus, loadEarthquakes])
 
+  useEffect(() => {
+    if (selectedType !== 'EQ' || faultLines || faultLineFetchStatus !== 'idle') return
+
+    async function loadFaultLines(): Promise<void> {
+      setFaultLineFetchStatus('loading')
+      try {
+        const data = await fetchPhilippinesFaultLines()
+        setFaultLines(data)
+        setFaultLineFetchStatus('idle')
+      } catch (error) {
+        console.error('[AdminIncidentMapPanel] Failed to load PHIVOLCS fault lines:', error)
+        setFaultLineFetchStatus('error')
+      }
+    }
+
+    void loadFaultLines()
+  }, [selectedType, faultLines, faultLineFetchStatus])
 
   useEffect(() => {
     if (selectedType !== 'EQ') return
@@ -740,7 +763,7 @@ export function AdminIncidentMapPanel({
     if (savedMapViewRef.current && previousSelectedTypeRef.current === selectedType) {
       map.setView(savedMapViewRef.current.center, savedMapViewRef.current.zoom)
     } else if (isEqView) {
-      map.fitBounds(quezonRegionBounds)
+      map.fitBounds(philippinesBounds)
     } else {
       map.fitBounds(lucenaBounds, { padding: [18, 18] })
     }
@@ -760,6 +783,10 @@ export function AdminIncidentMapPanel({
     const incidentMarkerPane = map.getPane('incident-marker-pane') ?? map.createPane('incident-marker-pane')
     incidentMarkerPane.style.zIndex = '670'
     incidentMarkerPane.style.pointerEvents = 'auto'
+
+    const faultPane = map.getPane('fault-pane') ?? map.createPane('fault-pane')
+    faultPane.style.zIndex = '640'
+    faultPane.style.pointerEvents = 'none'
 
     const mapLabelsPane = map.getPane('map-labels-pane') ?? map.createPane('map-labels-pane')
     mapLabelsPane.style.zIndex = '650'
@@ -867,6 +894,53 @@ export function AdminIncidentMapPanel({
         }).addTo(map)
       }
 
+      if (showFaultLines && faultLines) {
+        L.geoJSON(faultLines, {
+          pane: 'fault-pane',
+          style: (feature) => {
+            const faultName = String(feature?.properties?.FAULT_NAME || '')
+            const segName = String(feature?.properties?.SEG_NAME || '')
+            const isValleyFault = faultName.includes('Valley Fault System') || segName.includes('Valley Fault')
+            const isPFZ = faultName.includes('Philippine Fault Zone')
+
+            if (isValleyFault) {
+              return {
+                color: '#3b82f6',
+                weight: 4,
+                opacity: 0.94,
+                dashArray: '4,6',
+              }
+            }
+
+            if (isPFZ) {
+              return {
+                color: '#dc2626',
+                weight: 4,
+                opacity: 0.96,
+                dashArray: '',
+              }
+            }
+
+            return {
+              color: '#ef4444',
+              weight: 3,
+              opacity: 0.88,
+              dashArray: '8,7',
+            }
+          },
+          onEachFeature: (feature, layer) => {
+            const name = String(
+              feature.properties?.FAULT_NAME || feature.properties?.SEG_NAME || 'PHIVOLCS Fault Line',
+            )
+            layer.bindTooltip(name, {
+              sticky: true,
+              direction: 'top',
+              opacity: 0.9,
+              className: 'fault-line-tooltip',
+            })
+          },
+        }).addTo(map)
+      }
 
       if (showHeatmap) {
         earthquakeEvents
@@ -949,6 +1023,47 @@ export function AdminIncidentMapPanel({
       map.invalidateSize()
     }, 0)
 
+    // Add small in-map legend for admin map
+    try {
+      const legendControl = (L as any).control({ position: 'topright' })
+      legendControl.onAdd = function () {
+        const container = L.DomUtil.create('div', 'map-legend leaflet-bar rounded p-2 bg-white/90 shadow') as HTMLDivElement
+        container.style.fontSize = '12px'
+        container.style.lineHeight = '1.2'
+        container.style.pointerEvents = 'auto'
+
+        mapLegendItems.forEach((item) => {
+          const row = document.createElement('div')
+          row.style.display = 'flex'
+          row.style.alignItems = 'center'
+          row.style.gap = '8px'
+          row.style.marginBottom = '6px'
+
+          const sw = document.createElement('span')
+          sw.style.width = '14px'
+          sw.style.height = '14px'
+          sw.style.background = item.color
+          sw.style.display = 'inline-block'
+          sw.style.borderRadius = '3px'
+
+          const label = document.createElement('span')
+          label.textContent = item.label
+          label.style.color = 'inherit'
+
+          row.appendChild(sw)
+          row.appendChild(label)
+          container.appendChild(row)
+        })
+
+        return container
+      }
+
+      legendControl.addTo(map)
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.warn('Failed to add admin map legend control', e)
+    }
+
     mapInstanceRef.current = map
     previousSelectedTypeRef.current = selectedType
 
@@ -964,6 +1079,8 @@ export function AdminIncidentMapPanel({
     eqHeatPoints,
     earthquakeEvents,
     showHeatmap,
+    showFaultLines,
+    faultLines,
     barangayLayer,
   ])
 
@@ -1129,7 +1246,7 @@ export function AdminIncidentMapPanel({
           <div className="flex flex-col gap-4 border-b border-slate-200 bg-[linear-gradient(90deg,#e8f1fd_0%,#f6fbff_100%)] px-4 py-4 sm:px-5 sm:py-4 lg:flex-row lg:items-start lg:justify-between">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                {selectedType === 'EQ' ? 'Seismic Mapping — Quezon Province' : 'Approved Report Mapping'}
+                {selectedType === 'EQ' ? 'Seismic Mapping — Philippines' : 'Approved Report Mapping'}
               </p>
 
               <h2 className="mt-1 text-xl font-bold text-slate-900 sm:text-2xl">
@@ -1181,6 +1298,17 @@ export function AdminIncidentMapPanel({
                     Heatmap
                   </button>
 
+                  <button
+                    className={`rounded-full border px-3 py-1 text-[11px] font-semibold transition ${
+                      showFaultLines
+                        ? 'border-rose-500 bg-rose-500 text-white'
+                        : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
+                    }`}
+                    onClick={() => setShowFaultLines((value) => !value)}
+                    type="button"
+                  >
+                    Fault Lines
+                  </button>
                 </div>
               ) : (
                 <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-200 bg-white/75 px-3 py-2 backdrop-blur lg:justify-end">
@@ -1249,7 +1377,7 @@ export function AdminIncidentMapPanel({
                     </h3>
 
                     <p className="mt-1 text-xs leading-relaxed text-slate-500">
-                      Live earthquake records for Quezon Province and nearby areas.
+                      Live earthquake records for the Philippines and nearby areas.
                     </p>
                   </div>
 

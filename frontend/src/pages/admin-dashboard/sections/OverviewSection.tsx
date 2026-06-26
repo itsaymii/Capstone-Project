@@ -117,16 +117,6 @@ export function OverviewSection({
             <span className={`mt-1 text-4xl font-extrabold leading-none tracking-tight ${card.valueClass}`}>
               {card.value}
             </span>
-
-            <p className="text-sm font-medium text-slate-500">
-              {card.comparison}
-            </p>
-
-            <div className="mt-auto border-t border-slate-100 pt-3">
-              <p className="text-xs font-semibold text-slate-600">
-                {card.delta}
-              </p>
-            </div>
           </div>
         ))}
       </section>

@@ -8,6 +8,7 @@ type RegisterPayload = {
   email: string
   username?: string
   password: string
+  phoneNumber: string
 }
 
 type LoginPayload = {
@@ -167,8 +168,9 @@ export async function requestRegisterOtp(payload: RegisterPayload): Promise<Auth
   const email = normalizeEmail(payload.email)
   const username = payload.username?.trim() || ''
   const password = payload.password
+  const phoneNumber = payload.phoneNumber.trim()
 
-  if (!fullName || !email || !password) {
+  if (!fullName || !email || !password || !phoneNumber) {
     return { success: false, error: 'Please fill in all required fields.' }
   }
 
@@ -178,6 +180,7 @@ export async function requestRegisterOtp(payload: RegisterPayload): Promise<Auth
       email,
       password,
       username,
+      phoneNumber,
     })
     addNotification('Registration OTP sent successfully.')
     return {

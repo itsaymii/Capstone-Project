@@ -78,9 +78,9 @@ export function AdminSidebar({ activeKey, actionOverrides }: AdminSidebarProps) 
     <>
       <div className="border-b border-slate-800 bg-[#181c23] px-4 py-3 md:hidden">
         <div className="mb-3 flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#0b2a57] text-sm font-bold text-white">
+          {/* <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#0b2a57] text-sm font-bold text-white">
             {profile?.photoUrl ? <img alt="Profile" className="h-full w-full rounded-full object-cover" src={profile.photoUrl} /> : initials}
-          </div>
+          </div> */}
           <div>
             <p className="text-[11px] uppercase tracking-[0.24em] text-slate-500">Control Center</p>
             <p className="text-sm font-bold text-white">ADMIN PANEL</p>
@@ -118,14 +118,9 @@ export function AdminSidebar({ activeKey, actionOverrides }: AdminSidebarProps) 
       <aside className="hidden px-4 py-4 md:fixed md:inset-y-0 md:left-0 md:z-20 md:block md:w-[300px]">
         <div className="flex h-full flex-col overflow-hidden rounded-[32px] border border-slate-200/80 bg-[linear-gradient(180deg,#ffffff_0%,#f8fbff_100%)] px-4 py-6 shadow-[0_24px_50px_rgba(15,23,42,0.1)]">
           <div className="mb-8 px-4 py-2 text-slate-900">
-            <div className="flex items-center gap-3 px-1">
-              <div className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-2xl bg-[#0b2a57] text-base font-bold text-white shadow-[0_0_18px_rgba(11,42,87,0.18)]">
-              {profile?.photoUrl ? <img alt="Profile" className="h-full w-full object-cover" src={profile.photoUrl} /> : initials}
-              </div>
-              <div>
-                <p className="text-[11px] uppercase tracking-[0.24em] text-slate-500">Control Center</p>
-                <span className="text-xl font-black tracking-[0.02em] text-slate-900">ADMIN PANEL</span>
-              </div>
+            <div className="px-1">
+              <p className="text-[11px] uppercase tracking-[0.24em] text-slate-500">Control Center</p>
+              <span className="text-xl font-black tracking-[0.02em] text-slate-900">ADMIN PANEL</span>
             </div>
           </div>
 
@@ -172,16 +167,11 @@ export function AdminSidebar({ activeKey, actionOverrides }: AdminSidebarProps) 
           </nav>
 
           <div className="mt-auto px-2 pt-8">
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-2xl bg-[#0b2a57] text-sm font-bold text-white shadow-[0_0_14px_rgba(11,42,87,0.18)]">
-              {profile?.photoUrl ? <img alt="Profile" className="h-full w-full object-cover" src={profile.photoUrl} /> : initials}
-              </div>
-              <div className="min-w-0">
-                <div className="truncate font-semibold text-slate-900">{displayName}</div>
-                <button className="mt-1 text-xs font-medium text-slate-500 transition hover:text-red-700" onClick={handleLogout} type="button">
-                  Logout
-                </button>
-              </div>
+            <div className="min-w-0">
+              <div className="truncate font-semibold text-slate-900">{displayName}</div>
+              <button className="mt-1 text-xs font-medium text-slate-500 transition hover:text-red-700" onClick={handleLogout} type="button">
+                Logout
+              </button>
             </div>
           </div>
         </div>

@@ -3,6 +3,7 @@ import type {
   AdminDashboardSummaryResponse,
   Barangay,
   BarangayRiskScoreResponse,
+  HazardInsightResponse,
   DashboardAccountsResponse,
   DashboardCreateAccountPayload,
   DashboardCreateAccountResponse,
@@ -243,6 +244,31 @@ export async function getBarangayRiskScore(
   }
 
   const { data } = await api.get<BarangayRiskScoreResponse>('/api/analytics/barangay-risk/', {
+    params,
+  })
+  return data
+}
+
+export async function getHazardInsights(
+  hazard: string,
+  options?: { days?: number; startDate?: string; endDate?: string },
+): Promise<HazardInsightResponse> {
+  const params = new URLSearchParams()
+  params.append('hazard', hazard)
+
+  if (options?.days !== undefined) {
+    params.append('days', String(options.days))
+  }
+
+  if (options?.startDate) {
+    params.append('start_date', options.startDate)
+  }
+
+  if (options?.endDate) {
+    params.append('end_date', options.endDate)
+  }
+
+  const { data } = await api.get<HazardInsightResponse>('/api/analytics/hazard-insights/', {
     params,
   })
   return data

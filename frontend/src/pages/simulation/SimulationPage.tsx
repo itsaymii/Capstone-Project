@@ -8,6 +8,7 @@ import {
   SIMULATION_COURSES_CHANGED_EVENT,
   getSimulationCourses,
   isEmbeddedVideoUrl,
+  normalizeVideoUrl,
   type SimulationCourse,
 } from '../../services/simulationCourses'
 
@@ -128,7 +129,9 @@ function renderLessonVideo(videoUrl: string, title: string) {
     )
   }
 
-  if (isEmbeddedVideoUrl(videoUrl)) {
+  const embedUrl = normalizeVideoUrl(videoUrl)
+
+  if (isEmbeddedVideoUrl(embedUrl)) {
     return (
       <div className="mb-2 overflow-hidden rounded-lg border border-slate-200 bg-black">
         <iframe
@@ -136,7 +139,7 @@ function renderLessonVideo(videoUrl: string, title: string) {
           allowFullScreen
           className="aspect-video w-full"
           referrerPolicy="strict-origin-when-cross-origin"
-          src={videoUrl}
+          src={embedUrl}
           title={`${title} video`}
         />
       </div>

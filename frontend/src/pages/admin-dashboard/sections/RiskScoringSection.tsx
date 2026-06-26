@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { getBarangays, getBarangayRiskScore } from '../../../services/api'
+import { getBarangays, getBarangayRiskScore, getHazardInsights } from '../../../services/api'
 import type {
   Barangay,
   BarangayHazardProfileItem,
@@ -262,53 +262,6 @@ function HazardContributionBars({ data }: { data: { name: string; score: number 
   )
 }
 
-function RiskInsightsPanel({
-  scoreLabel,
-  scoreChangeLabel,
-  incidentTrendSummary,
-  topHazard,
-}: {
-  scoreLabel: string
-  scoreChangeLabel: string
-  incidentTrendSummary: string
-  topHazard: string
-}) {
-  return (
-    <div className="rounded-3xl border border-slate-200 bg-slate-950 p-6 text-white shadow-lg">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Actionable insights</p>
-          <h3 className="mt-2 text-lg font-semibold">What to focus on</h3>
-        </div>
-        <span className="rounded-full bg-amber-500/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-amber-300">
-          {scoreLabel}
-        </span>
-      </div>
-
-      <div className="mt-6 space-y-4 text-sm text-slate-300">
-        <div className="rounded-3xl bg-white/5 p-4">
-          <p className="text-xs uppercase tracking-[0.16em] text-slate-400">Trend</p>
-          <p className="mt-2 font-semibold text-white">{scoreChangeLabel}</p>
-        </div>
-
-        <div className="rounded-3xl bg-white/5 p-4">
-          <p className="text-xs uppercase tracking-[0.16em] text-slate-400">Incident direction</p>
-          <p className="mt-2 font-semibold text-white">{incidentTrendSummary}</p>
-        </div>
-
-        <div className="rounded-3xl bg-white/5 p-4">
-          <p className="text-xs uppercase tracking-[0.16em] text-slate-400">Priority hazard</p>
-          <p className="mt-2 font-semibold text-white">{topHazard}</p>
-        </div>
-
-        <div className="rounded-3xl bg-white/5 p-4">
-          <p className="text-xs uppercase tracking-[0.16em] text-slate-400">Focus</p>
-          <p className="mt-2 text-sm text-slate-300">Prioritize response in barangays with rising score trends and the highest hazard share.</p>
-        </div>
-      </div>
-    </div>
-  )
-}
 const timeframeOptions: TimeframeOption[] = [
   { label: 'Last 30 days', value: 30 },
   { label: 'Last 60 days', value: 60 },
@@ -328,30 +281,6 @@ function getRiskTone(score: number): string {
   if (score >= 7) return 'border-orange-100 bg-orange-50 text-orange-700'
   if (score >= 5) return 'border-amber-100 bg-amber-50 text-amber-700'
   return 'border-emerald-100 bg-emerald-50 text-emerald-700'
-}
-
-function getScoreChangeSummary(history: BarangayScoreHistoryItem[]): string {
-  if (history.length < 2) return 'No score trend available.'
-
-  const first = history[0].score
-  const last = history[history.length - 1].score
-  const delta = last - first
-
-  if (delta > 0.25) return `Score rising by ${delta.toFixed(1)} points over the current window.`
-  if (delta < -0.25) return `Score improving downward by ${Math.abs(delta).toFixed(1)} points.`
-  return 'Score is stable over the selected period.'
-}
-
-function getIncidentTrendSummary(trend: BarangayIncidentTrendItem[]): string {
-  if (trend.length < 2) return 'No incident trend data available.'
-
-  const first = trend[0].count
-  const last = trend[trend.length - 1].count
-  const delta = last - first
-
-  if (delta > 0) return `Incident activity is rising (+${delta} cases).`
-  if (delta < 0) return `Incident activity is easing (${Math.abs(delta)} fewer cases).`
-  return 'Incident activity is steady.'
 }
 
 function formatValue(value: number | null | undefined): string {
@@ -374,7 +303,12 @@ export function RiskScoringSection() {
   const [barangays, setBarangays] = useState<Barangay[]>([])
   const [selectedBarangayId, setSelectedBarangayId] = useState<string>('')
   const [timeframe, setTimeframe] = useState<number>(90)
+  const [startDate, setStartDate] = useState<string>('')
+  const [endDate, setEndDate] = useState<string>('')
   const [riskData, setRiskData] = useState<BarangayRiskScoreResponse | null>(null)
+  const [aiInsight, setAiInsight] = useState<string>('')
+  const [aiInsightLoading, setAiInsightLoading] = useState<boolean>(false)
+  const [aiInsightError, setAiInsightError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState<boolean>(false)
   const [error, setError] = useState<string | null>(null)
   const skipInitialRiskFetch = useRef(false)
@@ -439,10 +373,21 @@ export function RiskScoringSection() {
         return
       }
 
+      if ((startDate && !endDate) || (!startDate && endDate)) {
+        setError('Please select both a start date and an end date for a custom range.')
+        setRiskData(null)
+        setIsLoading(false)
+        return
+      }
+
       try {
         setIsLoading(true)
         setError(null)
-        const data = await getBarangayRiskScore(selectedBarangayId, { days: timeframe })
+        const data = await getBarangayRiskScore(selectedBarangayId, {
+          days: timeframe,
+          startDate: startDate || undefined,
+          endDate: endDate || undefined,
+        })
         if (!isMounted) return
         setRiskData(data)
       } catch (err) {
@@ -461,7 +406,58 @@ export function RiskScoringSection() {
     return () => {
       isMounted = false
     }
-  }, [selectedBarangayId, timeframe])
+  }, [selectedBarangayId, timeframe, startDate, endDate])
+
+  useEffect(() => {
+    const hazardName = riskData?.hazard_prediction?.hazard
+
+    if (!hazardName) {
+      setAiInsight('')
+      setAiInsightError(null)
+      setAiInsightLoading(false)
+      return
+    }
+
+    let isMounted = true
+    const activeHazard = hazardName
+
+    const insightOptions: { days?: number; startDate?: string; endDate?: string } =
+      startDate && endDate
+        ? { startDate, endDate }
+        : { days: timeframe }
+
+    async function loadAiInsight() {
+      try {
+        setAiInsightLoading(true)
+        setAiInsightError(null)
+
+        const insightResponse = await getHazardInsights(activeHazard, insightOptions)
+
+        if (!isMounted) {
+          return
+        }
+
+        setAiInsight(insightResponse.ai_insight || `No AI insight available for ${activeHazard}.`)
+      } catch (err) {
+        console.error('[RiskScoringSection] Failed to load AI insight:', err)
+        if (!isMounted) {
+          return
+        }
+        setAiInsightError('Unable to generate AI insight at this time.')
+      } finally {
+        if (!isMounted) {
+          return
+        }
+        setAiInsightLoading(false)
+      }
+    }
+
+    void loadAiInsight()
+
+    return () => {
+      isMounted = false
+    }
+  }, [riskData?.hazard_prediction?.hazard, startDate, endDate, timeframe])
 
   const selectedBarangay = useMemo(
     () => barangays.find((barangay) => barangay.id === selectedBarangayId),
@@ -477,9 +473,14 @@ export function RiskScoringSection() {
   const score = riskData?.risk_score?.score ?? 0
   const scoreLabel = getRiskLabel(score)
   const scoreTone = getRiskTone(score)
-  const scoreChangeLabel = getScoreChangeSummary(riskData?.score_history || [])
-  const incidentTrendSummary = getIncidentTrendSummary(riskData?.incident_trend || [])
-  const topHazard = hazardRows[0]?.name || 'N/A'
+
+  const insightWindowLabel = startDate && endDate
+    ? `${new Date(startDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })} — ${new Date(endDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`
+    : `${timeframe}-day rolling window`
+
+  const insightHeaderLabel = selectedBarangay?.name
+    ? `${selectedBarangay.name} • ${insightWindowLabel}`
+    : insightWindowLabel
 
   return (
     <section className="mx-auto w-full max-w-[1440px] px-3 pb-8 sm:px-5 lg:px-6 lg:pb-10">
@@ -496,7 +497,7 @@ export function RiskScoringSection() {
               </p>
             </div>
 
-            <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3">
+            <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-4">
               <label className="block text-sm font-medium text-slate-600">
                 Barangay
                 <select
@@ -527,6 +528,32 @@ export function RiskScoringSection() {
                   ))}
                 </select>
               </label>
+
+              <label className="block text-sm font-medium text-slate-600">
+                Start date
+                <input
+                  type="date"
+                  className="mt-2 block w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-blue-500 focus:ring-blue-200"
+                  value={startDate}
+                  onChange={(event) => setStartDate(event.target.value)}
+                />
+              </label>
+
+              <label className="block text-sm font-medium text-slate-600">
+                End date
+                <input
+                  type="date"
+                  className="mt-2 block w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-blue-500 focus:ring-blue-200"
+                  value={endDate}
+                  onChange={(event) => setEndDate(event.target.value)}
+                />
+              </label>
+
+              <div className="sm:col-span-2 md:col-span-4">
+                <p className="mt-2 text-xs text-slate-500">
+                  Select both dates to use a custom range. When both start and end dates are selected, the custom date range overrides the rolling timeframe.
+                </p>
+              </div>
             </div>
           </div>
 
@@ -536,13 +563,13 @@ export function RiskScoringSection() {
             </div>
           ) : null}
 
-          <div className="mt-6 grid gap-4">
-            <div className="grid gap-4 grid-cols-1">
-              <article className={`${glassPanelSoftClass} p-6`}> 
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Overall Risk</p>
-                    <p className="mt-3 text-4xl font-bold text-slate-900">{isLoading ? 'Loading…' : score ? score.toFixed(1) : '-'}</p>
+<div className="mt-4 grid gap-3">
+              <div className="grid gap-3 grid-cols-1 xl:grid-cols-4">
+                <article className={`${glassPanelSoftClass} overflow-hidden rounded-[32px] border-2 border-sky-500 bg-white shadow-[0_18px_35px_rgba(15,23,42,0.08)] p-5 h-full transition-all duration-300 hover:-translate-y-1 hover:shadow-[0_20px_45px_rgba(15,23,42,0.14)] hover:border-sky-600`}>
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Overall Risk</p>
+                      <p className="mt-3 text-3xl font-bold text-slate-900">{isLoading ? 'Loading…' : score ? score.toFixed(1) : '-'}</p>
                     <p className="mt-2 text-sm text-slate-600">Score out of 10</p>
                   </div>
                   <span className={`rounded-2xl px-3 py-2 text-xs font-semibold uppercase tracking-[0.16em] ${scoreTone}`}>
@@ -551,79 +578,83 @@ export function RiskScoringSection() {
                 </div>
               </article>
 
-              <article className={`${glassPanelSoftClass} p-6`}>
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Frequency</p>
-                <p className="mt-3 text-3xl font-bold text-slate-900">{isLoading ? '…' : formatValue(riskData?.risk_score.breakdown.frequency)}</p>
+<article className={`${glassPanelSoftClass} overflow-hidden rounded-[32px] border-2 border-red-500 bg-white shadow-[0_18px_35px_rgba(15,23,42,0.08)] p-5 h-full transition-all duration-300 hover:-translate-y-1 hover:shadow-[0_20px_45px_rgba(15,23,42,0.14)] hover:border-red-600`}>
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Frequency</p>
+                  <p className="mt-3 text-2xl font-bold text-slate-900">{isLoading ? '…' : formatValue(riskData?.risk_score.breakdown.frequency)}</p>
                 <p className="mt-2 text-sm text-slate-600">Incidents drive this component.</p>
               </article>
 
-              <article className={`${glassPanelSoftClass} p-6`}>
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Severity</p>
-                <p className="mt-3 text-3xl font-bold text-slate-900">{isLoading ? '…' : formatValue(riskData?.risk_score.breakdown.severity)}</p>
+<article className={`${glassPanelSoftClass} overflow-hidden rounded-[32px] border-2 border-amber-500 bg-white shadow-[0_18px_35px_rgba(15,23,42,0.08)] p-5 h-full transition-all duration-300 hover:-translate-y-1 hover:shadow-[0_20px_45px_rgba(15,23,42,0.14)] hover:border-amber-600`}>
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Severity</p>
+                  <p className="mt-3 text-2xl font-bold text-slate-900">{isLoading ? '…' : formatValue(riskData?.risk_score.breakdown.severity)}</p>
                 <p className="mt-2 text-sm text-slate-600">Average incident severity weight.</p>
               </article>
 
-              <article className={`${glassPanelSoftClass} p-6`}>
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Recency</p>
-                <p className="mt-3 text-3xl font-bold text-slate-900">{isLoading ? '…' : formatValue(riskData?.risk_score.breakdown.recency)}</p>
+<article className={`${glassPanelSoftClass} overflow-hidden rounded-[32px] border-2 border-emerald-500 bg-white shadow-[0_18px_35px_rgba(15,23,42,0.08)] p-5 h-full transition-all duration-300 hover:-translate-y-1 hover:shadow-[0_20px_45px_rgba(15,23,42,0.14)] hover:border-emerald-600`}>
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Recency</p>
+                  <p className="mt-3 text-2xl font-bold text-slate-900">{isLoading ? '…' : formatValue(riskData?.risk_score.breakdown.recency)}</p>
                 <p className="mt-2 text-sm text-slate-600">Fresh incident share within timeframe.</p>
               </article>
             </div>
 
-            <div className={`${glassPanelSoftClass} p-6`}>
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Top Prediction</p>
-              <p className="mt-3 text-xl font-semibold text-slate-900">
-                {riskData?.hazard_prediction?.hazard || 'No prediction yet'}
-              </p>
-              <p className="mt-3 text-sm text-slate-600">
-                Confidence: {riskData?.hazard_prediction?.confidence || 'N/A'}
-              </p>
+            <div className={`${glassPanelSoftClass} border border-slate-200 bg-gradient-to-br from-sky-50 via-slate-50 to-cyan-50 shadow-[0_18px_35px_rgba(15,23,42,0.08)] p-5 transition-all duration-300 hover:-translate-y-1 hover:shadow-[0_22px_45px_rgba(15,23,42,0.14)]`}>
+              <div className="inline-flex items-center rounded-full bg-sky-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.24em] text-sky-700 shadow-sm">
+                Prediction
+              </div>
+              <p className="mt-4 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Top prediction</p>
+              <h2 className="mt-3 text-2xl font-semibold tracking-tight text-slate-900">{riskData?.hazard_prediction?.hazard || 'No prediction yet'}</h2>
+              <p className="mt-2 text-sm font-medium text-slate-600">Confidence: <span className="font-semibold text-slate-900">{riskData?.hazard_prediction?.confidence || 'N/A'}</span></p>
 
-              <div className="mt-6 rounded-3xl border border-slate-200 bg-slate-50 p-4">
-                <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Driver</p>
-                <p className="mt-2 text-sm font-semibold text-slate-900">{riskData?.hazard_prediction?.driver || '-'}</p>
-                <p className="mt-3 text-sm text-slate-600">{riskData?.hazard_prediction?.reason || 'Prediction reason is not available.'}</p>
+              <div className="mt-5 rounded-[28px] border border-slate-200 bg-white/90 p-4 shadow-sm ring-1 ring-slate-200/80">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Driver</p>
+                    <p className="mt-3 text-sm font-semibold text-slate-900">{riskData?.hazard_prediction?.driver || 'No driver identified'}</p>
+                  </div>
+                  <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-emerald-700">Insight</span>
+                </div>
+                <p className="mt-4 text-sm leading-6 text-slate-600">{riskData?.hazard_prediction?.reason || 'Prediction reason is not available.'}</p>
               </div>
             </div>
           </div>
 
-          <div className="mt-6 grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
-            <article className={`${glassPanelSoftClass} p-6`}>
+          <div className="mt-5 grid gap-3 xl:grid-cols-[1.1fr_0.9fr]">
+            <article className={`${glassPanelSoftClass} border border-slate-200 bg-gradient-to-br from-violet-50 via-slate-50 to-sky-50 shadow-[0_18px_35px_rgba(15,23,42,0.08)] p-5 transition-all duration-300 hover:-translate-y-1 hover:shadow-[0_22px_45px_rgba(15,23,42,0.14)]`}>
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Profile summary</p>
                   <h2 className="mt-1 text-lg font-bold text-slate-900">Incident profile</h2>
                 </div>
-                <div className="text-sm text-slate-500">
+                <div className="text-sm font-medium text-slate-500">
                   Total incidents: {riskData?.barangay_profile?.total ?? '0'}
                 </div>
               </div>
 
-              <div className="mt-4 grid gap-3 sm:grid-cols-3">
-                <div className="rounded-3xl border border-slate-200 bg-white px-4 py-4">
+              <div className="mt-5 grid gap-3 sm:grid-cols-3">
+                <div className="rounded-[28px] border border-slate-200 bg-white px-4 py-4 shadow-sm transition hover:border-slate-300">
                   <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Barangay</p>
-                  <p className="mt-2 text-sm font-semibold text-slate-900">{selectedBarangay?.name || 'Unknown'}</p>
+                  <p className="mt-3 text-sm font-semibold text-slate-900">{selectedBarangay?.name || 'Unknown'}</p>
                 </div>
-                <div className="rounded-3xl border border-slate-200 bg-white px-4 py-4">
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Top hazard</p>
-                  <p className="mt-2 text-sm font-semibold text-slate-900">{riskData?.barangay_profile?.top_hazard || 'N/A'}</p>
+                <div className="rounded-[28px] border border-slate-200 bg-white px-4 py-4 shadow-sm transition hover:border-slate-300">
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-rose-500">Top hazard</p>
+                  <p className="mt-3 text-sm font-semibold text-slate-900">{riskData?.barangay_profile?.top_hazard || 'N/A'}</p>
                 </div>
-                <div className="rounded-3xl border border-slate-200 bg-white px-4 py-4">
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Window</p>
-                  <p className="mt-2 text-sm font-semibold text-slate-900">{timeframeOptions.find((option) => option.value === timeframe)?.label}</p>
+                <div className="rounded-[28px] border border-slate-200 bg-white px-4 py-4 shadow-sm transition hover:border-slate-300">
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-500">Window</p>
+                  <p className="mt-3 text-sm font-semibold text-slate-900">{timeframeOptions.find((option) => option.value === timeframe)?.label}</p>
                 </div>
               </div>
             </article>
 
-            <article className={`${glassPanelSoftClass} p-6`}>
+            <article className={`${glassPanelSoftClass} border border-slate-200 bg-gradient-to-br from-emerald-50 via-slate-50 to-lime-50 shadow-[0_18px_35px_rgba(15,23,42,0.08)] p-5 transition-all duration-300 hover:-translate-y-1 hover:shadow-[0_22px_45px_rgba(15,23,42,0.14)]`}>
               <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Action guidance</p>
-              <p className="mt-3 text-sm leading-relaxed text-slate-600">
+              <p className="mt-3 text-sm leading-6 text-slate-600">
                 Use this score to prioritize barangays for hazard response and local preparedness. Higher scores indicate stronger recent incident activity and more severe hazards.
               </p>
 
-              <div className={`mt-6 rounded-3xl border px-4 py-4 ${scoreTone}`}>
+              <div className={`mt-5 rounded-[28px] border border-emerald-200 bg-white px-4 py-4 shadow-sm text-emerald-900`}>
                 <p className="text-sm font-semibold uppercase tracking-[0.18em]">Recommended response</p>
-                <p className="mt-2 text-lg font-bold">{scoreLabel}</p>
+                <p className="mt-2 text-lg font-bold tracking-tight">{scoreLabel}</p>
               </div>
             </article>
           </div>
@@ -682,12 +713,27 @@ export function RiskScoringSection() {
           </article>
 
           <article className={`${glassPanelSoftClass} p-6`}>
-            <RiskInsightsPanel
-              scoreLabel={scoreLabel}
-              scoreChangeLabel={scoreChangeLabel}
-              incidentTrendSummary={incidentTrendSummary}
-              topHazard={topHazard}
-            />
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">AI insights</p>
+                <h2 className="mt-1 text-lg font-bold text-slate-900">Actionable hazard outlook</h2>
+              </div>
+              <div className="text-sm text-slate-500">
+                {aiInsightLoading ? 'Generating insight…' : insightHeaderLabel}
+              </div>
+            </div>
+
+            <div className="mt-4 rounded-3xl border border-slate-200 bg-slate-50 p-6 text-sm leading-relaxed text-slate-600">
+              {aiInsightLoading ? (
+                <p>Loading AI-generated hazard insight for the selected prediction...</p>
+              ) : aiInsightError ? (
+                <p className="text-red-700">{aiInsightError}</p>
+              ) : aiInsight ? (
+                <p>{aiInsight}</p>
+              ) : (
+                <p>Select a barangay and timeframe to generate a hazard insight based on the top predicted risk.</p>
+              )}
+            </div>
           </article>
 
           <article className={`${glassPanelSoftClass} p-6`}>

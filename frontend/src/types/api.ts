@@ -30,6 +30,7 @@ export interface RegisterApiPayload {
   email: string
   password: string
   username?: string
+  phoneNumber?: string
 }
 
 export interface LoginApiPayload {
@@ -130,6 +131,17 @@ export interface BarangayRiskScoreResponse {
   score_history: BarangayScoreHistoryItem[]
   incident_trend: BarangayIncidentTrendItem[]
   hazard_share: BarangayHazardShareItem[]
+}
+
+export interface HazardInsightResponse {
+  hazard: string
+  timeframe: {
+    rolling_days: number | null
+    start_date: string | null
+    end_date: string | null
+  }
+  raw_stats: Record<string, unknown>
+  ai_insight: string
 }
 
 export interface DashboardCreateAccountPayload {

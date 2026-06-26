@@ -765,8 +765,8 @@ export function AdminSimulationManager({ embedded = false }: AdminSimulationMana
 
       {editingCourse && draftCourse ? (
         <div className={modalOverlayClass} onClick={closeEditor}>
-          <div className="mx-auto mt-4 w-full max-w-5xl" onClick={(event) => event.stopPropagation()}>
-            <section className={sectionClass}>
+          <div className="mx-auto mt-4 w-full max-w-5xl h-[calc(100vh-5rem)] max-h-[calc(100vh-5rem)] overflow-hidden" onClick={(event) => event.stopPropagation()}>
+            <section className={`${sectionClass} flex h-full flex-col`}>
               <div className={`flex items-center justify-between gap-3 border-b ${embedded ? 'border-slate-200' : 'border-slate-700'} pb-4`}>
                 <div>
                   <p className={`text-xs font-bold uppercase tracking-[0.16em] ${mutedTextClass}`}>Course Editor</p>
@@ -781,7 +781,7 @@ export function AdminSimulationManager({ embedded = false }: AdminSimulationMana
                 </button>
               </div>
 
-              <div className="mt-5 max-h-[75vh] space-y-6 overflow-y-auto pr-1">
+              <div className="mt-5 flex-1 min-h-0 space-y-6 overflow-y-auto pb-14 pr-2 sm:pb-16">
                 <section className="grid gap-4 sm:grid-cols-2">
                   <label className="block">
                     <span className={`mb-2 block text-xs font-semibold uppercase tracking-wide ${mutedTextClass}`}>Course Title</span>

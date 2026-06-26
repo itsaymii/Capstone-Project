@@ -27,6 +27,7 @@ export function RegisterPage({ onRequestLogin, onRegistered, modalMode = false }
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
+  const [phoneNumber, setPhoneNumber] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const [otp, setOtp] = useState('')
@@ -185,6 +186,10 @@ export function RegisterPage({ onRequestLogin, onRegistered, modalMode = false }
       setErrorMessage('Email address is required.')
       return
     }
+    if (!phoneNumber.trim()) {
+      setErrorMessage('Phone number is required.')
+      return
+    }
     if (!password) {
       setErrorMessage('Password is required.')
       return
@@ -205,6 +210,7 @@ export function RegisterPage({ onRequestLogin, onRegistered, modalMode = false }
       email,
       username,
       password,
+      phoneNumber,
     })
     setIsSubmitting(false)
 
@@ -278,6 +284,7 @@ export function RegisterPage({ onRequestLogin, onRegistered, modalMode = false }
       email,
       username,
       password,
+      phoneNumber,
     })
     setIsSubmitting(false)
 
@@ -397,6 +404,18 @@ export function RegisterPage({ onRequestLogin, onRegistered, modalMode = false }
                       value={email}
                       onChange={(event) => setEmail(event.target.value)}
                       placeholder="name@example.com"
+                      required
+                    />
+                  </label>
+
+                  <label className="block">
+                    <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500">Phone Number</span>
+                    <input
+                      className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-3.5 py-2.5 text-sm outline-none placeholder:text-slate-400 transition focus:border-slate-400 focus:bg-white focus:ring-4 focus:ring-slate-100"
+                      type="tel"
+                      value={phoneNumber}
+                      onChange={(event) => setPhoneNumber(event.target.value)}
+                      placeholder="0917 123 4567"
                       required
                     />
                   </label>
