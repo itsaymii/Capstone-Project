@@ -383,6 +383,30 @@ export async function getIncidentReports(): Promise<IncidentReport[]> {
   return reports
 }
 
+export async function getAccomplishmentReports(): Promise<any[]> {
+  try {
+    const response = await api.get<any[] | { count: number; next: string | null; results: any[] }>(
+      '/api/incidents/accomplishment-reports/'
+    )
+
+    if (Array.isArray(response.data)) return response.data
+
+    let items = response.data.results || []
+    let nextUrl = response.data.next
+
+    while (nextUrl) {
+      const nextResponse = await api.get<{ count: number; next: string | null; results: any[] }>(nextUrl)
+      items = [...items, ...nextResponse.data.results]
+      nextUrl = nextResponse.data.next
+    }
+
+    return items
+  } catch (error) {
+    console.error('[getAccomplishmentReports] Failed to fetch accomplishment reports:', error)
+    throw error
+  }
+}
+
 export async function updateIncidentReportStatus(
   id: string,
   status: 'Pending' | 'Approved' | 'Submitted',

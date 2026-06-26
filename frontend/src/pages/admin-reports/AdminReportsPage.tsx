@@ -9,7 +9,7 @@ import {
   type IncidentStatus,
 } from '../../data/adminOperations'
 import {
-  fetchQuezonRegionEarthquakes,
+  fetchPhilippinesEarthquakes,
   type EarthquakeEvent,
 } from '../../services/earthquakes'
 import { getIncidents } from '../../services/incidents'
@@ -95,7 +95,7 @@ export function AdminReportsPage() {
       }
 
       try {
-        const events = await fetchQuezonRegionEarthquakes(1825, 1.0)
+        const events = await fetchPhilippinesEarthquakes(730, 1.0)
         if (cancelled) return
 
         const mappedReports = [...events]

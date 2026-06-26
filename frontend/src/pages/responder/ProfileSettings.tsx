@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { FC, FormEvent, ChangeEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { getCurrentUserProfile } from '../../services/auth'
+import { getCurrentUserProfile, updateCurrentUserProfile } from '../../services/auth'
 import { MobileNavBar } from '../../components/MobileNavBar'
 
 interface TeamMember {
@@ -20,24 +20,68 @@ interface ProfileData {
   stationAddress: string
 }
 
+const RESPONDER_PROFILE_STORAGE_KEY = 'responderProfileSettingsData'
+const RESPONDER_TEAM_STORAGE_KEY = 'responderTeamMembers'
+
+const defaultProfileData = (profileFullName?: string): ProfileData => ({
+  teamLeaderName: profileFullName || 'Team Leader',
+  teamName: 'Alpha Responder Squad',
+  badgeId: 'RES-2026-0982',
+  contactNumber: '09123456789',
+  stationAddress: 'Zone 4, Lucena City Command Center',
+})
+
+function loadSavedResponderProfile(): ProfileData | null {
+  try {
+    const raw = localStorage.getItem(RESPONDER_PROFILE_STORAGE_KEY)
+    if (!raw) return null
+    return JSON.parse(raw) as ProfileData
+  } catch {
+    return null
+  }
+}
+
+function loadSavedResponderTeam(): TeamMember[] | null {
+  try {
+    const raw = localStorage.getItem(RESPONDER_TEAM_STORAGE_KEY)
+    if (!raw) return null
+    return JSON.parse(raw) as TeamMember[]
+  } catch {
+    return null
+  }
+}
+
+function saveResponderProfile(profileData: ProfileData, teamMembers: TeamMember[]): boolean {
+  try {
+    localStorage.setItem(RESPONDER_PROFILE_STORAGE_KEY, JSON.stringify(profileData))
+    localStorage.setItem(RESPONDER_TEAM_STORAGE_KEY, JSON.stringify(teamMembers))
+    return true
+  } catch {
+    return false
+  }
+}
+
 const ProfileSettingsPage: FC = () => {
   const navigate = useNavigate()
   const profile = getCurrentUserProfile()
 
-  const [profileData, setProfileData] = useState<ProfileData>({
-    teamLeaderName: profile?.fullName || 'Team Leader',
-    teamName: 'Alpha Responder Squad',
-    badgeId: 'RES-2026-0982',
-    contactNumber: '09123456789',
-    stationAddress: 'Zone 4, Lucena City Command Center',
+  const [profileData, setProfileData] = useState<ProfileData>(() => {
+    const stored = loadSavedResponderProfile()
+    return stored ?? defaultProfileData(profile?.fullName)
   })
 
-  const [teamMembers, setTeamMembers] = useState<TeamMember[]>([
-    { id: '1', name: 'Mark Anthony Santos', role: 'Medic / EMT', contactNumber: '09221113344', status: 'Active' },
-    { id: '2', name: 'Maria Clara Reyes', role: 'Rescue Specialist', contactNumber: '09334445566', status: 'Active' },
-  ])
+  const [teamMembers, setTeamMembers] = useState<TeamMember[]>(() => {
+    const stored = loadSavedResponderTeam()
+    return (
+      stored ?? [
+        { id: '1', name: 'Mark Anthony Santos', role: 'Medic / EMT', contactNumber: '09221113344', status: 'Active' },
+        { id: '2', name: 'Maria Clara Reyes', role: 'Rescue Specialist', contactNumber: '09334445566', status: 'Active' },
+      ]
+    )
+  })
 
-  const [newMember, setNewMember] = useState<Omit<TeamMember, 'id'>>({
+  const [editingMemberId, setEditingMemberId] = useState<string | null>(null)
+  const [memberDraft, setMemberDraft] = useState<Omit<TeamMember, 'id'>>({
     name: '',
     role: '',
     contactNumber: '',
@@ -45,6 +89,8 @@ const ProfileSettingsPage: FC = () => {
   })
 
   const [isAddingMember, setIsAddingMember] = useState(false)
+  const [statusMessage, setStatusMessage] = useState('')
+  const [errorMessage, setErrorMessage] = useState('')
 
   const handleProfileChange = (e: ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target
@@ -53,25 +99,89 @@ const ProfileSettingsPage: FC = () => {
 
   const handleProfileSubmit = (e: FormEvent) => {
     e.preventDefault()
-    alert('Profile settings updated successfully!')
+
+    const savedLocally = saveResponderProfile(profileData, teamMembers)
+    const authSaved = updateCurrentUserProfile(profileData.teamLeaderName)
+
+    if (!savedLocally) {
+      setErrorMessage('Unable to save profile locally. Please check your browser settings.')
+      setStatusMessage('')
+      return
+    }
+
+    if (!authSaved) {
+      setStatusMessage('Profile saved locally. Full name could not be updated in auth storage.')
+      setErrorMessage('')
+      return
+    }
+
+    setStatusMessage('Profile settings updated successfully!')
+    setErrorMessage('')
   }
 
-  const handleAddMember = (e: FormEvent) => {
+  const openAddMember = () => {
+    setEditingMemberId(null)
+    setMemberDraft({ name: '', role: '', contactNumber: '', status: 'Active' })
+    setIsAddingMember(true)
+    setStatusMessage('')
+    setErrorMessage('')
+  }
+
+  const handleSaveMember = (e: FormEvent) => {
     e.preventDefault()
-    if (!newMember.name || !newMember.role) return
+    if (!memberDraft.name || !memberDraft.role) return
 
-    const id = typeof crypto !== 'undefined' && crypto.randomUUID 
-      ? crypto.randomUUID() 
-      : Date.now().toString(36) + Math.random().toString(36).slice(2)
+    if (editingMemberId) {
+      const nextMembers = teamMembers.map(member =>
+        member.id === editingMemberId ? { id: editingMemberId, ...memberDraft } : member,
+      )
+      setTeamMembers(nextMembers)
+      setStatusMessage('Team member updated successfully.')
+      setErrorMessage('')
+      saveResponderProfile(profileData, nextMembers)
+    } else {
+      const id = typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID()
+        : Date.now().toString(36) + Math.random().toString(36).slice(2)
+      const nextMembers = [...teamMembers, { id, ...memberDraft }]
+      setTeamMembers(nextMembers)
+      setStatusMessage('Team unit added successfully.')
+      setErrorMessage('')
+      saveResponderProfile(profileData, nextMembers)
+    }
 
-    setTeamMembers(prev => [...prev, { id, ...newMember }])
-    setNewMember({ name: '', role: '', contactNumber: '', status: 'Active' })
+    setMemberDraft({ name: '', role: '', contactNumber: '', status: 'Active' })
+    setEditingMemberId(null)
     setIsAddingMember(false)
+  }
+
+  const startEditingMember = (member: TeamMember) => {
+    setEditingMemberId(member.id)
+    setMemberDraft({
+      name: member.name,
+      role: member.role,
+      contactNumber: member.contactNumber,
+      status: member.status,
+    })
+    setIsAddingMember(true)
+    setStatusMessage('')
+    setErrorMessage('')
+  }
+
+  const handleCancelMemberEdit = () => {
+    setEditingMemberId(null)
+    setMemberDraft({ name: '', role: '', contactNumber: '', status: 'Active' })
+    setIsAddingMember(false)
+    setErrorMessage('')
   }
 
   const handleRemoveMember = (id: string) => {
     if (confirm('Are you sure you want to remove this team member?')) {
-      setTeamMembers(prev => prev.filter(member => member.id !== id))
+      const nextMembers = teamMembers.filter(member => member.id !== id)
+      setTeamMembers(nextMembers)
+      saveResponderProfile(profileData, nextMembers)
+      setStatusMessage('Team roster updated and saved.')
+      setErrorMessage('')
     }
   }
 
@@ -189,6 +299,16 @@ const ProfileSettingsPage: FC = () => {
               <button type="submit" className="w-full text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 active:scale-[0.98] py-3 rounded-xl shadow-md shadow-blue-500/10 transition-all">
                 Save Account Profile
               </button>
+              {statusMessage ? (
+                <p className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+                  {statusMessage}
+                </p>
+              ) : null}
+              {errorMessage ? (
+                <p className="mt-3 rounded-2xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                  {errorMessage}
+                </p>
+              ) : null}
             </form>
           </div>
 
@@ -202,7 +322,7 @@ const ProfileSettingsPage: FC = () => {
               {!isAddingMember && (
                 <button 
                   type="button" 
-                  onClick={() => setIsAddingMember(true)} 
+                  onClick={openAddMember} 
                   className="text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 active:scale-95 px-3.5 py-2 rounded-xl flex items-center gap-1.5 shadow-sm transition-all"
                 >
                   <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
@@ -215,24 +335,26 @@ const ProfileSettingsPage: FC = () => {
 
             {/* Expansion Panel: Add Member Form */}
             {isAddingMember && (
-              <form onSubmit={handleAddMember} className="p-5 bg-gradient-to-b from-blue-50/30 to-white border-b border-blue-100/50 space-y-4">
+              <form onSubmit={handleSaveMember} className="p-5 bg-gradient-to-b from-blue-50/30 to-white border-b border-blue-100/50 space-y-4">
                 <div className="text-xs font-bold text-blue-600 uppercase tracking-wider flex items-center gap-1">
                   <span className="w-1.5 h-1.5 rounded-full bg-blue-600 animate-pulse"></span>
-                  New Operational Unit Registration
+                  {editingMemberId ? 'Edit Team Member Details' : 'New Operational Unit Registration'}
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                  <input type="text" placeholder="Full Name" value={newMember.name} onChange={e => setNewMember(p => ({ ...p, name: e.target.value }))} className="text-sm border border-slate-200 rounded-xl px-3.5 py-2 bg-white outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/5 transition-all font-medium" required />
-                  <input type="text" placeholder="Role (e.g. Medic / EMT)" value={newMember.role} onChange={e => setNewMember(p => ({ ...p, role: e.target.value }))} className="text-sm border border-slate-200 rounded-xl px-3.5 py-2 bg-white outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/5 transition-all font-medium" required />
-                  <input type="tel" placeholder="Contact Number" value={newMember.contactNumber} onChange={e => setNewMember(p => ({ ...p, contactNumber: e.target.value }))} className="text-sm border border-slate-200 rounded-xl px-3.5 py-2 bg-white outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/5 transition-all font-medium" />
-                  <select value={newMember.status} onChange={e => setNewMember(p => ({ ...p, status: e.target.value as TeamMember['status'] }))} className="text-sm border border-slate-200 rounded-xl px-3.5 py-2 bg-white outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/5 transition-all font-semibold text-slate-700">
+                  <input type="text" placeholder="Full Name" value={memberDraft.name} onChange={e => setMemberDraft(p => ({ ...p, name: e.target.value }))} className="text-sm border border-slate-200 rounded-xl px-3.5 py-2 bg-white outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/5 transition-all font-medium" required />
+                  <input type="text" placeholder="Role (e.g. Medic / EMT)" value={memberDraft.role} onChange={e => setMemberDraft(p => ({ ...p, role: e.target.value }))} className="text-sm border border-slate-200 rounded-xl px-3.5 py-2 bg-white outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/5 transition-all font-medium" required />
+                  <input type="tel" placeholder="Contact Number" value={memberDraft.contactNumber} onChange={e => setMemberDraft(p => ({ ...p, contactNumber: e.target.value }))} className="text-sm border border-slate-200 rounded-xl px-3.5 py-2 bg-white outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/5 transition-all font-medium" />
+                  <select value={memberDraft.status} onChange={e => setMemberDraft(p => ({ ...p, status: e.target.value as TeamMember['status'] }))} className="text-sm border border-slate-200 rounded-xl px-3.5 py-2 bg-white outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/5 transition-all font-semibold text-slate-700">
                     <option value="Active">🟢 Active Duty</option>
                     <option value="On Leave">🟡 On Leave</option>
                     <option value="Off Duty">⚪ Off Duty</option>
                   </select>
                 </div>
                 <div className="flex justify-end gap-2 pt-1">
-                  <button type="button" onClick={() => setIsAddingMember(false)} className="text-xs text-slate-500 hover:bg-slate-100 font-semibold px-3 py-2 rounded-xl transition-all">Cancel</button>
-                  <button type="submit" className="text-xs bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-xl shadow-sm active:scale-95 transition-all">Register Member</button>
+                  <button type="button" onClick={handleCancelMemberEdit} className="text-xs text-slate-500 hover:bg-slate-100 font-semibold px-3 py-2 rounded-xl transition-all">Cancel</button>
+                  <button type="submit" className="text-xs bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-xl shadow-sm active:scale-95 transition-all">
+                    {editingMemberId ? 'Update Member' : 'Register Member'}
+                  </button>
                 </div>
               </form>
             )}
@@ -256,14 +378,24 @@ const ProfileSettingsPage: FC = () => {
                       {member.status}
                     </span>
                   </div>
-                  <button 
-                    type="button" 
-                    onClick={() => handleRemoveMember(member.id)} 
-                    className="text-xs font-semibold text-slate-400 hover:text-red-500 hover:bg-red-50 px-2.5 py-1.5 rounded-xl transition-all" 
-                    aria-label={`Remove ${member.name}`}
-                  >
-                    Remove
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => startEditingMember(member)}
+                      className="text-xs font-semibold text-slate-500 hover:text-blue-600 hover:bg-blue-50 px-2.5 py-1.5 rounded-xl transition-all"
+                      aria-label={`Edit ${member.name}`}
+                    >
+                      Edit
+                    </button>
+                    <button 
+                      type="button" 
+                      onClick={() => handleRemoveMember(member.id)} 
+                      className="text-xs font-semibold text-slate-400 hover:text-red-500 hover:bg-red-50 px-2.5 py-1.5 rounded-xl transition-all" 
+                      aria-label={`Remove ${member.name}`}
+                    >
+                      Remove
+                    </button>
+                  </div>
                 </div>
               ))}
               {teamMembers.length === 0 && (

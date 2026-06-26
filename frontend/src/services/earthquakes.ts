@@ -11,6 +11,7 @@
 
 const USGS_FDSN_API = 'https://earthquake.usgs.gov/fdsnws/event/1/query'
 const PHIVOLCS_ACTIVE_FAULTS_API = 'https://services8.arcgis.com/If57gH0ZAbByXwSk/arcgis/rest/services/Active_Faults_(PHIVOLCS)/FeatureServer/0/query'
+const LOCAL_PHILIPPINES_FAULTS_GEOJSON = '/philippines_fault_lines.geojson'
 
 export type EarthquakeEvent = {
   id: string
@@ -58,15 +59,14 @@ type USGSResponse = {
 
 /**
  * Fetch recent earthquake events from the USGS FDSN catalog.
- * The bounding box covers Quezon Province and immediately surrounding areas
- * (with a buffer) so that earthquakes originating near the province but still
- * capable of impacting it are included.
+ * The bounding box covers the entire Philippine archipelago so the UI can
+ * display all earthquakes affecting the country.
  *
- * @param days      How many days back to query (default: 1825 — 5 years)
+ * @param days      How many days back to query (default: 730 — 2 years)
  * @param minMag    Minimum magnitude to include (default: 1.0)
  */
-export async function fetchQuezonRegionEarthquakes(
-  days = 1825,
+export async function fetchPhilippinesEarthquakes(
+  days = 730,
   minMag = 1.0,
 ): Promise<EarthquakeEvent[]> {
   const endTime = new Date().toISOString()
@@ -76,13 +76,13 @@ export async function fetchQuezonRegionEarthquakes(
     format: 'geojson',
     starttime: startTime,
     endtime: endTime,
-    minlatitude: '13.0',
-    maxlatitude: '15.5',
-    minlongitude: '120.3',
-    maxlongitude: '123.2',
+    minlatitude: '4.0',
+    maxlatitude: '21.8',
+    minlongitude: '116.0',
+    maxlongitude: '127.8',
     minmagnitude: String(minMag),
     orderby: 'time',
-    limit: '2000',
+    limit: '20000',
   })
 
   const response = await fetch(`${USGS_FDSN_API}?${params}`)
@@ -130,14 +130,58 @@ export function toHeatPoints(events: EarthquakeEvent[]): HeatPoint[] {
   ])
 }
 
-export async function fetchQuezonFaultLines(): Promise<FaultLineFeatureCollection> {
+type ArcGISFaultsError = {
+  error: {
+    code: number
+    message: string
+    messageCode?: string
+    details?: string[]
+  }
+}
+
+function isArcGISFaultsError(value: unknown): value is ArcGISFaultsError {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'error' in value &&
+    typeof (value as any).error === 'object' &&
+    (value as any).error !== null &&
+    typeof (value as any).error.code === 'number' &&
+    typeof (value as any).error.message === 'string'
+  )
+}
+
+function isFaultLineFeatureCollection(value: unknown): value is FaultLineFeatureCollection {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    (value as any).type === 'FeatureCollection' &&
+    Array.isArray((value as any).features)
+  )
+}
+
+async function loadLocalPhilippinesFaultLines(): Promise<FaultLineFeatureCollection> {
+  const response = await fetch(LOCAL_PHILIPPINES_FAULTS_GEOJSON)
+  if (!response.ok) {
+    throw new Error(`Local fault line fallback not found: ${response.status}`)
+  }
+
+  const data = await response.json()
+  if (!isFaultLineFeatureCollection(data)) {
+    throw new Error('Local fault line fallback returned invalid GeoJSON payload')
+  }
+
+  return data
+}
+
+export async function fetchPhilippinesFaultLines(): Promise<FaultLineFeatureCollection> {
   const params = new URLSearchParams({
     where: '1=1',
     geometry: JSON.stringify({
-      xmin: 121.0,
-      ymin: 13.4,
-      xmax: 122.2,
-      ymax: 14.6,
+      xmin: 116.0,
+      ymin: 4.0,
+      xmax: 127.5,
+      ymax: 21.8,
       spatialReference: { wkid: 4326 },
     }),
     geometryType: 'esriGeometryEnvelope',
@@ -148,12 +192,30 @@ export async function fetchQuezonFaultLines(): Promise<FaultLineFeatureCollectio
     f: 'geojson',
   })
 
-  const response = await fetch(`${PHIVOLCS_ACTIVE_FAULTS_API}?${params}`)
-  if (!response.ok) {
-    throw new Error(`PHIVOLCS Active Faults API responded with status ${response.status}`)
-  }
+  try {
+    const response = await fetch(`${PHIVOLCS_ACTIVE_FAULTS_API}?${params}`)
+    if (!response.ok) {
+      throw new Error(`PHIVOLCS Active Faults API responded with status ${response.status}`)
+    }
 
-  return (await response.json()) as FaultLineFeatureCollection
+    const maybeData = await response.json()
+
+    if (isArcGISFaultsError(maybeData)) {
+      throw new Error(
+        `PHIVOLCS Active Faults API error ${maybeData.error.code}: ${maybeData.error.message}` +
+          (maybeData.error.details?.length ? ` (${maybeData.error.details.join('; ')})` : ''),
+      )
+    }
+
+    if (!isFaultLineFeatureCollection(maybeData)) {
+      throw new Error('PHIVOLCS Active Faults API returned invalid GeoJSON payload')
+    }
+
+    return maybeData
+  } catch (error) {
+    console.warn('[earthquakes] PHIVOLCS fault line fetch failed, using local fallback:', error)
+    return loadLocalPhilippinesFaultLines()
+  }
 }
 
 /** Return how many events fall within or near Lucena City (±0.15° buffer). */

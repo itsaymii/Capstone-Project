@@ -145,6 +145,55 @@ export function isEmbeddedVideoUrl(url: string): boolean {
   )
 }
 
+export function normalizeVideoUrl(url: string): string {
+  const trimmed = url.trim()
+  if (!trimmed) {
+    return trimmed
+  }
+
+  const normalized = trimmed.replace(/\s+/g, '')
+  const urlCandidate = normalized.startsWith('http://') || normalized.startsWith('https://')
+    ? normalized
+    : `https://${normalized}`
+
+  try {
+    const parsedUrl = new URL(urlCandidate)
+    const host = parsedUrl.hostname.toLowerCase()
+    const pathname = parsedUrl.pathname
+
+    if (host.includes('youtube.com')) {
+      if (pathname.startsWith('/watch')) {
+        const videoId = parsedUrl.searchParams.get('v')
+        if (videoId) {
+          return `https://www.youtube.com/embed/${videoId}`
+        }
+      }
+
+      if (pathname.startsWith('/embed/')) {
+        return normalized
+      }
+
+      if (pathname.startsWith('/shorts/')) {
+        const videoId = pathname.split('/')[2]
+        if (videoId) {
+          return `https://www.youtube.com/embed/${videoId}`
+        }
+      }
+    }
+
+    if (host === 'youtu.be') {
+      const videoId = pathname.slice(1)
+      if (videoId) {
+        return `https://www.youtube.com/embed/${videoId}`
+      }
+    }
+
+    return normalized
+  } catch {
+    return normalized
+  }
+}
+
 const defaultSimulationCourses: SimulationCourse[] = [
   {
     id: 'earthquake',

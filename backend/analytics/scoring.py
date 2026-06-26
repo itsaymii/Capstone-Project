@@ -20,27 +20,36 @@ SEVERITY_MAP = {
     'critical': 4
 }
 
-def calculate_risk_score(barangay_id, days=90):
+def calculate_risk_score(barangay_id, days=90, start_date=None, end_date=None):
     """
     Calculates a risk score (1.0 to 10.0) for a specific barangay.
-    
+
     Logic:
-    1. Frequency (40%): How many incidents in the last 90 days.
+    1. Frequency (40%): How many incidents in the selected period.
     2. Severity (40%): Average severity of those incidents.
     3. Recency (20%): Percentage of incidents in the last 30 days.
     """
-    
-    cutoff = timezone.now() - timedelta(days=days)
-    
-    # 1. Get incidents
-    incidents = Incident.objects.filter(barangay_id=barangay_id, incident_datetime__gte=cutoff)
+
+    if start_date is not None and end_date is not None:
+        incidents = Incident.objects.filter(
+            barangay_id=barangay_id,
+            incident_datetime__gte=start_date,
+            incident_datetime__lte=end_date,
+        )
+    else:
+        cutoff = timezone.now() - timedelta(days=days)
+        incidents = Incident.objects.filter(barangay_id=barangay_id, incident_datetime__gte=cutoff)
     total = incidents.count()
     
     # Edge case: No incidents = Minimum score
     if total == 0:
         return {
             'score': 1.0,
-            'breakdown': {'freq': 1.0, 'sev': 1.0, 'rec': 1.0}
+            'breakdown': {
+                'frequency': 1.0,
+                'severity': 1.0,
+                'recency': 1.0,
+            }
         }
 
     # --- COMPONENT 1: FREQUENCY SCORE (0-10) ---

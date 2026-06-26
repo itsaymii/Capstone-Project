@@ -17,8 +17,10 @@ import { isAuthenticated } from '../../services/auth'
 import { getIncidentReports } from '../../services/incidents'
 import {
   type EarthquakeEvent,
+  type FaultLineFeatureCollection,
   type HeatPoint,
-  fetchQuezonRegionEarthquakes,
+  fetchPhilippinesEarthquakes,
+  fetchPhilippinesFaultLines,
   toHeatPoints,
 } from '../../services/earthquakes'
 
@@ -32,17 +34,21 @@ const philippinesBounds: LatLngBoundsExpression = [
   [21.5, 127.5],
 ]
 
-const quezonRegionBounds: LatLngBoundsExpression = [
-  [13.72, 121.3],
-  [14.12, 121.92],
-]
-
 
 const hazardColors = {
   EQ: '#4ade80',
   FR: '#fb923c',
   AC: '#facc15',
 }
+
+const mapLegendItems = [
+  { label: 'Philippine Fault Zone', color: '#dc2626' },
+  { label: 'Valley Fault System', color: '#3b82f6' },
+  { label: 'Other Active Faults', color: '#ef4444' },
+  { label: 'Earthquake Epicenter', color: '#4ade80' },
+  { label: 'High Risk Area', color: '#facc15' },
+  { label: 'Low Risk Area', color: '#2563eb' },
+]
 
 type IncidentItem = {
   id?: string
@@ -222,8 +228,11 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
   const [earthquakeEvents, setEarthquakeEvents] = useState<EarthquakeEvent[]>([])
   const [barangayLayer, setBarangayLayer] = useState<GeoJSON.FeatureCollection<GeoJSON.Geometry, Record<string, unknown>> | null>(null)
   const [eqHeatPoints, setEqHeatPoints] = useState<HeatPoint[]>([])
+  const [faultLines, setFaultLines] = useState<FaultLineFeatureCollection | null>(null)
   const [eqFetchStatus, setEqFetchStatus] = useState<'idle' | 'loading' | 'error'>('idle')
+  const [faultLineFetchStatus, setFaultLineFetchStatus] = useState<'idle' | 'loading' | 'error'>('idle')
   const [showHeatmap, setShowHeatmap] = useState(true)
+  const [showFaultLines, setShowFaultLines] = useState(true)
   const [incidentLayerMode, setIncidentLayerMode] = useState<'markers' | 'heatmap'>('heatmap')
   const [eqLastRefreshed, setEqLastRefreshed] = useState<Date | null>(null)
   const [eqSearchQuery, setEqSearchQuery] = useState('')
@@ -377,7 +386,7 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
     }
 
     try {
-      const events = await fetchQuezonRegionEarthquakes(1825, 1.0)
+      const events = await fetchPhilippinesEarthquakes(730, 1.0)
       setEarthquakeEvents(events)
       setEqHeatPoints(toHeatPoints(events))
       setEqFetchStatus('idle')
@@ -403,6 +412,23 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
     }
   }, [selectedType, earthquakeEvents.length, eqFetchStatus, loadEarthquakes])
 
+  useEffect(() => {
+    if (selectedType !== 'EQ' || faultLines || faultLineFetchStatus !== 'idle') return
+
+    async function loadFaultLines(): Promise<void> {
+      setFaultLineFetchStatus('loading')
+      try {
+        const data = await fetchPhilippinesFaultLines()
+        setFaultLines(data)
+        setFaultLineFetchStatus('idle')
+      } catch (error) {
+        console.error('[DisasterMapPage] Failed to load PHIVOLCS fault lines:', error)
+        setFaultLineFetchStatus('error')
+      }
+    }
+
+    void loadFaultLines()
+  }, [selectedType, faultLines, faultLineFetchStatus])
 
   useEffect(() => {
     void fetch('/lucena_barangays.geojson')
@@ -449,7 +475,7 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
       })
 
       if (isEqView) {
-        map.fitBounds(quezonRegionBounds)
+        map.fitBounds(philippinesBounds)
       } else {
         map.fitBounds(lucenaBounds, { padding: [18, 18] })
       }
@@ -469,6 +495,10 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
       const incidentMarkerPane = map.getPane('incident-marker-pane') ?? map.createPane('incident-marker-pane')
       incidentMarkerPane.style.zIndex = '670'
       incidentMarkerPane.style.pointerEvents = 'auto'
+
+      const faultPane = map.getPane('fault-pane') ?? map.createPane('fault-pane')
+      faultPane.style.zIndex = '640'
+      faultPane.style.pointerEvents = 'none'
 
       const labelsPane = map.getPane('map-labels-pane') ?? map.createPane('map-labels-pane')
       labelsPane.style.zIndex = '650'
@@ -553,6 +583,52 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
         })
 
         barangayGeoJson.addTo(map)
+      }
+
+      if (showFaultLines && faultLines) {
+        L.geoJSON(faultLines, {
+          pane: 'fault-pane',
+          style: (feature) => {
+            const faultName = String(feature?.properties?.FAULT_NAME || '')
+            const segName = String(feature?.properties?.SEG_NAME || '')
+            const isValleyFault = faultName.includes('Valley Fault System') || segName.includes('Valley Fault')
+            const isPFZ = faultName.includes('Philippine Fault Zone')
+
+            if (isValleyFault) {
+              return {
+                color: '#3b82f6',
+                weight: 4,
+                opacity: 0.94,
+                dashArray: '4,6',
+              }
+            }
+
+            if (isPFZ) {
+              return {
+                color: '#dc2626',
+                weight: 4,
+                opacity: 0.96,
+                dashArray: '',
+              }
+            }
+
+            return {
+              color: '#ef4444',
+              weight: 3,
+              opacity: 0.88,
+              dashArray: '8,7',
+            }
+          },
+          onEachFeature: (feature, layer) => {
+            const name = String(feature.properties?.FAULT_NAME || feature.properties?.SEG_NAME || 'PHIVOLCS Fault Line')
+            layer.bindTooltip(name, {
+              sticky: true,
+              direction: 'top',
+              opacity: 0.9,
+              className: 'fault-line-tooltip',
+            })
+          },
+        }).addTo(map)
       }
 
       if (isEqView) {
@@ -662,6 +738,50 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
       }).addTo(map)
 
       window.setTimeout(() => map.invalidateSize(), 0)
+
+      if (isEqView) {
+        // Add a compact in-map legend control for the earthquake view only.
+        try {
+          const legendControl = (L as any).control({ position: 'topright' })
+          legendControl.onAdd = function () {
+            const container = L.DomUtil.create('div', 'map-legend leaflet-bar rounded p-2 bg-white/90 shadow') as HTMLDivElement
+            container.style.fontSize = '12px'
+            container.style.lineHeight = '1.2'
+            container.style.pointerEvents = 'auto'
+
+            mapLegendItems.forEach((item) => {
+              const row = document.createElement('div')
+              row.style.display = 'flex'
+              row.style.alignItems = 'center'
+              row.style.gap = '8px'
+              row.style.marginBottom = '6px'
+
+              const sw = document.createElement('span')
+              sw.style.width = '14px'
+              sw.style.height = '14px'
+              sw.style.background = item.color
+              sw.style.display = 'inline-block'
+              sw.style.borderRadius = '3px'
+
+              const label = document.createElement('span')
+              label.textContent = item.label
+              label.style.color = 'inherit'
+
+              row.appendChild(sw)
+              row.appendChild(label)
+              container.appendChild(row)
+            })
+
+            return container
+          }
+
+          legendControl.addTo(map)
+        } catch (e) {
+          // non-fatal: map legend is a UI enhancement
+          // eslint-disable-next-line no-console
+          console.warn('Failed to add map legend control', e)
+        }
+      }
 
       mapInstanceRef.current = map
 
@@ -796,42 +916,60 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
             </div>
 
             <div
-              className={`mx-auto mt-3 flex w-full max-w-7xl flex-wrap items-center gap-3 rounded-2xl border border-slate-200/80 bg-white/90 px-3 py-3 text-sm shadow-sm ${
+              className={`mx-auto mt-3 flex w-full max-w-7xl flex-col gap-3 rounded-2xl border border-slate-200/80 bg-white/90 px-3 py-3 text-sm shadow-sm ${
                 isAdminVariant ? 'border-slate-600/80 bg-slate-950/90 text-slate-200' : ''
               }`}
             >
-              <span className="text-[10px] font-black uppercase tracking-[0.26em] text-slate-500">
-                Layers
-              </span>
+              <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <span className="text-[10px] font-black uppercase tracking-[0.26em] text-slate-500">
+                  Layers
+                </span>
 
-              <button
-                className={`rounded-full border px-4 py-2 text-xs font-semibold transition ${
-                  (selectedType === 'EQ' ? showHeatmap : incidentLayerMode === 'heatmap')
-                    ? 'border-emerald-500 bg-emerald-500 text-white shadow-sm'
-                    : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
-                }`}
-                onClick={() => {
-                  if (selectedType === 'EQ') {
-                    setShowHeatmap((value) => !value)
-                  } else {
-                    setIncidentLayerMode((current) => (current === 'heatmap' ? 'markers' : 'heatmap'))
-                  }
-                }}
-                type="button"
-              >
-                Heatmap
-              </button>
+                <p className="text-xs text-slate-500 sm:ml-auto">
+                  Toggle the incident overlay for current map type.
+                </p>
+              </div>
 
-              <p className="ml-auto text-xs text-slate-500">
-                Toggle the incident overlay for current map type.
-              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  className={`rounded-full border px-4 py-2 text-xs font-semibold transition ${
+                    (selectedType === 'EQ' ? showHeatmap : incidentLayerMode === 'heatmap')
+                      ? 'border-emerald-500 bg-emerald-500 text-white shadow-sm'
+                      : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
+                  }`}
+                  onClick={() => {
+                    if (selectedType === 'EQ') {
+                      setShowHeatmap((value) => !value)
+                    } else {
+                      setIncidentLayerMode((current) => (current === 'heatmap' ? 'markers' : 'heatmap'))
+                    }
+                  }}
+                  type="button"
+                >
+                  Heatmap
+                </button>
+
+                {selectedType === 'EQ' ? (
+                  <button
+                    className={`rounded-full border px-4 py-2 text-xs font-semibold transition ${
+                      showFaultLines
+                        ? 'border-rose-500 bg-rose-500 text-white shadow-sm'
+                        : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
+                    }`}
+                    onClick={() => setShowFaultLines((value) => !value)}
+                    type="button"
+                  >
+                    Fault Lines
+                  </button>
+                ) : null}
+              </div>
             </div>
           </section>
 
           <section className="w-full p-4 sm:p-5">
-            <div className="grid w-full gap-4 xl:grid-cols-[minmax(0,2.3fr)_minmax(380px,1fr)]">
+            <div className="grid w-full gap-4 items-stretch xl:grid-cols-[minmax(0,2.1fr)_minmax(320px,1fr)]">
               <div
-                className={`overflow-hidden rounded-3xl shadow-[0_20px_44px_rgba(15,23,42,0.16)] ${
+                className={`flex h-[68vh] sm:h-[68vh] md:h-[72vh] xl:h-[76vh] flex-col overflow-hidden rounded-3xl shadow-[0_18px_40px_rgba(15,23,42,0.14)] ${
                   isAdminVariant
                     ? 'border border-slate-600/70 bg-[#202a3d]/95'
                     : 'border border-slate-200 bg-white/95 backdrop-blur'
@@ -850,7 +988,7 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
                     </p>
                     <p className="mt-0.5 text-[11px] text-slate-500">
                       {selectedType === 'EQ'
-                        ? 'Quezon Province seismic view — Lucena City highlighted'
+                        ? 'Philippines seismic view — Luzon and nearby areas highlighted'
                         : 'Responder reports are plotted here'}
                     </p>
                   </div>
@@ -872,7 +1010,7 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
                   ) : null}
                 </div>
 
-                <div className="relative overflow-hidden rounded-b-3xl">
+                <div className="relative flex flex-col overflow-hidden rounded-b-3xl flex-1 min-h-0">
                   <div className="pointer-events-none absolute right-4 top-4 z-20 hidden max-w-xs rounded-3xl border border-slate-200/80 bg-white/90 p-4 text-sm text-slate-700 shadow-xl backdrop-blur-md sm:block dark:border-slate-700 dark:bg-slate-950/80 dark:text-slate-100">
                     <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500 dark:text-slate-400">
                       Map legend
@@ -887,20 +1025,33 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
                           <span>{meta.label}</span>
                         </div>
                       ))}
+                      {selectedType === 'EQ' ? (
+                        <div className="mt-2 border-t border-slate-200 pt-3 dark:border-slate-700">
+                          {mapLegendItems.map((item) => (
+                            <div key={item.label} className="flex items-center gap-3">
+                              <span
+                                className="inline-flex h-3.5 w-3.5 rounded-full"
+                                style={{ backgroundColor: item.color }}
+                              />
+                              <span className="text-slate-700 dark:text-slate-300">{item.label}</span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
                     </div>
                     <div className="mt-3 rounded-2xl bg-slate-100/90 p-3 text-xs text-slate-500 dark:bg-slate-900/85 dark:text-slate-300">
                       {selectedType === 'EQ'
                         ? 'Earthquake view with live seismic density and monitored seismic events.'
-                        : 'Click a marker to preview incident details and open the responder report.'}
+                        : 'Responder reports are plotted on the map. Click a marker to preview incident details.'}
                     </div>
                   </div>
 
-                  <div className="h-[520px] w-full sm:h-[640px]" ref={mapContainerRef} />
+                  <div className="h-full min-h-0 w-full" ref={mapContainerRef} />
                 </div>
               </div>
 
               <aside
-                className={`h-full max-h-[740px] rounded-3xl p-4 shadow-[0_20px_44px_rgba(15,23,42,0.16)] sm:p-5 ${
+                className={`flex h-[68vh] sm:h-[68vh] md:h-[72vh] xl:h-[76vh] min-w-0 flex-col rounded-3xl p-4 shadow-[0_18px_40px_rgba(15,23,42,0.14)] sm:p-5 ${
                   isAdminVariant
                     ? 'border border-slate-600/70 bg-[#202a3d]/95'
                     : 'border border-slate-200 bg-white/95 backdrop-blur'
@@ -925,7 +1076,7 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
                             Seismic Events
                           </h2>
                           <p className={`mt-1 text-xs leading-relaxed ${isAdminVariant ? 'text-slate-300' : 'text-slate-600'}`}>
-                            Live earthquake feed for Quezon Province with magnitude, depth, place, and event time.
+                            Live earthquake feed for the Philippines with magnitude, depth, place, and event time.
                           </p>
                         </div>
 
@@ -934,7 +1085,7 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
                         </span>
                       </div>
 
-                      <div className="relative z-10 mt-5 grid grid-cols-3 gap-2">
+                              <div className="relative z-10 mt-5 grid gap-2 sm:grid-cols-3">
                         <div className={`rounded-2xl border p-3 ${isAdminVariant ? 'border-white/10 bg-white/8' : 'border-white/70 bg-white/80'}`}>
                           <p className={`text-[10px] font-bold uppercase tracking-[0.12em] ${isAdminVariant ? 'text-slate-400' : 'text-slate-500'}`}>
                             Strongest
@@ -976,7 +1127,7 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
                       </div>
                     </div>
 
-                    <div className="mt-4 min-h-0 flex-1">
+                    <div className="mt-4 min-h-0 flex-1 overflow-hidden">
                       {eqFetchStatus === 'loading' ? (
                         <div className={`flex min-h-[320px] flex-col items-center justify-center rounded-[24px] border text-center ${isAdminVariant ? 'border-slate-700 bg-slate-900/40' : 'border-slate-200 bg-slate-50'}`}>
                           <div className="h-10 w-10 animate-spin rounded-full border-4 border-emerald-400 border-t-transparent" />
@@ -1016,7 +1167,7 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
                             </span>
                           </div>
 
-                          <div className="mt-4 min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
+                          <div className="mt-4 min-h-0 flex-1 space-y-3 overflow-y-auto pr-1 max-h-[34vh]">
                             {filteredEarthquakeIncidentCards.length > 0 ? (
                               filteredEarthquakeIncidentCards.map((incident) => {
                                 const magnitudeTone =
@@ -1037,29 +1188,20 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
                                     }`}
                                     key={`${incident.title}-${incident.time}`}
                                   >
-                                    <div className="flex items-start justify-between gap-3">
-                                      <div className="min-w-0">
-                                        <div className="flex items-center gap-2">
-                                          <span className="inline-flex rounded-lg bg-emerald-400 px-2 py-1 text-[10px] font-black text-slate-950">
-                                            EQ
-                                          </span>
-                                          <p className={`truncate text-sm font-bold ${isAdminVariant ? 'text-white' : 'text-slate-900'}`}>
-                                            {incident.location}
-                                          </p>
-                                        </div>
-
-                                        <p className="mt-2 text-xs font-medium text-slate-500">{incident.time}</p>
-                                        <p className={`mt-2 line-clamp-2 text-xs leading-relaxed ${isAdminVariant ? 'text-slate-300' : 'text-slate-600'}`}>
+                                    <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                                      <div className="min-w-0 space-y-2">
+                                        <p className="text-xs font-medium text-slate-500">{incident.time}</p>
+                                        <p className={`line-clamp-2 max-w-full break-words text-sm leading-relaxed ${isAdminVariant ? 'text-slate-300' : 'text-slate-600'}`}>
                                           {incident.description}
                                         </p>
                                       </div>
 
-                                      <span className={`shrink-0 rounded-full border px-2.5 py-1 text-xs font-black ${magnitudeTone}`}>
+                                      <span className={`shrink-0 rounded-full border px-3 py-1 text-xs font-black ${magnitudeTone}`}>
                                         M{incident.magnitude?.toFixed(1) ?? '0.0'}
                                       </span>
                                     </div>
 
-                                    <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-200/70 pt-3">
+                                    <div className="mt-4 flex flex-col gap-3 border-t border-slate-200/70 pt-4 sm:flex-row sm:items-center sm:justify-between">
                                       <span className="text-[11px] font-semibold text-slate-500">
                                         Depth-aware seismic monitoring
                                       </span>
@@ -1088,7 +1230,7 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
                     </div>
                   </div>
                 ) : (
-                  <>
+                  <div className="flex h-full min-h-0 flex-col overflow-hidden">
                     <div className={`pb-3 ${isAdminVariant ? 'border-b border-slate-700' : 'border-b border-slate-200'}`}>
                       <div className="flex items-center justify-between">
                         <h2 className={`text-xl font-bold ${isAdminVariant ? 'text-white' : 'text-slate-900'}`}>
@@ -1104,23 +1246,23 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
                       </p>
                     </div>
 
-                    <div className="mt-4 max-h-[500px] space-y-3 overflow-y-auto pr-1">
+                    <div className="mt-4 flex-1 min-h-0 space-y-3 overflow-y-auto pr-1">
                       {filteredIncidents.length > 0 ? (
                         filteredIncidents.map((incident) => (
                           <article
-                            className={`rounded-xl p-3 transition ${
+                            className={`group rounded-[22px] border p-4 transition duration-200 hover:-translate-y-0.5 ${
                               isAdminVariant
-                                ? 'border border-slate-700 bg-[#1d2230] hover:border-slate-500'
-                                : 'border border-slate-200 bg-[#fbfdff] hover:border-slate-300 hover:bg-white'
+                                ? 'border-slate-700 bg-[#1d2230] hover:border-emerald-400/50 hover:bg-[#222a3b]'
+                                : 'border border-slate-200 bg-white hover:border-emerald-200 hover:shadow-[0_14px_28px_rgba(15,23,42,0.08)]'
                             }`}
                             key={`${incident.id || incident.title}-${incident.time}`}
                           >
-                            <div className="flex items-start justify-between gap-2">
-                              <div className="min-w-0">
+                            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                              <div className="min-w-0 space-y-2">
                                 <div className="flex items-center gap-2">
                                   <span
-                                    className="inline-flex rounded-md px-1.5 py-0.5 text-[10px] font-black text-slate-900"
-                                    style={{ backgroundColor: incident.color, minWidth: '24px' }}
+                                    className="inline-flex rounded-md px-2 py-1 text-[10px] font-black text-slate-900"
+                                    style={{ backgroundColor: incident.color, minWidth: '28px' }}
                                   >
                                     {incident.code}
                                   </span>
@@ -1132,14 +1274,17 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
                                     {incident.title}
                                   </p>
                                 </div>
-
-                                <p className="mt-1 pl-7 text-xs text-slate-500">{incident.location}</p>
-                                <p className="mt-1 pl-7 text-xs text-slate-500">{incident.time}</p>
-                                <p className="mt-1 pl-7 text-xs text-slate-500">{incident.responseTeam}</p>
+                                <p className={`truncate max-w-full text-sm leading-relaxed ${isAdminVariant ? 'text-slate-300' : 'text-slate-600'}`}>
+                                  {incident.location}
+                                </p>
+                                <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                                  <span>{incident.time}</span>
+                                  {incident.responseTeam ? <span>· {incident.responseTeam}</span> : null}
+                                </div>
                               </div>
 
                               <span
-                                className={`rounded-full px-2 py-1 text-[10px] font-bold uppercase ${
+                                className={`rounded-full px-3 py-1 text-xs font-black uppercase ${
                                   statusClassByType[getStatusStyleKey(incident.status)]
                                 }`}
                               >
@@ -1147,9 +1292,9 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
                               </span>
                             </div>
 
-                            <div className="mt-3 flex flex-wrap gap-2 pl-7">
+                            <div className="mt-4 flex flex-wrap gap-2 border-t border-slate-200/70 pt-4">
                               <button
-                                className="rounded-md border border-[#234d77]/30 bg-white px-2.5 py-1.5 text-xs font-semibold text-[#234d77]"
+                                className="rounded-lg border border-[#234d77]/30 bg-white px-3 py-1.5 text-xs font-bold text-[#234d77] transition hover:bg-blue-50"
                                 onClick={() => handleIncidentClick(incident)}
                                 type="button"
                               >
@@ -1159,7 +1304,7 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
                               {isAdminVariant ? (
                                 <>
                                   <button
-                                    className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                                    className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
                                     onClick={() => handleEditReport(incident.id)}
                                     type="button"
                                   >
@@ -1167,7 +1312,7 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
                                   </button>
 
                                   <button
-                                    className="rounded-md border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-xs font-semibold text-amber-800 hover:bg-amber-100"
+                                    className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-800 hover:bg-amber-100"
                                     onClick={() => handleMarkPending(incident.id)}
                                     type="button"
                                   >
@@ -1175,7 +1320,7 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
                                   </button>
 
                                   <button
-                                    className="rounded-md border border-emerald-300 bg-emerald-50 px-2.5 py-1.5 text-xs font-semibold text-emerald-800 hover:bg-emerald-100"
+                                    className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-800 hover:bg-emerald-100"
                                     onClick={() => handleApprove(incident.id)}
                                     type="button"
                                   >
@@ -1192,7 +1337,7 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
                         </p>
                       )}
                     </div>
-                  </>
+                  </div>
                 )}
               </aside>
             </div>

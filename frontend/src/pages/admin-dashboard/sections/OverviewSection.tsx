@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import type { HazardIncident } from '../../../data/adminOperations'
 import { glassPanelClass } from './constants'
-import { fetchQuezonRegionEarthquakes, type EarthquakeEvent } from '../../../services/earthquakes'
+import { fetchPhilippinesEarthquakes, type EarthquakeEvent } from '../../../services/earthquakes'
 
 type MetricCard = {
   label: string
@@ -66,7 +66,7 @@ export function OverviewSection({
     setEqStatus('loading')
 
     try {
-      const events = await fetchQuezonRegionEarthquakes()
+      const events = await fetchPhilippinesEarthquakes()
       setEqEvents(events)
       setEqStatus('idle')
     } catch {
@@ -117,16 +117,6 @@ export function OverviewSection({
             <span className={`mt-1 text-4xl font-extrabold leading-none tracking-tight ${card.valueClass}`}>
               {card.value}
             </span>
-
-            <p className="text-sm font-medium text-slate-500">
-              {card.comparison}
-            </p>
-
-            <div className="mt-auto border-t border-slate-100 pt-3">
-              <p className="text-xs font-semibold text-slate-600">
-                {card.delta}
-              </p>
-            </div>
           </div>
         ))}
       </section>

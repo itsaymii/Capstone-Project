@@ -208,12 +208,11 @@ export function LandingPage() {
           const location = report.location || 'Lucena City'
           const rawTime =
             report.timeOccurred || report.time_occurred || report.createdAt || report.created_at || ''
-          const when = rawTime
-            ? new Date(rawTime).toLocaleTimeString(undefined, {
-                hour: 'numeric',
-                minute: '2-digit',
-              })
-            : ''
+          const time = rawTime ? new Date(rawTime) : null
+          const when = time && !Number.isNaN(time.getTime()) ? time.toLocaleTimeString(undefined, {
+            hour: 'numeric',
+            minute: '2-digit',
+          }) : ''
 
           const statusLabel = (() => {
             const status = String(report.status || '').toLowerCase()

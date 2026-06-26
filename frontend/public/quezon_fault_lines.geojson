@@ -1,0 +1,24 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "FAULT_NAME": "Quezon Active Fault",
+        "SEG_NAME": "Central Quezon Segment",
+        "TRACE_TYPE": "Fault Trace",
+        "LINE_TYPE": "Active Fault",
+        "FAULT_CAT": "Active",
+        "YR_MAPPED": 2024
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [121.35, 13.90],
+          [121.50, 14.05],
+          [121.70, 14.18]
+        ]
+      }
+    }
+  ]
+}

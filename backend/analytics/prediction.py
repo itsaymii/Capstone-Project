@@ -1,5 +1,5 @@
 # analytics/prediction.py
-def predict_top_hazard(barangay_id, days=90):
+def predict_top_hazard(barangay_id, days=90, start_date=None, end_date=None):
     """
     Predicts the most probable hazard to reoccur in the next 30 days.
     
@@ -10,7 +10,12 @@ def predict_top_hazard(barangay_id, days=90):
     """
     from .aggregators import get_barangay_profile
     
-    profile = get_barangay_profile(barangay_id, days)
+    profile = get_barangay_profile(
+        barangay_id,
+        days=days,
+        start_date=start_date,
+        end_date=end_date,
+    )
     
     # Edge case: No recent incidents
     if not profile['hazards']:

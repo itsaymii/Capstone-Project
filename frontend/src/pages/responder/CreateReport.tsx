@@ -3,6 +3,7 @@ import type { FC, FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { MobileNavBar } from "../../components/MobileNavBar";
 import { addNotification } from "../../services/notifications";
+import { getCurrentUserDisplayName } from "../../services/auth";
 
 interface VictimDetails {
   name: string;
@@ -25,12 +26,7 @@ interface IncidentReportForm {
   actionTaken: string;
 }
 
-type CoordinateSource = "none" | "gps" | "development" | "manual";
-
-const LUCENA_CENTER_COORDINATES = {
-  latitude: 13.9414,
-  longitude: 121.6236,
-};
+type CoordinateSource = "none" | "gps" | "manual";
 
 const LUCENA_BARANGAYS = [
   "Barangay 1",
@@ -68,22 +64,13 @@ const LUCENA_BARANGAYS = [
   "Talao-Talao",
 ] as const;
 
-function isWithinLucena(latitude: number, longitude: number): boolean {
-  return (
-    latitude >= 13.89 &&
-    latitude <= 13.98 &&
-    longitude >= 121.57 &&
-    longitude <= 121.69
-  );
-}
-
 export const CreateReport: FC = () => {
   const navigate = useNavigate();
 
   const [formData, setFormData] = useState<IncidentReportForm>({
     timeOccurred: new Date().toTimeString().slice(0, 5),
     incidentType: "",
-    responderTeam: "",
+    responderTeam: getCurrentUserDisplayName() || "",
     description: "",
     barangay: "",
     latitude: "",
@@ -131,22 +118,10 @@ export const CreateReport: FC = () => {
     setGpsAccuracy(accuracy);
   };
 
-  const useDevelopmentLocation = () => {
-    fillCoordinates(
-      LUCENA_CENTER_COORDINATES.latitude,
-      LUCENA_CENTER_COORDINATES.longitude,
-      "development",
-      null,
-    );
-
-    setError(null);
-    addNotification("Development coordinates added for Lucena City testing.");
-  };
-
   const useCurrentGpsLocation = () => {
     if (!("geolocation" in navigator)) {
       setError(
-        "GPS location is not supported by this browser. Use development coordinates or enter coordinates manually.",
+        "GPS location is not supported by this browser. Enter coordinates manually.",
       );
       addNotification("GPS location is not supported by this browser.");
       return;
@@ -164,14 +139,6 @@ export const CreateReport: FC = () => {
         fillCoordinates(latitude, longitude, "gps", accuracy);
         setIsGettingLocation(false);
 
-        if (!isWithinLucena(latitude, longitude)) {
-          setError(
-            "GPS coordinates were captured, but they are outside the Lucena City validation range. Use this only if testing outside Lucena.",
-          );
-          addNotification("GPS captured, but outside Lucena City range.");
-          return;
-        }
-
         addNotification(
           `GPS location captured${accuracy ? ` with ±${Math.round(accuracy)}m accuracy` : ""}.`,
         );
@@ -180,7 +147,7 @@ export const CreateReport: FC = () => {
         console.error("[CreateReport] GPS error:", locationError);
         setIsGettingLocation(false);
         setError(
-          "Unable to get current location. Allow location permission, turn on device location, or use development coordinates.",
+          "Unable to get current location. Allow location permission, turn on device location, or enter coordinates manually.",
         );
         addNotification("Unable to get current location.");
       },
@@ -196,8 +163,6 @@ export const CreateReport: FC = () => {
     switch (coordinateSource) {
       case "gps":
         return `Device GPS${gpsAccuracy ? ` · ±${Math.round(gpsAccuracy)}m accuracy` : ""}`;
-      case "development":
-        return "Development test location · Lucena City center";
       case "manual":
         return "Manually entered coordinates";
       default:
@@ -339,6 +304,7 @@ export const CreateReport: FC = () => {
         "http://127.0.0.1:8000/api/incidents/incident-reports/",
         {
           method: "POST",
+          credentials: 'include',
           headers: {
             "Content-Type": "application/json",
           },
@@ -356,7 +322,7 @@ export const CreateReport: FC = () => {
             victimCount: formData.victimCount,
             victims: formData.victims,
             actionTaken: formData.actionTaken,
-            status: "Submitted",
+            status: "Pending",
           }),
         },
       );
@@ -546,9 +512,9 @@ export const CreateReport: FC = () => {
                   type="text"
                   name="responderTeam"
                   value={formData.responderTeam}
-                  onChange={handleInputChange}
-                  placeholder="e.g. Ambulance Team"
-                  className="w-full text-sm border border-slate-200 rounded-xl px-3.5 py-2.5 bg-slate-50/50 focus:bg-white focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 transition-all outline-none font-medium placeholder-slate-400"
+                  readOnly
+                  placeholder="Responding team is set from your logged-in account"
+                  className="w-full text-sm border border-slate-200 rounded-xl px-3.5 py-2.5 bg-slate-100 text-slate-600 cursor-not-allowed transition-all outline-none font-medium"
                   required
                 />
               </div>
@@ -603,8 +569,7 @@ export const CreateReport: FC = () => {
                     GPS Coordinates
                   </p>
                   <p className="mt-1 text-xs text-slate-600">
-                    Use browser GPS for real testing. Use development location
-                    when presenting on a laptop without GPS.
+                    Use browser GPS for real testing. Enter coordinates manually if GPS is unavailable.
                   </p>
                 </div>
 
@@ -618,15 +583,6 @@ export const CreateReport: FC = () => {
                     {isGettingLocation
                       ? "Getting GPS..."
                       : "Use Current GPS Location"}
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={useDevelopmentLocation}
-                    disabled={isGettingLocation}
-                    className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-xs font-bold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    Use Dev Lucena Location
                   </button>
                 </div>
               </div>

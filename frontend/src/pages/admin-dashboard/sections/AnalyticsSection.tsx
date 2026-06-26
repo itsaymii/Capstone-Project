@@ -235,9 +235,10 @@ function getTextField(record: unknown, keys: string[]): string {
 function normalizeAnalyticsStatus(status: unknown): IncidentStatus {
   const value = String(status || '').trim().toLowerCase()
 
-  if (value.includes('approve') || value.includes('verified')) return 'approved'
-  if (value.includes('resolve') || value.includes('complete') || value.includes('closed')) return 'resolved'
-  if (value.includes('active') || value.includes('ongoing') || value.includes('on-going')) return 'active'
+  if (value.includes('approve') || value.includes('verified') || value === 'approved') return 'approved'
+  if (value.includes('resolve') || value.includes('complete') || value.includes('closed') || value === 'resolved') return 'resolved'
+  if (value.includes('active') || value.includes('ongoing') || value.includes('on-going') || value === 'active') return 'active'
+  if (value.includes('pending') || value === 'pending') return 'pending'
   return 'pending'
 }
 
@@ -257,10 +258,25 @@ function getDisplayReportStatus(report: HazardIncident): 'active' | 'pending' | 
 
 function getReportVictimCount(report: HazardIncident): number {
   const victims = (report as any).victims
-  const directValue = getNumberField(report, ['victimCount', 'victim_count', 'totalVictims', 'total_victims', 'casualties', 'affected_count'])
+  const directValue = getNumberField(report, [
+    'victimCount',
+    'victim_count',
+    'totalVictims',
+    'total_victims',
+    'casualties',
+    'affected_count',
+    'affected',
+    'injured',
+    'deaths',
+    'missing',
+    'displaced',
+    'victimCountByType',
+  ])
 
-  if (directValue !== null) return Math.max(0, directValue)
-  if (Array.isArray(victims)) return victims.length
+  if (directValue !== null && directValue > 0) return Math.max(0, directValue)
+  if (Array.isArray(victims) && victims.length > 0) return victims.length
+  if (typeof (report as any).people_affected === 'number') return Math.max(0, (report as any).people_affected)
+  if (typeof (report as any).number_of_persons === 'number') return Math.max(0, (report as any).number_of_persons)
 
   return 0
 }
@@ -326,6 +342,7 @@ function getActualResponseMinutes(report: HazardIncident): number | null {
     'responseMinutes',
     'response_minutes',
     'arrival_minutes',
+    'response_duration',
   ])
 
   if (directValue !== null && directValue >= 0) return Math.round(directValue)
@@ -336,7 +353,8 @@ function getActualResponseMinutes(report: HazardIncident): number | null {
   if (!startedAt || !completedAt) return null
 
   const minutes = Math.round((completedAt.getTime() - startedAt.getTime()) / (1000 * 60))
-  return minutes >= 0 && minutes <= 24 * 60 ? minutes : null
+  // Accept any non-negative response time, don't limit to 24 hours to capture extended operations
+  return minutes >= 0 ? minutes : null
 }
 
 function getEvacuationCenterCapacity(center: EvacuationCenterRecord): number {
@@ -784,7 +802,7 @@ function ResponseTimeAnalysis({
     <div className={`${glassPanelClass} p-5 sm:p-6`}>
       <SectionHeader
         badge={`${averageResponseMinutes} min avg`}
-        description="Bar chart shows incident volume by time block; gauge uses actual response timestamps/minutes when available from the system."
+        description="The bar chart shows the number of incidents by time of day, while the gauge displays the average response time based on the response timestamps recorded in the system."
         eyebrow="Response Time Analysis"
         title="Response Time Analysis"
       />
@@ -1392,7 +1410,8 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
       map.set(location, current)
     })
 
-    filteredEarthquakeEvents.slice(0, 60).forEach((event) => {
+    // Process all earthquake events without artificial limits to ensure comprehensive risk assessment
+    filteredEarthquakeEvents.forEach((event) => {
       const location = event.place || 'Near Quezon Region'
       const current = map.get(location) || {
         location,
@@ -1709,12 +1728,13 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
                 Analytics Page
               </p>
               <h2 className="mt-2 text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
-                DRRMO Analytics and Predictive Intelligence
+                DRRMO Analytics and Monitoring
               </h2>
               <p className="mt-3 text-sm leading-relaxed text-slate-600">
-                Professional analytics view for incident reports and live earthquake data:
-                trends, disaster type analysis, earthquake monitoring, response performance,
-                barangay risk, evacuation readiness, heat/risk mapping, forecasting, and severity distribution.
+                View incident reports and earthquake data with easy-to-read charts and maps. Monitor 
+                incident trends, disaster types, earthquake activity, 
+                response performance, barangay risk levels, evacuation readiness, heat maps, future 
+                risk estimates, and incident severity.
               </p>
             </div>
 
@@ -1985,7 +2005,7 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
         <div className={`${glassPanelClass} p-5 sm:p-6`}>
           <SectionHeader
             badge="Heat + Risk"
-            description="Combined heat map and risk map showing incident reports and API earthquake hotspot intensity."
+            description="Combined heat map and risk map showing incident reports and earthquake hotspot areas from the API."
             eyebrow="Heat Map / Risk Map"
             title="Heat Map and Risk Map"
           />
