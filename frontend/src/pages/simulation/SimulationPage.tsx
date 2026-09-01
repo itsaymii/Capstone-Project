@@ -3,14 +3,21 @@ import { useNavigate } from 'react-router-dom'
 import { jsPDF } from 'jspdf'
 import { NavigationBar } from '../../components/NavigationBar'
 import { AUTH_CHANGED_EVENT, getCurrentUserProfile, isAuthenticated } from '../../services/auth'
-import { getSimulationProgress, saveSimulationProgress } from '../../services/api'
+import {
+  getSimulationModuleQuiz,
+  getSimulationProgress,
+  saveSimulationProgress,
+  submitSimulationQuizAttempt,
+} from '../../services/api'
 import {
   SIMULATION_COURSES_CHANGED_EVENT,
   getSimulationCourses,
   isEmbeddedVideoUrl,
+  loadSimulationCoursesFromServer,
   normalizeVideoUrl,
   type SimulationCourse,
 } from '../../services/simulationCourses'
+import type { SimulationLearnerQuiz, SimulationQuizSubmitResponse } from '../../types/api'
 
 type CourseStatus = 'Not Started' | 'In Progress' | 'Completed'
 
@@ -20,6 +27,10 @@ type ExamAttemptResult = {
   total: number
   passed: boolean
   unanswered: number
+}
+
+type ModuleQuizAttemptResult = SimulationQuizSubmitResponse & {
+  moduleKey: string
 }
 
 type StoredSimulationProgress = {
@@ -181,17 +192,53 @@ export function SimulationPage() {
   )
   const [examSelections, setExamSelections] = useState<Record<string, Record<string, number>>>({})
   const [examAttemptResult, setExamAttemptResult] = useState<ExamAttemptResult | null>(null)
+  const [moduleQuiz, setModuleQuiz] = useState<SimulationLearnerQuiz | null>(null)
+  const [moduleQuizLatestAttempt, setModuleQuizLatestAttempt] = useState<{
+    score: number
+    totalQuestions: number
+    passed: boolean
+    unanswered: number
+    attemptedAt?: string | null
+  } | null>(null)
+  const [moduleQuizSelections, setModuleQuizSelections] = useState<Record<string, Record<string, number>>>({})
+  const [moduleQuizAttemptResult, setModuleQuizAttemptResult] = useState<ModuleQuizAttemptResult | null>(null)
+  const [moduleQuizLoading, setModuleQuizLoading] = useState(false)
+  const [moduleQuizError, setModuleQuizError] = useState('')
   const [hasLoadedProgress, setHasLoadedProgress] = useState(false)
   const [completedCourseTitle, setCompletedCourseTitle] = useState<string | null>(null)
   const [certificateCourseId, setCertificateCourseId] = useState<string | null>(null)
 
   useEffect(() => {
+    let isActive = true
+
+    async function syncCoursesFromServer(): Promise<void> {
+      if (!isAuthenticated()) {
+        return
+      }
+
+      try {
+        const syncedCourses = await loadSimulationCoursesFromServer()
+        if (isActive) {
+          setCourses(syncedCourses)
+        }
+      } catch {
+        if (isActive) {
+          setCourses(getSimulationCourses())
+        }
+      }
+    }
+
+    void syncCoursesFromServer()
+
     function syncCourses(): void {
       setCourses(getSimulationCourses())
     }
 
     window.addEventListener(SIMULATION_COURSES_CHANGED_EVENT, syncCourses)
-    return () => window.removeEventListener(SIMULATION_COURSES_CHANGED_EVENT, syncCourses)
+    return () => {
+      isActive = false
+      window.removeEventListener(SIMULATION_COURSES_CHANGED_EVENT, syncCourses)
+    }
   }, [])
 
   useEffect(() => {
@@ -300,11 +347,57 @@ export function SimulationPage() {
   useEffect(() => {
     if (!currentLessonProgressKey) {
       setExamAttemptResult(null)
+      setModuleQuizAttemptResult(null)
+      setModuleQuizError('')
       return
     }
 
     setExamAttemptResult((previous) => (previous?.moduleKey === currentLessonProgressKey ? previous : null))
+    setModuleQuizAttemptResult((previous) => (previous?.moduleKey === currentLessonProgressKey ? previous : null))
   }, [currentLessonProgressKey])
+
+  useEffect(() => {
+    let isActive = true
+
+    async function loadModuleQuiz(): Promise<void> {
+      if (!activeCourse || !activeLesson || !isAuthenticated()) {
+        setModuleQuiz(null)
+        setModuleQuizLatestAttempt(null)
+        setModuleQuizError('')
+        return
+      }
+
+      setModuleQuizLoading(true)
+      setModuleQuizError('')
+
+      try {
+        const response = await getSimulationModuleQuiz(activeCourse.id, activeLesson.id)
+        if (!isActive) {
+          return
+        }
+
+        setModuleQuiz(response.quiz)
+        setModuleQuizLatestAttempt(response.latestAttempt)
+      } catch (error) {
+        if (!isActive) {
+          return
+        }
+
+        setModuleQuiz(null)
+        setModuleQuizLatestAttempt(null)
+        setModuleQuizError(error instanceof Error ? error.message : 'Unable to load module quiz.')
+      } finally {
+        if (isActive) {
+          setModuleQuizLoading(false)
+        }
+      }
+    }
+
+    void loadModuleQuiz()
+    return () => {
+      isActive = false
+    }
+  }, [activeCourse, activeLesson])
 
   function getCourseProgressValue(courseId: string): number {
     return courseProgress[courseId] ?? 0
@@ -363,6 +456,50 @@ export function SimulationPage() {
         [questionId]: optionIndex,
       },
     }))
+  }
+
+  function handleSelectModuleQuizOption(questionId: number, choiceId: number) {
+    if (!currentLessonProgressKey) {
+      return
+    }
+
+    setModuleQuizSelections((previous) => ({
+      ...previous,
+      [currentLessonProgressKey]: {
+        ...(previous[currentLessonProgressKey] ?? {}),
+        [String(questionId)]: choiceId,
+      },
+    }))
+  }
+
+  async function handleSubmitModuleQuiz(): Promise<void> {
+    if (!moduleQuiz || !currentLessonProgressKey) {
+      return
+    }
+
+    const answers = moduleQuizSelections[currentLessonProgressKey] ?? {}
+
+    try {
+      const response = await submitSimulationQuizAttempt(moduleQuiz.id, answers)
+      setModuleQuizAttemptResult({
+        ...response,
+        moduleKey: currentLessonProgressKey,
+      })
+
+      setModuleQuizLatestAttempt({
+        score: response.score,
+        totalQuestions: response.totalQuestions,
+        passed: response.passed,
+        unanswered: response.unanswered,
+        attemptedAt: new Date().toISOString(),
+      })
+
+      if (response.passed) {
+        handleMarkCurrentModuleComplete()
+      }
+    } catch (error) {
+      setModuleQuizError(error instanceof Error ? error.message : 'Failed to submit module quiz.')
+    }
   }
 
   function handleSubmitExam() {
@@ -828,7 +965,92 @@ export function SimulationPage() {
                       ) : null}
                     </div>
 
-                    {activeLesson.lessonType === 'exam' ? (
+                    {moduleQuiz ? (
+                      <div className="rounded-2xl border border-slate-200 bg-slate-50/90 p-4">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-semibold text-slate-900">Module Quiz</p>
+                            <p className="mt-1 text-xs text-slate-500">
+                              {moduleQuiz.questions.length} questions • Passing score {moduleQuiz.passingScore}% • Version {moduleQuiz.version}
+                            </p>
+                          </div>
+                          <button
+                            className="rounded-xl bg-[linear-gradient(135deg,#0b2a57,#1a4a8c)] px-4 py-2 text-xs font-bold uppercase tracking-[0.08em] text-white transition hover:brightness-110"
+                            onClick={() => void handleSubmitModuleQuiz()}
+                            type="button"
+                          >
+                            Submit Quiz
+                          </button>
+                        </div>
+
+                        {moduleQuizLatestAttempt ? (
+                          <p className="mt-2 text-xs text-slate-500">
+                            Latest attempt: {moduleQuizLatestAttempt.score}% ({moduleQuizLatestAttempt.passed ? 'Passed' : 'Not passed'})
+                          </p>
+                        ) : null}
+
+                        {moduleQuiz.questions.length > 0 ? (
+                          <div className="mt-4 space-y-4">
+                            {moduleQuiz.questions.map((question, questionIndex) => {
+                              const selectedAnswer = currentLessonProgressKey
+                                ? moduleQuizSelections[currentLessonProgressKey]?.[String(question.id)]
+                                : undefined
+                              const detailsMap = new Map((moduleQuizAttemptResult?.details || []).map((detail) => [detail.questionId, detail]))
+                              const detail = detailsMap.get(question.id)
+
+                              return (
+                                <article className="rounded-xl border border-slate-200 bg-white p-4" key={question.id}>
+                                  <p className="text-sm font-semibold text-slate-900">Question {questionIndex + 1}</p>
+                                  <p className="mt-1 text-sm text-slate-700">{question.prompt}</p>
+
+                                  <div className="mt-3 space-y-2">
+                                    {question.options.map((option) => (
+                                      <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-700 transition hover:border-slate-300 hover:bg-slate-50" key={`${question.id}-${option.id}`}>
+                                        <input
+                                          checked={selectedAnswer === option.id}
+                                          className="mt-0.5 h-4 w-4"
+                                          name={`module-quiz-${question.id}`}
+                                          onChange={() => handleSelectModuleQuizOption(question.id, option.id)}
+                                          type="radio"
+                                        />
+                                        <span>{option.text}</span>
+                                      </label>
+                                    ))}
+                                  </div>
+
+                                  {moduleQuizAttemptResult && detail ? (
+                                    <div className={`mt-3 rounded-xl border px-3 py-2 text-xs ${detail.isCorrect ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-red-200 bg-red-50 text-red-800'}`}>
+                                      <p className="font-semibold">{detail.isCorrect ? 'Correct' : 'Incorrect'}</p>
+                                      {detail.explanation ? <p className="mt-1">{detail.explanation}</p> : null}
+                                    </div>
+                                  ) : null}
+                                </article>
+                              )
+                            })}
+                          </div>
+                        ) : (
+                          <p className="mt-3 text-sm text-slate-500">No quiz questions were published for this module yet.</p>
+                        )}
+
+                        {moduleQuizAttemptResult ? (
+                          <div className={`mt-4 rounded-xl border px-4 py-3 text-sm ${moduleQuizAttemptResult.passed ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-amber-200 bg-amber-50 text-amber-800'}`}>
+                            <p className="font-semibold">
+                              {moduleQuizAttemptResult.passed
+                                ? `Passed with ${moduleQuizAttemptResult.score}%`
+                                : moduleQuizAttemptResult.unanswered > 0
+                                  ? `Answer all questions first. ${moduleQuizAttemptResult.unanswered} remaining.`
+                                  : `Score: ${moduleQuizAttemptResult.score}% of ${moduleQuizAttemptResult.requiredScore}% required.`}
+                            </p>
+                          </div>
+                        ) : null}
+
+                        {moduleQuizError ? (
+                          <div className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
+                            {moduleQuizError}
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : activeLesson.lessonType === 'exam' ? (
                       <div className="rounded-2xl border border-slate-200 bg-slate-50/90 p-4">
                         <div className="flex flex-wrap items-center justify-between gap-3">
                           <div>
@@ -898,6 +1120,12 @@ export function SimulationPage() {
                             </p>
                           </div>
                         ) : null}
+                      </div>
+                    ) : null}
+
+                    {moduleQuizLoading ? (
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500">
+                        Loading module quiz...
                       </div>
                     ) : null}
                   </>

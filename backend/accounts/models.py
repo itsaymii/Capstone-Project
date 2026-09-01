@@ -99,6 +99,8 @@ def get_user_role(user: User) -> str:
 		return AccountProfile.derive_role_from_user(user)
 
 	if resolved_role in dict(AccountProfile.ROLE_CHOICES):
+		if resolved_role == AccountProfile.ROLE_CITIZEN and user.is_staff:
+			return AccountProfile.derive_role_from_user(user)
 		return resolved_role
 
 	return AccountProfile.derive_role_from_user(user)

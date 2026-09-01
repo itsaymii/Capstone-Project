@@ -11,6 +11,11 @@ import type {
   DashboardUpdateAccountPayload,
   DashboardUpdateAccountResponse,
   SimulationAdminMetricsResponse,
+  SimulationCourseCatalogResponse,
+  SimulationAdminQuizDetailResponse,
+  SimulationAdminQuizMutationResponse,
+  SimulationQuizSubmitResponse,
+  SimulationLearnerQuizDetailResponse,
   SimulationProgressPayload,
   SimulationProgressResponse,
   AuthApiResponse,
@@ -24,6 +29,29 @@ import type {
   CreateEvacuationCenterPayload,
   EvacuationCenter,
 } from '../types/api'
+
+function getApiErrorMessage(error: unknown, fallback: string): string {
+  if (axios.isAxiosError(error)) {
+    const errorData = error.response?.data as
+      | { error?: string; message?: string; detail?: string }
+      | string
+      | undefined
+
+    if (typeof errorData === 'string' && errorData.trim()) {
+      return errorData.trim()
+    }
+
+    if (typeof errorData === 'object' && errorData) {
+      return errorData.error || errorData.message || errorData.detail || fallback
+    }
+  }
+
+  if (error instanceof Error && error.message.trim()) {
+    return error.message
+  }
+
+  return fallback
+}
 
 function getDefaultApiBaseUrl(): string {
   if (typeof window === 'undefined') {
@@ -237,7 +265,15 @@ export async function getBarangays(): Promise<Barangay[]> {
 
 export async function getBarangayRiskScore(
   barangayId: string,
-  options?: { days?: number; startDate?: string; endDate?: string },
+  options?: {
+    days?: number
+    startDate?: string
+    endDate?: string
+    year?: number
+    month?: number
+    compareYear?: number
+    compareMonth?: number
+  },
 ): Promise<BarangayRiskScoreResponse> {
   const params = new URLSearchParams()
   params.append('barangay_id', barangayId)
@@ -252,6 +288,22 @@ export async function getBarangayRiskScore(
 
   if (options?.endDate) {
     params.append('end_date', options.endDate)
+  }
+
+  if (options?.year !== undefined) {
+    params.append('year', String(options.year))
+  }
+
+  if (options?.month !== undefined) {
+    params.append('month', String(options.month))
+  }
+
+  if (options?.compareYear !== undefined) {
+    params.append('compare_year', String(options.compareYear))
+  }
+
+  if (options?.compareMonth !== undefined) {
+    params.append('compare_month', String(options.compareMonth))
   }
 
   const { data } = await api.get<BarangayRiskScoreResponse>('/api/analytics/barangay-risk/', {
@@ -308,6 +360,119 @@ export async function saveSimulationProgress(payload: SimulationProgressPayload)
 }
 
 export async function getSimulationAdminMetrics(): Promise<SimulationAdminMetricsResponse> {
-  const { data } = await api.get<SimulationAdminMetricsResponse>('/dashboard/admin/simulation/metrics/')
+  try {
+    const { data } = await api.get<SimulationAdminMetricsResponse>('/dashboard/admin/simulation/metrics/')
+    return data
+  } catch (error) {
+    throw new Error(getApiErrorMessage(error, 'Unable to load simulation metrics.'))
+  }
+}
+
+export async function getSimulationCoursesCatalog(): Promise<SimulationCourseCatalogResponse> {
+  const { data } = await api.get<SimulationCourseCatalogResponse>('/dashboard/simulation/courses/')
+  return data
+}
+
+export async function syncSimulationCoursesCatalog(courses: SimulationCourseCatalogResponse['courses']): Promise<SimulationCourseCatalogResponse> {
+  await ensureCsrfCookie()
+  const { data } = await api.put<SimulationCourseCatalogResponse>('/dashboard/admin/simulation/courses/sync/', {
+    courses,
+  })
+  return data
+}
+
+export async function getAdminSimulationQuiz(courseId: string, lessonId: string): Promise<SimulationAdminQuizDetailResponse> {
+  const params = new URLSearchParams()
+  params.append('course_id', courseId)
+  params.append('lesson_id', lessonId)
+  try {
+    const { data } = await api.get<SimulationAdminQuizDetailResponse>('/dashboard/admin/simulation/quizzes/module/', {
+      params,
+    })
+    return data
+  } catch (error) {
+    throw new Error(getApiErrorMessage(error, 'Unable to load quiz details.'))
+  }
+}
+
+export async function uploadAdminSimulationQuizPdf(payload: {
+  courseId: string
+  lessonId: string
+  lessonTitle?: string
+  title?: string
+  passingScore?: number
+  pdf: File
+}): Promise<SimulationAdminQuizMutationResponse> {
+  await ensureCsrfCookie()
+  const formData = new FormData()
+  formData.append('courseId', payload.courseId)
+  formData.append('lessonId', payload.lessonId)
+  if (payload.lessonTitle) formData.append('lessonTitle', payload.lessonTitle)
+  if (payload.title) formData.append('title', payload.title)
+  if (payload.passingScore !== undefined) formData.append('passingScore', String(payload.passingScore))
+  formData.append('pdf', payload.pdf)
+
+  try {
+    const { data } = await api.post<SimulationAdminQuizMutationResponse>(
+      '/dashboard/admin/simulation/quizzes/upload-pdf/',
+      formData,
+    )
+    return data
+  } catch (error) {
+    throw new Error(getApiErrorMessage(error, 'Failed to parse uploaded PDF.'))
+  }
+}
+
+export async function updateAdminSimulationQuiz(
+  quizId: number,
+  payload: {
+    title: string
+    lessonTitle?: string
+    passingScore: number
+    questions: Array<{
+      prompt: string
+      options: string[]
+      correctOptionIndex: number
+      explanation: string
+    }>
+  },
+): Promise<SimulationAdminQuizMutationResponse> {
+  await ensureCsrfCookie()
+  try {
+    const { data } = await api.put<SimulationAdminQuizMutationResponse>(`/dashboard/admin/simulation/quizzes/${quizId}/`, payload)
+    return data
+  } catch (error) {
+    throw new Error(getApiErrorMessage(error, 'Unable to save quiz draft.'))
+  }
+}
+
+export async function publishAdminSimulationQuiz(quizId: number): Promise<SimulationAdminQuizMutationResponse> {
+  await ensureCsrfCookie()
+  try {
+    const { data } = await api.post<SimulationAdminQuizMutationResponse>(`/dashboard/admin/simulation/quizzes/${quizId}/publish/`)
+    return data
+  } catch (error) {
+    throw new Error(getApiErrorMessage(error, 'Failed to publish quiz.'))
+  }
+}
+
+export async function getSimulationModuleQuiz(courseId: string, lessonId: string): Promise<SimulationLearnerQuizDetailResponse> {
+  const params = new URLSearchParams()
+  params.append('course_id', courseId)
+  params.append('lesson_id', lessonId)
+  const { data } = await api.get<SimulationLearnerQuizDetailResponse>('/dashboard/simulation/quizzes/module/', {
+    params,
+  })
+  return data
+}
+
+export async function submitSimulationQuizAttempt(
+  quizId: number,
+  answers: Record<string, number>,
+): Promise<SimulationQuizSubmitResponse> {
+  await ensureCsrfCookie()
+  const { data } = await api.post<SimulationQuizSubmitResponse>(`/dashboard/simulation/quizzes/${quizId}/submit/`, {
+    answers,
+  })
   return data
 }

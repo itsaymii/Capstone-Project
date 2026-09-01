@@ -4,6 +4,7 @@ import type {
   Barangay,
   BarangayHazardProfileItem,
   BarangayHazardShareItem,
+  IncidentTrendComparison,
   BarangayRiskScoreResponse,
   BarangayScoreHistoryItem,
 } from '../../../types/api'
@@ -20,6 +21,139 @@ const hazardSharePalette = ['#2563eb', '#f59e0b', '#16a34a', '#dc2626', '#7c3aed
 function formatDateLabel(dateString: string) {
   const date = new Date(dateString)
   return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+}
+
+function formatMonthName(month: number | null): string {
+  if (!month) return 'All months'
+  return new Date(2026, month - 1, 1).toLocaleDateString(undefined, { month: 'long' })
+}
+
+function formatPeriodLabel(period: { year: number; month: number | null }): string {
+  if (!period.month) return String(period.year)
+  return `${formatMonthName(period.month)} ${period.year}`
+}
+
+function buildYearMonthDateRange(year: number, month?: number): { startDate: string; endDate: string } {
+  const start = new Date(year, month ? month - 1 : 0, 1)
+  const end = month
+    ? new Date(year, month, 0)
+    : new Date(year, 11, 31)
+
+  const toIso = (date: Date) => {
+    const yyyy = date.getFullYear()
+    const mm = String(date.getMonth() + 1).padStart(2, '0')
+    const dd = String(date.getDate()).padStart(2, '0')
+    return `${yyyy}-${mm}-${dd}`
+  }
+
+  return {
+    startDate: toIso(start),
+    endDate: toIso(end),
+  }
+}
+
+function DailyIncidentComparisonChart({ comparison }: { comparison: IncidentTrendComparison | null | undefined }) {
+  if (!comparison) {
+    return (
+      <div className="rounded-3xl border border-slate-200 bg-slate-50 p-6 text-sm text-slate-500">
+        No daily incident comparison data available.
+      </div>
+    )
+  }
+
+  const current = comparison.current_period.daily_reports || []
+  const previous = comparison.comparison_period.daily_reports || []
+
+  if (current.length === 0 && previous.length === 0) {
+    return (
+      <div className="rounded-3xl border border-slate-200 bg-slate-50 p-6 text-sm text-slate-500">
+        No daily incident records found for the selected comparison periods.
+      </div>
+    )
+  }
+
+  const points = Math.max(current.length, previous.length)
+  const width = 900
+  const height = 260
+  const padding = { top: 20, right: 24, bottom: 42, left: 40 }
+  const chartWidth = width - padding.left - padding.right
+  const chartHeight = height - padding.top - padding.bottom
+
+  const allCounts = [
+    ...current.map((row) => row.count),
+    ...previous.map((row) => row.count),
+  ]
+  const maxCount = Math.max(1, ...allCounts)
+
+  const toPoints = (series: Array<{ date: string; count: number }>) => {
+    if (points === 1) {
+      const count = series[0]?.count || 0
+      return [`${padding.left + chartWidth / 2},${padding.top + chartHeight - (count / maxCount) * chartHeight}`].join(' ')
+    }
+
+    return Array.from({ length: points }, (_, index) => {
+      const count = series[index]?.count || 0
+      const x = padding.left + (chartWidth * index) / Math.max(points - 1, 1)
+      const y = padding.top + chartHeight - (count / maxCount) * chartHeight
+      return `${x},${y}`
+    }).join(' ')
+  }
+
+  const currentPolyline = toPoints(current)
+  const previousPolyline = toPoints(previous)
+  const percentChange = comparison.trend.percent_change
+  const trendLabel =
+    percentChange === null
+      ? 'New trend (no baseline incidents in previous period)'
+      : `${percentChange > 0 ? '+' : ''}${percentChange}% ${comparison.trend.direction}`
+
+  return (
+    <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="mb-4 grid gap-3 sm:grid-cols-3">
+        <div className="rounded-2xl border border-slate-100 bg-slate-50 p-3">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Current period</p>
+          <p className="mt-1 text-sm font-bold text-slate-900">{formatPeriodLabel(comparison.current_period)}</p>
+          <p className="text-xs text-slate-500">{comparison.current_period.total} total reports</p>
+        </div>
+        <div className="rounded-2xl border border-slate-100 bg-slate-50 p-3">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Comparison period</p>
+          <p className="mt-1 text-sm font-bold text-slate-900">{formatPeriodLabel(comparison.comparison_period)}</p>
+          <p className="text-xs text-slate-500">{comparison.comparison_period.total} total reports</p>
+        </div>
+        <div className="rounded-2xl border border-blue-100 bg-blue-50 p-3">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-blue-700">Trend change</p>
+          <p className="mt-1 text-sm font-bold text-blue-900">{trendLabel}</p>
+          <p className="text-xs text-blue-700">Daily incident report comparison</p>
+        </div>
+      </div>
+
+      <svg viewBox={`0 0 ${width} ${height}`} className="w-full" preserveAspectRatio="xMidYMid meet">
+        {[0, 0.25, 0.5, 0.75, 1].map((tick) => {
+          const y = padding.top + chartHeight - tick * chartHeight
+          const value = Math.round(maxCount * tick)
+          return (
+            <g key={tick}>
+              <line x1={padding.left} x2={width - padding.right} y1={y} y2={y} stroke="#e2e8f0" strokeDasharray="4 5" />
+              <text x={padding.left - 8} y={y + 4} textAnchor="end" fill="#64748b" fontSize="11">{value}</text>
+            </g>
+          )
+        })}
+
+        <line x1={padding.left} y1={padding.top} x2={padding.left} y2={height - padding.bottom} stroke="#cbd5e1" />
+        <line x1={padding.left} y1={height - padding.bottom} x2={width - padding.right} y2={height - padding.bottom} stroke="#cbd5e1" />
+
+        <polyline fill="none" stroke="#1d4ed8" strokeWidth="3" points={currentPolyline} />
+        <polyline fill="none" stroke="#f97316" strokeWidth="3" strokeDasharray="6 5" points={previousPolyline} />
+
+        <text x={padding.left} y={height - 12} fill="#1d4ed8" fontSize="11" fontWeight="700">
+          {formatPeriodLabel(comparison.current_period)}
+        </text>
+        <text x={width - padding.right} y={height - 12} textAnchor="end" fill="#c2410c" fontSize="11" fontWeight="700">
+          {formatPeriodLabel(comparison.comparison_period)}
+        </text>
+      </svg>
+    </div>
+  )
 }
 
 function ScoreHistoryChart({ data }: { data: BarangayScoreHistoryItem[] }) {
@@ -259,6 +393,10 @@ export function RiskScoringSection() {
   const [timeframe, setTimeframe] = useState<number>(90)
   const [startDate, setStartDate] = useState<string>('')
   const [endDate, setEndDate] = useState<string>('')
+  const [yearFilter, setYearFilter] = useState<string>('')
+  const [monthFilter, setMonthFilter] = useState<string>('')
+  const [compareYearFilter, setCompareYearFilter] = useState<string>('')
+  const [compareMonthFilter, setCompareMonthFilter] = useState<string>('')
   const [riskData, setRiskData] = useState<BarangayRiskScoreResponse | null>(null)
   const [aiInsight, setAiInsight] = useState<string>('')
   const [aiInsightLoading, setAiInsightLoading] = useState<boolean>(false)
@@ -266,6 +404,18 @@ export function RiskScoringSection() {
   const [isLoading, setIsLoading] = useState<boolean>(false)
   const [error, setError] = useState<string | null>(null)
   const skipInitialRiskFetch = useRef(false)
+  const monthOptions = useMemo(
+    () =>
+      Array.from({ length: 12 }, (_, index) => ({
+        value: String(index + 1),
+        label: new Date(2026, index, 1).toLocaleDateString(undefined, { month: 'long' }),
+      })),
+    [],
+  )
+  const yearOptions = useMemo(() => {
+    const currentYear = new Date().getFullYear()
+    return Array.from({ length: 8 }, (_, index) => String(currentYear - index))
+  }, [])
 
   useEffect(() => {
     let isMounted = true
@@ -375,10 +525,18 @@ export function RiskScoringSection() {
     let isMounted = true
     const activeHazard = hazardName
 
-    const insightOptions: { days?: number; startDate?: string; endDate?: string } =
-      startDate && endDate
-        ? { startDate, endDate }
-        : { days: timeframe }
+    const insightOptions: { days?: number; startDate?: string; endDate?: string } = (() => {
+      if (yearFilter) {
+        const range = buildYearMonthDateRange(Number(yearFilter), monthFilter ? Number(monthFilter) : undefined)
+        return range
+      }
+
+      if (startDate && endDate) {
+        return { startDate, endDate }
+      }
+
+      return { days: timeframe }
+    })()
 
     async function loadAiInsight() {
       try {
@@ -411,7 +569,7 @@ export function RiskScoringSection() {
     return () => {
       isMounted = false
     }
-  }, [riskData?.hazard_prediction?.hazard, startDate, endDate, timeframe])
+  }, [riskData?.hazard_prediction?.hazard, startDate, endDate, timeframe, yearFilter, monthFilter])
 
   const selectedBarangay = useMemo(
     () => barangays.find((barangay) => barangay.id === selectedBarangayId),
@@ -489,7 +647,15 @@ export function RiskScoringSection() {
                   type="date"
                   className="mt-2 block w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-blue-500 focus:ring-blue-200"
                   value={startDate}
-                  onChange={(event) => setStartDate(event.target.value)}
+                  onChange={(event) => {
+                    setStartDate(event.target.value)
+                    if (event.target.value) {
+                      setYearFilter('')
+                      setMonthFilter('')
+                      setCompareYearFilter('')
+                      setCompareMonthFilter('')
+                    }
+                  }}
                 />
               </label>
 
@@ -499,13 +665,105 @@ export function RiskScoringSection() {
                   type="date"
                   className="mt-2 block w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-blue-500 focus:ring-blue-200"
                   value={endDate}
-                  onChange={(event) => setEndDate(event.target.value)}
+                  onChange={(event) => {
+                    setEndDate(event.target.value)
+                    if (event.target.value) {
+                      setYearFilter('')
+                      setMonthFilter('')
+                      setCompareYearFilter('')
+                      setCompareMonthFilter('')
+                    }
+                  }}
                 />
+              </label>
+
+              <label className="block text-sm font-medium text-slate-600">
+                Incident trend year
+                <select
+                  className="mt-2 block w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-blue-500 focus:ring-blue-200"
+                  value={yearFilter}
+                  onChange={(event) => {
+                    const nextYear = event.target.value
+                    setYearFilter(nextYear)
+                    if (nextYear) {
+                      setStartDate('')
+                      setEndDate('')
+                    } else {
+                      setMonthFilter('')
+                      setCompareYearFilter('')
+                      setCompareMonthFilter('')
+                    }
+                  }}
+                >
+                  <option value="">None (use timeframe/date range)</option>
+                  {yearOptions.map((year) => (
+                    <option key={year} value={year}>
+                      {year}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="block text-sm font-medium text-slate-600">
+                Incident trend month
+                <select
+                  className="mt-2 block w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-blue-500 focus:ring-blue-200 disabled:bg-slate-100"
+                  disabled={!yearFilter}
+                  value={monthFilter}
+                  onChange={(event) => setMonthFilter(event.target.value)}
+                >
+                  <option value="">All months</option>
+                  {monthOptions.map((month) => (
+                    <option key={month.value} value={month.value}>
+                      {month.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="block text-sm font-medium text-slate-600">
+                Compare year
+                <select
+                  className="mt-2 block w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-blue-500 focus:ring-blue-200 disabled:bg-slate-100"
+                  disabled={!yearFilter}
+                  value={compareYearFilter}
+                  onChange={(event) => {
+                    const nextValue = event.target.value
+                    setCompareYearFilter(nextValue)
+                    if (!nextValue) {
+                      setCompareMonthFilter('')
+                    }
+                  }}
+                >
+                  <option value="">Default (previous year)</option>
+                  {yearOptions.map((year) => (
+                    <option key={`compare-${year}`} value={year}>
+                      {year}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="block text-sm font-medium text-slate-600">
+                Compare month
+                <select
+                  className="mt-2 block w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-blue-500 focus:ring-blue-200 disabled:bg-slate-100"
+                  disabled={!yearFilter || !compareYearFilter}
+                  value={compareMonthFilter}
+                  onChange={(event) => setCompareMonthFilter(event.target.value)}
+                >
+                  <option value="">Default (same month as current)</option>
+                  {monthOptions.map((month) => (
+                    <option key={`compare-month-${month.value}`} value={month.value}>
+                      {month.label}
+                    </option>
+                  ))}
+                </select>
               </label>
 
               <div className="sm:col-span-2 md:col-span-4">
                 <p className="mt-2 text-xs text-slate-500">
-                  Select both dates to use a custom range. When both start and end dates are selected, the custom date range overrides the rolling timeframe.
+                  Use one filter mode at a time: timeframe, custom date range, or incident trend year/month comparison.
                 </p>
               </div>
             </div>
@@ -655,6 +913,7 @@ export function RiskScoringSection() {
           <article className={`${glassPanelSoftClass} p-6`}> 
             <div className="grid gap-4">
               <ScoreHistoryChart data={riskData?.score_history || []} />
+              <DailyIncidentComparisonChart comparison={riskData?.incident_trend_comparison} />
               <div className="space-y-4">
                 <HazardShareDonut data={riskData?.hazard_share || []} />
                 <HazardContributionBars data={hazardRows.slice(0, 5).map((row) => ({ name: row.name, score: row.item.combined_score }))} />
@@ -686,15 +945,6 @@ export function RiskScoringSection() {
             </div>
           </article>
 
-          <article className={`${glassPanelSoftClass} p-6`}>
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Interpretation</p>
-            <div className="mt-4 space-y-3 text-sm text-slate-600">
-              <p><span className="font-semibold text-slate-900">Critical</span> means this barangay has sustained high incident volume and severity recently. Prioritize response and community awareness.</p>
-              <p><span className="font-semibold text-slate-900">High</span> indicates elevated risk with meaningful incident history in the selected window.</p>
-              <p><span className="font-semibold text-slate-900">Moderate</span> indicates the barangay should be monitored, especially when major hazards are detected nearby.</p>
-              <p><span className="font-semibold text-slate-900">Low</span> indicates a lower recent threat level, but always confirm with ongoing incident reporting.</p>
-            </div>
-          </article>
         </div>
       </div>
     </section>
