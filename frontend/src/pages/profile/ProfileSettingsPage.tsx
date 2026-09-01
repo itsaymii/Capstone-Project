@@ -7,7 +7,6 @@ import {
   updateCurrentUserAvatar,
   updateCurrentUserPersonalInfo,
   saveCurrentUserProfileToServer,
-  updateCurrentUserProfile,
 } from '../../services/auth'
 
 const barangayOptions = [

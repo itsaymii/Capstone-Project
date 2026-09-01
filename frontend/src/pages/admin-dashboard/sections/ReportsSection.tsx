@@ -180,7 +180,6 @@ export function ReportsSection({
 
   const normalizedDashboardSearchQuery = searchQuery.trim().toLowerCase()
   const normalizedReportLocationFilter = reportLocationFilter.trim().toLowerCase()
-  const isDateFilterActive = Boolean(reportStartDate || reportEndDate)
 
   const localHazardReportRows = useMemo<UnifiedHazardReportRow[]>(() => {
     return reports.filter((incident) => incident.code !== 'EQ').map((incident, index) => {
@@ -334,8 +333,6 @@ export function ReportsSection({
       reportEndDate,
     ],
   )
-
-  const visibleReportLabel = `${filteredUnifiedHazardReportRows.length} of ${unifiedHazardReportRows.length} records visible`
 
   function resetReportFilters(): void {
     setReportStartDate('')
@@ -800,15 +797,6 @@ export function ReportsSection({
                 value={reportLocationFilter}
               />
             </label>
-          </div>
-
-          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-            <span className="font-semibold text-slate-800">{visibleReportLabel}</span>
-            <span>
-              {isDateFilterActive
-                ? 'Date filter is active. Clear the date fields to show the full dataset again.'
-                : 'No date filter applied. All available records are currently displayed.'}
-            </span>
           </div>
         </div>
 

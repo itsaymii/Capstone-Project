@@ -95,6 +95,22 @@ const mapLegendItems = [
   { label: 'Earthquake Epicenter', color: '#4ade80' },
 ]
 
+const validYearOptions = ['2020', '2021', '2022', '2023', '2024', '2025', '2026']
+const validMonthOptions = [
+  { value: '01', label: 'January' },
+  { value: '02', label: 'February' },
+  { value: '03', label: 'March' },
+  { value: '04', label: 'April' },
+  { value: '05', label: 'May' },
+  { value: '06', label: 'June' },
+  { value: '07', label: 'July' },
+  { value: '08', label: 'August' },
+  { value: '09', label: 'September' },
+  { value: '10', label: 'October' },
+  { value: '11', label: 'November' },
+  { value: '12', label: 'December' },
+]
+
 const reviewStatusClass: Record<ReportReviewStatus, string> = {
   pending: 'border border-amber-200 bg-amber-50 text-amber-800',
   approved: 'border border-emerald-200 bg-emerald-50 text-emerald-800',
@@ -425,7 +441,6 @@ export function AdminIncidentMapPanel({
   const [earthquakeEvents, setEarthquakeEvents] = useState<EarthquakeEvent[]>([])
   const [barangayLayer, setBarangayLayer] =
     useState<GeoJSON.FeatureCollection<GeoJSON.Geometry, Record<string, unknown>> | null>(null)
-  const [eqHeatPoints, setEqHeatPoints] = useState<HeatPoint[]>([])
   const [eqFetchStatus, setEqFetchStatus] = useState<'idle' | 'loading' | 'error'>('idle')
   const [faultLines, setFaultLines] = useState<FaultLineFeatureCollection | null>(null)
   const [faultLineFetchStatus, setFaultLineFetchStatus] = useState<'idle' | 'loading' | 'error'>('idle')
@@ -435,6 +450,8 @@ export function AdminIncidentMapPanel({
   const [eqLastRefreshed, setEqLastRefreshed] = useState<Date | null>(null)
   const [eqIsRefreshing, setEqIsRefreshing] = useState(false)
   const [eqSearchQuery, setEqSearchQuery] = useState('')
+  const [selectedYear, setSelectedYear] = useState('')
+  const [selectedMonth, setSelectedMonth] = useState('')
   const [accidentTypeFilter, setAccidentTypeFilter] = useState('all')
   const [viewedReportIds, setViewedReportIds] = useState<string[]>(() => getViewedReportIds())
   const [approvalSuccess, setApprovalSuccess] = useState<ApprovalSuccessModal>({
@@ -584,18 +601,69 @@ export function AdminIncidentMapPanel({
     )
   }, [accidentTypeFilter, incidentReports, selectedType])
 
-  const plottableMapIncidents = useMemo(
+  const getReportDate = (report: MapIncident): Date | null => {
+    const rawDate =
+      report.rawReport.createdAt ||
+      report.rawReport.created_at ||
+      report.rawReport.timeOccurred ||
+      report.rawReport.time_occurred ||
+      report.time
+
+    const value = new Date(rawDate)
+    return Number.isNaN(value.getTime()) ? null : value
+  }
+
+  const matchesSelectedDate = (date: Date | null): boolean => {
+    if (!date) return true
+    if (selectedYear && date.getFullYear().toString() !== selectedYear) return false
+    if (selectedMonth && (date.getMonth() + 1).toString().padStart(2, '0') !== selectedMonth) return false
+    return true
+  }
+
+  const visiblePlottableMapIncidents = useMemo(
     () =>
       incidentReports.filter((incident) => {
         if (incident.code !== selectedType) return false
+        if (incident.status !== 'approved') return false
 
-        // Strict rule:
-        // Do NOT plot Submitted, Pending, or On-going reports.
-        // Only Approved reports are allowed to display on the map.
-        return incident.status === 'approved'
+        return matchesSelectedDate(getReportDate(incident))
       }),
-    [incidentReports, selectedType],
+    [incidentReports, matchesSelectedDate, selectedType],
   )
+
+  const plottableMapIncidents = useMemo(
+    () => visiblePlottableMapIncidents,
+    [visiblePlottableMapIncidents],
+  )
+
+  const filteredEarthquakeEvents = useMemo(() => {
+    return earthquakeEvents.filter((event) => matchesSelectedDate(new Date(event.rawTimestamp)))
+  }, [earthquakeEvents, matchesSelectedDate])
+
+  const filteredEqHeatPoints = useMemo(() => toHeatPoints(filteredEarthquakeEvents), [filteredEarthquakeEvents])
+
+  const mapMonths = useMemo(() => {
+    if (!selectedYear) return []
+    const months = new Set<string>()
+
+    incidentReports.forEach((incident) => {
+      const date = getReportDate(incident)
+      if (date && date.getFullYear().toString() === selectedYear) {
+        months.add((date.getMonth() + 1).toString().padStart(2, '0'))
+      }
+    })
+
+    earthquakeEvents.forEach((event) => {
+      const date = new Date(event.rawTimestamp)
+      if (date.getFullYear().toString() === selectedYear) {
+        months.add((date.getMonth() + 1).toString().padStart(2, '0'))
+      }
+    })
+
+    return validMonthOptions
+      .map((month) => month.value)
+      .filter((month) => months.has(month))
+  }, [incidentReports, earthquakeEvents, selectedYear])
 
   const incidentHeatPoints = useMemo(
     () =>
@@ -610,12 +678,21 @@ export function AdminIncidentMapPanel({
   const incidentCounts = useMemo(
     () => ({
       EQ:
-        earthquakeEvents.length +
-        incidentReports.filter((incident) => incident.code === 'EQ' && incident.status === 'approved').length,
-      FR: incidentReports.filter((incident) => incident.code === 'FR' && incident.status === 'approved').length,
-      AC: incidentReports.filter((incident) => incident.code === 'AC' && incident.status === 'approved').length,
+        filteredEarthquakeEvents.length +
+        incidentReports.filter((incident) => {
+          if (incident.code !== 'EQ' || incident.status !== 'approved') return false
+          return matchesSelectedDate(getReportDate(incident))
+        }).length,
+      FR: incidentReports.filter((incident) => {
+        if (incident.code !== 'FR' || incident.status !== 'approved') return false
+        return matchesSelectedDate(getReportDate(incident))
+      }).length,
+      AC: incidentReports.filter((incident) => {
+        if (incident.code !== 'AC' || incident.status !== 'approved') return false
+        return matchesSelectedDate(getReportDate(incident))
+      }).length,
     }),
-    [incidentReports, earthquakeEvents.length],
+    [incidentReports, filteredEarthquakeEvents.length, matchesSelectedDate],
   )
 
   const loadEarthquakes = useCallback(async (silent = false) => {
@@ -628,7 +705,6 @@ export function AdminIncidentMapPanel({
     try {
       const events = await fetchPhilippinesEarthquakes(730, 1.0)
       setEarthquakeEvents(events)
-      setEqHeatPoints(toHeatPoints(events))
       setEqFetchStatus('idle')
       setEqLastRefreshed(new Date())
     } catch {
@@ -668,19 +744,19 @@ export function AdminIncidentMapPanel({
 
 
   const earthquakeSummary = useMemo(() => {
-    const significantCount = earthquakeEvents.filter((event) => event.magnitude >= 4).length
-    const strongestMagnitude = earthquakeEvents.reduce((max, event) => Math.max(max, event.magnitude), 0)
-    const recentCount = earthquakeEvents.filter(
+    const significantCount = filteredEarthquakeEvents.filter((event) => event.magnitude >= 4).length
+    const strongestMagnitude = filteredEarthquakeEvents.reduce((max, event) => Math.max(max, event.magnitude), 0)
+    const recentCount = filteredEarthquakeEvents.filter(
       (event) => event.rawTimestamp >= Date.now() - 30 * 24 * 60 * 60 * 1000,
     ).length
 
     return {
-      total: earthquakeEvents.length,
+      total: filteredEarthquakeEvents.length,
       significant: significantCount,
       strongest: strongestMagnitude > 0 ? strongestMagnitude.toFixed(1) : '0.0',
       recent: recentCount,
     }
-  }, [earthquakeEvents])
+  }, [filteredEarthquakeEvents])
 
 
   useEffect(() => {
@@ -768,9 +844,12 @@ export function AdminIncidentMapPanel({
       map.fitBounds(lucenaBounds, { padding: [18, 18] })
     }
 
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}{r}.png', {
-      attribution: '&copy; OpenStreetMap &copy; CARTO',
-    }).addTo(map)
+    const mapBaseLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    })
+    mapBaseLayer.addTo(map)
+
+    const overlayLayerGroup = L.layerGroup().addTo(map)
 
     const heatmapPane = map.getPane('heatmap-pane') ?? map.createPane('heatmap-pane')
     heatmapPane.style.zIndex = '350'
@@ -835,12 +914,13 @@ export function AdminIncidentMapPanel({
         interactive: true,
         style: (feature) => ({
           color: getBarangayColor(feature),
-          weight: 0.9,
-          opacity: 0.76,
-          fillColor: getBarangayColor(feature),
-          fillOpacity: 0.01,
+          weight: 2,
+          opacity: 1,
+          fillColor: '#ffffff',
+          fillOpacity: 0,
           lineJoin: 'round',
           lineCap: 'round',
+          stroke: true,
         }),
         onEachFeature: (feature, layer) => {
           const barangayName = getBarangayName(feature)
@@ -871,12 +951,12 @@ export function AdminIncidentMapPanel({
         },
       })
 
-      barangayGeoJson.addTo(map)
+      barangayGeoJson.addTo(overlayLayerGroup)
     }
 
     if (isEqView) {
-      if (showHeatmap && eqHeatPoints.length > 0) {
-        ;(L as any).heatLayer(createHeatCloudPoints(eqHeatPoints), {
+      if (showHeatmap && filteredEqHeatPoints.length > 0) {
+        const earthquakeHeatLayer = (L as any).heatLayer(createHeatCloudPoints(filteredEqHeatPoints), {
           pane: 'heatmap-pane',
           minOpacity: 0.24,
           radius: 42,
@@ -891,11 +971,12 @@ export function AdminIncidentMapPanel({
             0.84: '#f97316',
             1.0: '#dc2626',
           },
-        }).addTo(map)
+        })
+        earthquakeHeatLayer.addTo(overlayLayerGroup)
       }
 
       if (showFaultLines && faultLines) {
-        L.geoJSON(faultLines, {
+        const faultLayer = L.geoJSON(faultLines, {
           pane: 'fault-pane',
           style: (feature) => {
             const faultName = String(feature?.properties?.FAULT_NAME || '')
@@ -939,14 +1020,15 @@ export function AdminIncidentMapPanel({
               className: 'fault-line-tooltip',
             })
           },
-        }).addTo(map)
+        })
+        faultLayer.addTo(overlayLayerGroup)
       }
 
       if (showHeatmap) {
-        earthquakeEvents
+        filteredEarthquakeEvents
           .filter((event) => event.magnitude >= 3.5)
           .forEach((event) => {
-            L.circleMarker([event.lat, event.lng], {
+            const seismicMarker = L.circleMarker([event.lat, event.lng], {
               pane: 'incident-marker-pane',
               radius: Math.max(4, (event.magnitude - 1) * 3),
               color: '#ffffff',
@@ -954,15 +1036,15 @@ export function AdminIncidentMapPanel({
               fillColor: hazardColors.EQ,
               fillOpacity: 0.85,
             })
-              .addTo(map)
-              .bindPopup(
+            seismicMarker.addTo(overlayLayerGroup)
+            seismicMarker.bindPopup(
                 `<strong>M${event.magnitude.toFixed(1)}</strong><br/>${event.place}<br/><small>${event.time} · ${event.depth.toFixed(1)} km deep</small>`,
               )
           })
       }
     } else {
       if (showIncidentHeatmap && incidentHeatPoints.length > 0 && typeof (L as any).heatLayer === 'function') {
-        ;(L as any).heatLayer(createHeatCloudPoints(incidentHeatPoints), {
+        const incidentHeatLayer = (L as any).heatLayer(createHeatCloudPoints(incidentHeatPoints), {
           pane: 'heatmap-pane',
           minOpacity: 0.24,
           radius: 46,
@@ -977,21 +1059,23 @@ export function AdminIncidentMapPanel({
             0.84: '#f97316',
             1.0: '#dc2626',
           },
-        }).addTo(map)
+        })
+        incidentHeatLayer.addTo(overlayLayerGroup)
       }
 
       plottableMapIncidents.forEach((incident) => {
         const markerColor = hazardColors[incident.code]
         const statusLabel = 'Approved / Resolved'
 
-        L.circleMarker(incident.coordinates, {
+        const backgroundMarker = L.circleMarker(incident.coordinates, {
           pane: 'incident-marker-pane',
           radius: 17,
           stroke: false,
           fillColor: markerColor,
           fillOpacity: 0.26,
           interactive: false,
-        }).addTo(map)
+        })
+        backgroundMarker.addTo(overlayLayerGroup)
 
         const approvedMarker = L.circleMarker(incident.coordinates, {
           pane: 'incident-marker-pane',
@@ -1002,7 +1086,7 @@ export function AdminIncidentMapPanel({
           fillOpacity: 0.98,
           bubblingMouseEvents: false,
         })
-          .addTo(map)
+          .addTo(overlayLayerGroup)
           .bindPopup(buildIncidentPopupHtml(incident, statusLabel), {
             maxWidth: 320,
             closeButton: true,
@@ -1013,11 +1097,6 @@ export function AdminIncidentMapPanel({
         })
       })
     }
-
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}{r}.png', {
-      pane: 'map-labels-pane',
-      attribution: '&copy; CARTO',
-    }).addTo(map)
 
     window.setTimeout(() => {
       map.invalidateSize()
@@ -1076,12 +1155,14 @@ export function AdminIncidentMapPanel({
     incidentHeatPoints,
     showIncidentHeatmap,
     selectedType,
-    eqHeatPoints,
-    earthquakeEvents,
+    filteredEarthquakeEvents,
+    filteredEqHeatPoints,
     showHeatmap,
     showFaultLines,
     faultLines,
     barangayLayer,
+    selectedYear,
+    selectedMonth,
   ])
 
   function showApprovalCelebration(incident: MapIncident): void {
@@ -1278,6 +1359,58 @@ export function AdminIncidentMapPanel({
                     {hazardTypeMeta[typeCode].label}
                   </button>
                 ))}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+                <div className="flex items-center gap-2 rounded-xl border border-slate-600 bg-slate-800/80 px-2.5 py-1.5">
+                  <span className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Year</span>
+                  <select
+                    value={selectedYear}
+                    onChange={(event) => {
+                      setSelectedYear(event.target.value)
+                      setSelectedMonth('')
+                    }}
+                    className="border-0 bg-slate-900 text-[11px] font-semibold text-slate-100 outline-none"
+                  >
+                    <option value="">All</option>
+                    {validYearOptions.map((year) => (
+                      <option key={year} value={year}>{year}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {selectedYear ? (
+                  <div className="flex items-center gap-2 rounded-xl border border-slate-600 bg-slate-800/80 px-2.5 py-1.5">
+                    <span className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Month</span>
+                    <select
+                      value={selectedMonth}
+                      onChange={(event) => setSelectedMonth(event.target.value)}
+                      className="border-0 bg-slate-900 text-[11px] font-semibold text-slate-100 outline-none"
+                    >
+                      <option value="">All</option>
+                      {validMonthOptions
+                        .filter((monthOption) => mapMonths.includes(monthOption.value))
+                        .map((monthOption) => (
+                          <option key={monthOption.value} value={monthOption.value}>
+                            {monthOption.label}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                ) : null}
+
+                {(selectedYear || selectedMonth) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedYear('')
+                      setSelectedMonth('')
+                    }}
+                    className="rounded-xl border border-slate-600 bg-slate-800/80 px-2.5 py-1.5 text-[11px] font-semibold text-slate-100 transition hover:bg-slate-700"
+                  >
+                    Reset
+                  </button>
+                )}
               </div>
 
               {selectedType === 'EQ' ? (
