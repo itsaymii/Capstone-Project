@@ -50,10 +50,27 @@ const earthquakeLegendItems = [
   { label: 'Low Risk Area', color: '#2563eb' },
 ]
 
+const validYearOptions = ['2020', '2021', '2022', '2023', '2024', '2025', '2026']
+const validMonthOptions = [
+  { value: '01', label: 'January' },
+  { value: '02', label: 'February' },
+  { value: '03', label: 'March' },
+  { value: '04', label: 'April' },
+  { value: '05', label: 'May' },
+  { value: '06', label: 'June' },
+  { value: '07', label: 'July' },
+  { value: '08', label: 'August' },
+  { value: '09', label: 'September' },
+  { value: '10', label: 'October' },
+  { value: '11', label: 'November' },
+  { value: '12', label: 'December' },
+]
+
 type IncidentItem = {
   id?: string
   title: string
   time: string
+  reportedAt?: string
   status: 'active' | 'resolved' | 'pending' | 'approved'
   color: string
   code: 'EQ' | 'FR' | 'AC'
@@ -131,24 +148,32 @@ function getLucenaFallbackCoordinates(location: string): [number, number] {
   return [13.9414, 121.6236]
 }
 
+function normalizeIncidentKind(value: string): 'EQ' | 'FR' | 'AC' {
+  const incidentType = String(value ?? '').trim().toLowerCase()
+
+  if (!incidentType) return 'AC'
+  if (incidentType.includes('fire')) return 'FR'
+  if (incidentType.includes('earthquake')) return 'EQ'
+  if (
+    incidentType.includes('accident') ||
+    incidentType.includes('vehicle') ||
+    incidentType.includes('vehicular') ||
+    incidentType.includes('collision') ||
+    incidentType.includes('road')
+  ) {
+    return 'AC'
+  }
+
+  return 'AC'
+}
+
 function mapIncidentReportToMapIncident(report: any): IncidentItem {
-  const incidentType = String(report.incidentType || report.incident_type || report.type || '').toLowerCase()
+  const sourceType = String(report.incidentType || report.incident_type || report.type || 'Accident')
   const location = report.location || report.address || 'Lucena City'
   const fallbackCoordinates = getLucenaFallbackCoordinates(location)
 
-  let code: IncidentItem['code'] = 'AC'
-  let color = hazardColors.AC
-
-  if (incidentType.includes('fire')) {
-    code = 'FR'
-    color = hazardColors.FR
-  } else if (incidentType.includes('earthquake')) {
-    code = 'EQ'
-    color = hazardColors.EQ
-  } else {
-    code = 'AC'
-    color = hazardColors.AC
-  }
+  const code = normalizeIncidentKind(sourceType)
+  const color = code === 'FR' ? hazardColors.FR : code === 'EQ' ? hazardColors.EQ : hazardColors.AC
 
   const lat = Number(report.latitude || report.lat || report.coordinates?.[0])
   const lng = Number(report.longitude || report.lng || report.coordinates?.[1])
@@ -157,6 +182,8 @@ function mapIncidentReportToMapIncident(report: any): IncidentItem {
     Number.isFinite(lat) && Number.isFinite(lng) ? [lat, lng] : fallbackCoordinates
 
   const victimCount = Number(report.victimCount || report.victim_count || 0)
+  const reportedAtRaw = report.createdAt || report.created_at || report.date_reported || report.timeOccurred || report.time_occurred
+  const reportedAt = typeof reportedAtRaw === 'string' ? reportedAtRaw : reportedAtRaw ? new Date(reportedAtRaw).toISOString() : undefined
 
   const rawStatus = String(report.status || '').toLowerCase()
   let status: IncidentItem['status']
@@ -169,20 +196,27 @@ function mapIncidentReportToMapIncident(report: any): IncidentItem {
     status = 'pending'
   }
 
+  const displayTime = reportedAt ? new Date(reportedAt) : null
+  const timeText =
+    displayTime && Number.isFinite(displayTime.getTime())
+      ? displayTime.toLocaleString('en-PH', {
+          month: 'short',
+          day: 'numeric',
+          year: 'numeric',
+          hour: 'numeric',
+          minute: '2-digit',
+        })
+      : report.timeOccurred ||
+        report.time_occurred ||
+        'Unknown time'
+
   return {
     id: report.id,
-    title: `${report.incidentType || report.incident_type || 'Incident Report'} - ${
+    title: `${sourceType || 'Incident Report'} - ${
       report.reportCode || report.report_code || report.incidentCode || report.incident_code || report.id || ''
     }`,
-    time:
-      report.timeOccurred ||
-      report.time_occurred ||
-      (report.createdAt || report.created_at
-        ? new Date(report.createdAt || report.created_at).toLocaleTimeString(undefined, {
-            hour: 'numeric',
-            minute: '2-digit',
-          })
-        : 'Unknown time'),
+    time: timeText,
+    reportedAt,
     status,
     color,
     code,
@@ -227,7 +261,6 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
   const [backendIncidents, setBackendIncidents] = useState<IncidentItem[]>([])
   const [earthquakeEvents, setEarthquakeEvents] = useState<EarthquakeEvent[]>([])
   const [barangayLayer, setBarangayLayer] = useState<GeoJSON.FeatureCollection<GeoJSON.Geometry, Record<string, unknown>> | null>(null)
-  const [eqHeatPoints, setEqHeatPoints] = useState<HeatPoint[]>([])
   const [faultLines, setFaultLines] = useState<FaultLineFeatureCollection | null>(null)
   const [eqFetchStatus, setEqFetchStatus] = useState<'idle' | 'loading' | 'error'>('idle')
   const [faultLineFetchStatus, setFaultLineFetchStatus] = useState<'idle' | 'loading' | 'error'>('idle')
@@ -236,15 +269,42 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
   const [incidentLayerMode, setIncidentLayerMode] = useState<'markers' | 'heatmap'>('heatmap')
   const [eqLastRefreshed, setEqLastRefreshed] = useState<Date | null>(null)
   const [eqSearchQuery, setEqSearchQuery] = useState('')
+  const [selectedYear, setSelectedYear] = useState('')
+  const [selectedMonth, setSelectedMonth] = useState('')
 
   const allMappedIncidents = useMemo(
     () => (isAdminVariant ? backendIncidents : [...backendIncidents, ...mockIncidents]),
     [backendIncidents, isAdminVariant],
   )
 
+  const getIncidentDate = (incident: IncidentItem): Date | null => {
+    const dateSource = (incident as unknown as { reportedAt?: string; rawCreatedAt?: string }).reportedAt
+      ?? (incident as unknown as { rawCreatedAt?: string }).rawCreatedAt
+      ?? (incident as unknown as { time?: string }).time
+
+    if (!dateSource) return null
+
+    const parsed = new Date(dateSource)
+    return Number.isNaN(parsed.getTime()) ? null : parsed
+  }
+
+  const visibleIncidents = useMemo(() => {
+    return allMappedIncidents.filter((incident) => {
+      if (incident.code !== selectedType) return false
+
+      const incidentDate = getIncidentDate(incident)
+      if (!incidentDate) return true
+
+      if (selectedYear && incidentDate.getFullYear().toString() !== selectedYear) return false
+      if (selectedMonth && (incidentDate.getMonth() + 1).toString().padStart(2, '0') !== selectedMonth) return false
+
+      return true
+    })
+  }, [allMappedIncidents, selectedType, selectedYear, selectedMonth])
+
   const filteredIncidents = useMemo(
-    () => allMappedIncidents.filter((incident) => incident.code === selectedType),
-    [allMappedIncidents, selectedType],
+    () => visibleIncidents,
+    [visibleIncidents],
   )
 
   const incidentHeatPoints = useMemo(() => {
@@ -268,9 +328,20 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
     ]) as HeatPoint[]
   }, [filteredIncidents])
 
+  const visibleEarthquakeEvents = useMemo(() => {
+    return earthquakeEvents.filter((event) => {
+      const eventDate = new Date(event.rawTimestamp)
+      if (selectedYear && eventDate.getFullYear().toString() !== selectedYear) return false
+      if (selectedMonth && (eventDate.getMonth() + 1).toString().padStart(2, '0') !== selectedMonth) return false
+      return true
+    })
+  }, [earthquakeEvents, selectedYear, selectedMonth])
+
+  const filteredEqHeatPoints = useMemo(() => toHeatPoints(visibleEarthquakeEvents), [visibleEarthquakeEvents])
+
   const earthquakeIncidentCards = useMemo(
     () =>
-      [...earthquakeEvents]
+      [...visibleEarthquakeEvents]
         .sort((a, b) => b.rawTimestamp - a.rawTimestamp)
         .map((event) => ({
           title: `Earthquake Event - ${event.place}`,
@@ -285,7 +356,7 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
           coordinates: [event.lat, event.lng] as [number, number],
           magnitude: event.magnitude,
         })),
-    [earthquakeEvents],
+    [visibleEarthquakeEvents],
   )
 
   const filteredEarthquakeIncidentCards = useMemo(() => {
@@ -301,13 +372,37 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
   }, [earthquakeIncidentCards, eqSearchQuery])
 
 
+  const availableMonths = useMemo(() => {
+    if (!selectedYear) return []
+
+    const monthsFromData = new Set<string>()
+
+    allMappedIncidents.forEach((incident) => {
+      const date = getIncidentDate(incident)
+      if (date && date.getFullYear().toString() === selectedYear) {
+        monthsFromData.add((date.getMonth() + 1).toString().padStart(2, '0'))
+      }
+    })
+
+    earthquakeEvents.forEach((event) => {
+      const date = new Date(event.rawTimestamp)
+      if (date.getFullYear().toString() === selectedYear) {
+        monthsFromData.add((date.getMonth() + 1).toString().padStart(2, '0'))
+      }
+    })
+
+    return validMonthOptions
+      .map((month) => month.value)
+      .filter((month) => monthsFromData.has(month))
+  }, [allMappedIncidents, earthquakeEvents, selectedYear])
+
   const earthquakeStats = useMemo(() => {
-    const total = earthquakeEvents.length
-    const significant = earthquakeEvents.filter((event) => event.magnitude >= 4).length
-    const strongest = earthquakeEvents.reduce((max, event) => Math.max(max, event.magnitude), 0)
+    const total = visibleEarthquakeEvents.length
+    const significant = visibleEarthquakeEvents.filter((event) => event.magnitude >= 4).length
+    const strongest = visibleEarthquakeEvents.reduce((max, event) => Math.max(max, event.magnitude), 0)
     const averageMagnitude =
-      total > 0 ? earthquakeEvents.reduce((sum, event) => sum + event.magnitude, 0) / total : 0
-    const recent30Days = earthquakeEvents.filter(
+      total > 0 ? visibleEarthquakeEvents.reduce((sum, event) => sum + event.magnitude, 0) / total : 0
+    const recent30Days = visibleEarthquakeEvents.filter(
       (event) => event.rawTimestamp >= Date.now() - 30 * 24 * 60 * 60 * 1000,
     ).length
 
@@ -318,7 +413,7 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
       averageMagnitude: averageMagnitude.toFixed(1),
       recent30Days,
     }
-  }, [earthquakeEvents])
+  }, [visibleEarthquakeEvents])
 
   const incidentTypeCounts = useMemo(
     () => ({
@@ -386,9 +481,10 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
     }
 
     try {
-      const events = await fetchPhilippinesEarthquakes(730, 1.0)
+      // The disaster-map filters allow 2020-2026, so the earthquake catalog must cover the full range.
+      // A 730-day query is too narrow for month-by-month plots across older years.
+      const events = await fetchPhilippinesEarthquakes(3650, 1.0)
       setEarthquakeEvents(events)
-      setEqHeatPoints(toHeatPoints(events))
       setEqFetchStatus('idle')
       setEqLastRefreshed(new Date())
     } catch {
@@ -480,9 +576,12 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
         map.fitBounds(lucenaBounds, { padding: [18, 18] })
       }
 
-      L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}{r}.png', {
-        attribution: '&copy; OpenStreetMap &copy; CARTO',
-      }).addTo(map)
+      const mapBaseLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+      })
+      mapBaseLayer.addTo(map)
+
+      const overlayLayerGroup = L.layerGroup().addTo(map)
 
       const heatmapPane = map.getPane('heatmap-pane') ?? map.createPane('heatmap-pane')
       heatmapPane.style.zIndex = '350'
@@ -546,12 +645,13 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
           interactive: true,
           style: (feature) => ({
             color: getBarangayColor(feature),
-            weight: 0.9,
-            opacity: 0.76,
-            fillColor: getBarangayColor(feature),
-            fillOpacity: 0.01,
+            weight: 2,
+            opacity: 1,
+            fillColor: '#ffffff',
+            fillOpacity: 0,
             lineJoin: 'round',
             lineCap: 'round',
+            stroke: true,
           }),
           onEachFeature: (feature, layer) => {
             const barangayName = getBarangayName(feature)
@@ -582,11 +682,11 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
           },
         })
 
-        barangayGeoJson.addTo(map)
+        barangayGeoJson.addTo(overlayLayerGroup)
       }
 
       if (showFaultLines && faultLines) {
-        L.geoJSON(faultLines, {
+        const faultLayer = L.geoJSON(faultLines, {
           pane: 'fault-pane',
           style: (feature) => {
             const faultName = String(feature?.properties?.FAULT_NAME || '')
@@ -628,12 +728,13 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
               className: 'fault-line-tooltip',
             })
           },
-        }).addTo(map)
+        })
+        faultLayer.addTo(overlayLayerGroup)
       }
 
       if (isEqView) {
-        if (showHeatmap && eqHeatPoints.length > 0 && typeof heatLayerFactory === 'function') {
-          heatLayerFactory(createHeatCloudPoints(eqHeatPoints), {
+        if (showHeatmap && filteredEqHeatPoints.length > 0 && typeof heatLayerFactory === 'function') {
+          heatLayerFactory(createHeatCloudPoints(filteredEqHeatPoints), {
             pane: 'heatmap-pane',
             minOpacity: 0.22,
             radius: 42,
@@ -652,7 +753,7 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
         }
 
         if (showHeatmap) {
-          earthquakeEvents
+          visibleEarthquakeEvents
             .filter((event) => event.magnitude >= 3.5)
             .forEach((event) => {
               L.circleMarker([event.lat, event.lng], {
@@ -671,7 +772,7 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
         }
       } else {
         if (incidentLayerMode === 'heatmap' && typeof heatLayerFactory === 'function' && incidentHeatPoints.length > 0) {
-          heatLayerFactory(createHeatCloudPoints(incidentHeatPoints), {
+          const incidentHeatLayer = heatLayerFactory(createHeatCloudPoints(incidentHeatPoints), {
             pane: 'heatmap-pane',
             minOpacity: 0.22,
             radius: 46,
@@ -686,21 +787,23 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
               0.84: '#f97316',
               1.0: '#dc2626',
             },
-          }).addTo(map)
+          })
+          incidentHeatLayer.addTo(overlayLayerGroup)
         }
 
         filteredIncidents.forEach((incident) => {
-          L.circleMarker(incident.coordinates, {
+          const baseMarker = L.circleMarker(incident.coordinates, {
             pane: 'incident-marker-pane',
             radius: 16,
             stroke: false,
             fillColor: incident.color,
             fillOpacity: incidentLayerMode === 'heatmap' ? 0.16 : 0.24,
             interactive: false,
-          }).addTo(map)
+          })
+          baseMarker.addTo(overlayLayerGroup)
 
           if (incident.status === 'pending') {
-            L.circleMarker(incident.coordinates, {
+            const pulseMarker = L.circleMarker(incident.coordinates, {
               pane: 'incident-marker-pane',
               radius: 11,
               color: incident.color,
@@ -709,7 +812,8 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
               fillOpacity: incidentLayerMode === 'heatmap' ? 0.12 : 0.18,
               interactive: false,
               className: 'hazard-marker-pulse',
-            }).addTo(map)
+            })
+            pulseMarker.addTo(overlayLayerGroup)
           }
 
           L.circleMarker(incident.coordinates, {
@@ -720,7 +824,7 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
             fillColor: incident.color,
             fillOpacity: 0.98,
           })
-            .addTo(map)
+            .addTo(overlayLayerGroup)
             .bindPopup(
               `<strong>${incident.title}</strong><br/>
             <small>${incident.location}</small><br/>
@@ -731,11 +835,6 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
             .on('click', () => handleIncidentClick(incident))
         })
       }
-
-      L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}{r}.png', {
-        pane: 'map-labels-pane',
-        attribution: '&copy; CARTO',
-      }).addTo(map)
 
       window.setTimeout(() => map.invalidateSize(), 0)
 
@@ -797,9 +896,13 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
     incidentHeatPoints,
     incidentLayerMode,
     selectedType,
-    eqHeatPoints,
-    earthquakeEvents,
+    filteredEqHeatPoints,
+    visibleEarthquakeEvents,
+    selectedYear,
+    selectedMonth,
     showHeatmap,
+    showFaultLines,
+    faultLines,
     barangayLayer,
   ])
 
@@ -909,6 +1012,58 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
                   </button>
                 )
               })}
+
+              <div className="ml-auto flex flex-col items-stretch gap-2 sm:flex-row sm:items-center">
+                <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-2.5 py-1.5">
+                  <span className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">Year</span>
+                  <select
+                    value={selectedYear}
+                    onChange={(event) => {
+                      setSelectedYear(event.target.value)
+                      setSelectedMonth('')
+                    }}
+                    className="border-0 bg-white text-[11px] font-semibold text-slate-800 outline-none"
+                  >
+                    <option value="">All</option>
+                    {validYearOptions.map((year) => (
+                      <option key={year} value={year}>{year}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {selectedYear ? (
+                  <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-2.5 py-1.5">
+                    <span className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">Month</span>
+                    <select
+                      value={selectedMonth}
+                      onChange={(event) => setSelectedMonth(event.target.value)}
+                      className="border-0 bg-white text-[11px] font-semibold text-slate-800 outline-none"
+                    >
+                      <option value="">All</option>
+                      {validMonthOptions
+                        .filter((monthOption) => availableMonths.includes(monthOption.value))
+                        .map((monthOption) => (
+                          <option key={monthOption.value} value={monthOption.value}>
+                            {monthOption.label}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                ) : null}
+
+                {(selectedYear || selectedMonth) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedYear('')
+                      setSelectedMonth('')
+                    }}
+                    className="rounded-xl border border-slate-300 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-slate-700 transition hover:bg-slate-50"
+                  >
+                    Reset
+                  </button>
+                )}
+              </div>
 
               <span className="ml-auto rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700">
                 {backendIncidents.length} responder reports loaded

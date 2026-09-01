@@ -4,7 +4,6 @@ import type {
   Barangay,
   BarangayHazardProfileItem,
   BarangayHazardShareItem,
-  BarangayIncidentTrendItem,
   BarangayRiskScoreResponse,
   BarangayScoreHistoryItem,
 } from '../../../types/api'
@@ -87,51 +86,6 @@ function ScoreHistoryChart({ data }: { data: BarangayScoreHistoryItem[] }) {
           </g>
         ))}
       </svg>
-    </div>
-  )
-}
-
-function IncidentTrendChart({ data }: { data: BarangayIncidentTrendItem[] }) {
-  if (!data?.length) {
-    return (
-      <div className="rounded-3xl border border-slate-200 bg-slate-50 p-6 text-sm text-slate-500">
-        No incident frequency data available.
-      </div>
-    )
-  }
-
-  const maxCount = Math.max(1, ...data.map((point) => point.count))
-
-  return (
-    <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="mb-4 flex items-center justify-between gap-3">
-        <div>
-          <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Incident frequency</p>
-          <h3 className="mt-2 text-lg font-semibold text-slate-900">Time series</h3>
-        </div>
-        <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
-          {data.length} points
-        </span>
-      </div>
-
-      <div className="grid gap-3 sm:grid-cols-2">
-        {data.map((point) => (
-          <div key={point.date} className="space-y-2 rounded-3xl border border-slate-100 bg-slate-50 p-4">
-            <div className="flex items-center justify-between gap-3">
-              <p className="text-sm font-semibold text-slate-800">{formatDateLabel(point.date)}</p>
-              <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-600">
-                {point.count}
-              </span>
-            </div>
-            <div className="h-3 overflow-hidden rounded-full bg-slate-200">
-              <div
-                className="h-full rounded-full bg-gradient-to-r from-sky-500 to-cyan-400"
-                style={{ width: `${(point.count / maxCount) * 100}%` }}
-              />
-            </div>
-          </div>
-        ))}
-      </div>
     </div>
   )
 }
@@ -706,10 +660,6 @@ export function RiskScoringSection() {
                 <HazardContributionBars data={hazardRows.slice(0, 5).map((row) => ({ name: row.name, score: row.item.combined_score }))} />
               </div>
             </div>
-          </article>
-
-          <article className={`${glassPanelSoftClass} p-6`}>
-            <IncidentTrendChart data={riskData?.incident_trend || []} />
           </article>
 
           <article className={`${glassPanelSoftClass} p-6`}>
