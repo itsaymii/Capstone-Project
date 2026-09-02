@@ -17,6 +17,10 @@ type RegisterPayload = {
   username?: string
   password: string
   phoneNumber: string
+  barangayId: string
+  residentialAddress: string
+  residentConfirmation: boolean
+  residencyProof: File
 }
 
 type LoginPayload = {
@@ -44,6 +48,7 @@ type SessionUser = {
   postalCode?: string
   emergencyContactName?: string
   emergencyContactNumber?: string
+  residencyStatus?: 'pending' | 'verified' | 'rejected' | null
 }
 
 type AuthResult = {
@@ -58,7 +63,9 @@ type AuthResult = {
 
 const AUTH_KEY = 'drms-auth'
 const SESSION_USER_KEY = 'drms-session-user'
+const SESSION_EXPIRY_KEY = 'drms-session-expires-at'
 export const AUTH_CHANGED_EVENT = 'drms-auth-changed'
+let sessionExpiryTimerId: number | null = null
 
 function emitAuthChanged(): void {
   window.dispatchEvent(new Event(AUTH_CHANGED_EVENT))
@@ -119,7 +126,41 @@ function clearSessionUser(targetStore: Storage): void {
   targetStore.removeItem(SESSION_USER_KEY)
 }
 
-function persistAuthenticatedSession(user: SessionUser, keepLoggedIn: boolean): void {
+function clearAuthenticatedSession(emitChange = true): void {
+  localStorage.removeItem(AUTH_KEY)
+  clearSessionUser(localStorage)
+  localStorage.removeItem(SESSION_EXPIRY_KEY)
+  sessionStorage.removeItem(AUTH_KEY)
+  clearSessionUser(sessionStorage)
+  sessionStorage.removeItem(SESSION_EXPIRY_KEY)
+
+  if (sessionExpiryTimerId !== null) {
+    window.clearTimeout(sessionExpiryTimerId)
+    sessionExpiryTimerId = null
+  }
+
+  if (emitChange) {
+    emitAuthChanged()
+  }
+}
+
+function scheduleSessionExpiry(targetStore: Storage, sessionExpiresInSeconds?: number | null): void {
+  if (sessionExpiryTimerId !== null) {
+    window.clearTimeout(sessionExpiryTimerId)
+    sessionExpiryTimerId = null
+  }
+
+  if (!sessionExpiresInSeconds || sessionExpiresInSeconds <= 0) {
+    targetStore.removeItem(SESSION_EXPIRY_KEY)
+    return
+  }
+
+  const expiresAt = Date.now() + sessionExpiresInSeconds * 1000
+  targetStore.setItem(SESSION_EXPIRY_KEY, String(expiresAt))
+  sessionExpiryTimerId = window.setTimeout(() => clearAuthenticatedSession(), sessionExpiresInSeconds * 1000)
+}
+
+function persistAuthenticatedSession(user: SessionUser, keepLoggedIn: boolean, sessionExpiresInSeconds?: number | null): void {
   const sessionStore = keepLoggedIn ? localStorage : sessionStorage
   const oppositeStore = keepLoggedIn ? sessionStorage : localStorage
 
@@ -135,6 +176,8 @@ function persistAuthenticatedSession(user: SessionUser, keepLoggedIn: boolean): 
 
   oppositeStore.removeItem(AUTH_KEY)
   clearSessionUser(oppositeStore)
+  oppositeStore.removeItem(SESSION_EXPIRY_KEY)
+  scheduleSessionExpiry(sessionStore, sessionExpiresInSeconds)
 
   emitAuthChanged()
 }
@@ -178,7 +221,7 @@ export async function requestRegisterOtp(payload: RegisterPayload): Promise<Auth
   const password = payload.password
   const phoneNumber = payload.phoneNumber.trim()
 
-  if (!fullName || !email || !password || !phoneNumber) {
+  if (!fullName || !email || !password || !phoneNumber || !payload.barangayId || !payload.residentialAddress.trim() || !payload.residencyProof) {
     return { success: false, error: 'Please fill in all required fields.' }
   }
 
@@ -189,6 +232,10 @@ export async function requestRegisterOtp(payload: RegisterPayload): Promise<Auth
       password,
       username,
       phoneNumber,
+      barangayId: payload.barangayId,
+      residentialAddress: payload.residentialAddress.trim(),
+      residentConfirmation: payload.residentConfirmation,
+      residencyProof: payload.residencyProof,
     })
     addNotification('Registration OTP sent successfully.')
     return {
@@ -227,8 +274,10 @@ export async function verifyRegisterOtpCode(email: string, otp: string): Promise
           isStaff: response.user.isStaff,
           hasDashboardAccess: response.user.hasDashboardAccess,
           phoneNumber: response.user.phoneNumber,
+          residencyStatus: response.user.residencyStatus,
         },
-        false, // Don't persist to localStorage for new users, use sessionStorage
+        false,
+        response.sessionExpiresInSeconds,
       )
       addNotification('Registration completed successfully. Welcome!')
       return {
@@ -477,7 +526,18 @@ export async function confirmPasswordResetWithOtp(payload: {
 }
 
 export function isAuthenticated(): boolean {
-  return localStorage.getItem(AUTH_KEY) === 'true' || sessionStorage.getItem(AUTH_KEY) === 'true'
+  const activeStore = getActiveAuthStore()
+  if (!activeStore || activeStore.getItem(AUTH_KEY) !== 'true') {
+    return false
+  }
+
+  const expiresAt = Number(activeStore.getItem(SESSION_EXPIRY_KEY) || '0')
+  if (expiresAt > 0 && Date.now() >= expiresAt) {
+    clearAuthenticatedSession()
+    return false
+  }
+
+  return true
 }
 
 export function getCurrentUserDisplayName(): string | null {
@@ -625,10 +685,7 @@ export function updateCurrentUserPersonalInfo(payload: {
 
 export function logoutUser(): void {
   const currentUser = getCurrentUserProfile()
-  localStorage.removeItem(AUTH_KEY)
-  clearSessionUser(localStorage)
-  sessionStorage.removeItem(AUTH_KEY)
-  clearSessionUser(sessionStorage)
+  clearAuthenticatedSession(false)
   addNotification(
     currentUser
       ? `You have logged out successfully, ${currentUser.fullName}.`

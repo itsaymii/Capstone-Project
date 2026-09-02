@@ -19,16 +19,18 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
 from .models import (
-	user_bypasses_login_otp, get_user_role, AccountProfile, OneTimePassword,
+	user_bypasses_login_otp, get_user_role, AccountProfile, OneTimePassword, ResidencyVerification,
 	ensure_account_profile, user_has_dashboard_access
 )
 from .permissions import IsAdminOrStaff
 from incidents.models import Incident, HazardType
+from locations.models import Barangay
 
 
 OTP_EXPIRY_MINUTES = 3
 OTP_RESEND_COOLDOWN_SECONDS = 180
 OTP_RECENT_LOGIN_BYPASS_MINUTES = 5
+PENDING_RESIDENCY_SESSION_SECONDS = 24 * 60 * 60
 
 
 def _coerce_bool(value, default: bool = False) -> bool:
@@ -64,6 +66,7 @@ def _serialize_user(user: User, fallback_identifier: str = '') -> dict:
 		phone_number = user.account_profile.phone_number
 	except Exception:
 		phone_number = None
+	verification = ResidencyVerification.objects.filter(user=user).first()
 	return {
 		'fullName': _get_user_full_name(user),
 		'email': contact_value,
@@ -74,19 +77,32 @@ def _serialize_user(user: User, fallback_identifier: str = '') -> dict:
 		'isAdmin': bool(user.is_superuser) or role == AccountProfile.ROLE_ADMIN,
 		'isStaff': role == AccountProfile.ROLE_STAFF,
 		'hasDashboardAccess': user_has_dashboard_access(user),
+		'residencyStatus': verification.status if verification else None,
+		'barangay': verification.barangay_name if verification else None,
+		'residencyRejectionReason': verification.rejection_reason if verification else '',
 	}
 
 
 def _build_login_success_response(request, user: User, fallback_identifier: str) -> Response:
 	"""Build a consistent login response and refresh the CSRF token."""
+	session_expires_in_seconds = _set_pending_residency_session_expiry(request, user)
 	response = Response(
 		{
 			'message': 'Login successful.',
 			'user': _serialize_user(user=user, fallback_identifier=fallback_identifier),
+			'sessionExpiresInSeconds': session_expires_in_seconds,
 		}
 	)
 	get_token(request)
 	return response
+
+
+def _set_pending_residency_session_expiry(request, user: User) -> int | None:
+	verification = ResidencyVerification.objects.filter(user=user).first()
+	if verification and verification.status == ResidencyVerification.STATUS_PENDING:
+		request.session.set_expiry(PENDING_RESIDENCY_SESSION_SECONDS)
+		return PENDING_RESIDENCY_SESSION_SECONDS
+	return None
 
 
 def _generate_otp_code() -> str:
@@ -265,9 +281,31 @@ def register_user(request):
 	username = (request.data.get('username') or '').strip().lower()
 	password = request.data.get('password') or ''
 	phone_number = _normalize_philippine_phone_number(request.data.get('phoneNumber') or '')
+	barangay_id = (request.data.get('barangayId') or '').strip()
+	residential_address = (request.data.get('residentialAddress') or '').strip()
+	resident_confirmation = _coerce_bool(request.data.get('residentConfirmation'))
+	proof_document = request.FILES.get('residencyProof')
 
-	if not full_name or not email or not password or not phone_number:
+	if not full_name or not email or not password or not phone_number or not barangay_id or not residential_address:
 		return Response({'error': 'Please fill in all required fields.'}, status=status.HTTP_400_BAD_REQUEST)
+
+	if not resident_confirmation:
+		return Response({'error': 'You must confirm that you are a Lucena City resident.'}, status=status.HTTP_400_BAD_REQUEST)
+
+	barangay = Barangay.objects.filter(id=barangay_id, city__iexact='Lucena City').first()
+	if not barangay:
+		return Response({'error': 'Select a valid barangay in Lucena City.'}, status=status.HTTP_400_BAD_REQUEST)
+
+	if not proof_document:
+		return Response({'error': 'Upload a proof of Lucena City residency document.'}, status=status.HTTP_400_BAD_REQUEST)
+
+	allowed_document_extensions = {'.jpg', '.jpeg', '.png'}
+	document_name = str(proof_document.name or '')
+	if not any(document_name.lower().endswith(extension) for extension in allowed_document_extensions):
+		return Response({'error': 'Residency proof must be a JPG or PNG image file.'}, status=status.HTTP_400_BAD_REQUEST)
+
+	if proof_document.size > 5 * 1024 * 1024:
+		return Response({'error': 'Residency proof must be 5MB or smaller.'}, status=status.HTTP_400_BAD_REQUEST)
 
 	if len(phone_number) < 10:
 		return Response({'error': 'Please provide a valid phone number.'}, status=status.HTTP_400_BAD_REQUEST)
@@ -297,6 +335,30 @@ def register_user(request):
 			status=status.HTTP_429_TOO_MANY_REQUESTS,
 		)
 
+	verification, _ = ResidencyVerification.objects.get_or_create(
+		email=email,
+		defaults={
+			'barangay_name': barangay.name,
+			'residential_address': residential_address,
+			'proof_document': proof_document,
+			'proof_document_name': document_name,
+			'status': ResidencyVerification.STATUS_PENDING,
+		},
+	)
+	if verification.user_id:
+		return Response({'error': 'This email is already registered.'}, status=status.HTTP_400_BAD_REQUEST)
+
+	if not _:
+		verification.barangay_name = barangay.name
+		verification.residential_address = residential_address
+		verification.proof_document = proof_document
+		verification.proof_document_name = document_name
+		verification.status = ResidencyVerification.STATUS_PENDING
+		verification.rejection_reason = ''
+		verification.reviewed_by = None
+		verification.reviewed_at = None
+		verification.save()
+
 	# Store registration data temporarily until the OTP has been verified.
 	otp_code = _create_otp(
 		email=email,
@@ -306,6 +368,7 @@ def register_user(request):
 			'username': username,
 			'passwordHash': make_password(password),
 			'phoneNumber': phone_number,
+			'residencyVerificationId': verification.id,
 		},
 	)
 
@@ -341,9 +404,19 @@ def verify_register_otp(request):
 	username = (otp_record.payload.get('username') or '').strip().lower()
 	password_hash = otp_record.payload.get('passwordHash', '')
 	phone_number = _normalize_philippine_phone_number(otp_record.payload.get('phoneNumber') or '')
+	verification_id = otp_record.payload.get('residencyVerificationId')
 
-	if not full_name or not password_hash or not phone_number:
+	if not full_name or not password_hash or not phone_number or not verification_id:
 		return Response({'error': 'Registration payload is incomplete. Please try again.'}, status=status.HTTP_400_BAD_REQUEST)
+
+	verification = ResidencyVerification.objects.filter(
+		id=verification_id,
+		email__iexact=email,
+		user__isnull=True,
+		status=ResidencyVerification.STATUS_PENDING,
+	).first()
+	if not verification:
+		return Response({'error': 'Residency verification request is missing or no longer valid. Register again.'}, status=status.HTTP_400_BAD_REQUEST)
 
 	if username and User.objects.filter(username__iexact=username).exists():
 		return Response({'error': 'This username is already taken.'}, status=status.HTTP_400_BAD_REQUEST)
@@ -357,6 +430,8 @@ def verify_register_otp(request):
 	if phone_number:
 		profile.phone_number = phone_number
 		profile.save(update_fields=['phone_number'])
+	verification.user = user
+	verification.save(update_fields=['user', 'updated_at'])
 
 	# Mark the OTP as consumed so it cannot be replayed.
 	otp_record.is_used = True
@@ -364,11 +439,13 @@ def verify_register_otp(request):
 
 	# Automatically log the user in after successful registration
 	login(request, user)
+	session_expires_in_seconds = _set_pending_residency_session_expiry(request, user)
 
 	return Response(
 		{
-			'message': 'Registration successful! Welcome to Lucena City DRRMO.',
+			'message': 'Registration complete. Your Lucena City residency verification is pending admin review.',
 			'user': _serialize_user(user, fallback_identifier=email),
+			'sessionExpiresInSeconds': session_expires_in_seconds,
 		},
 		status=status.HTTP_201_CREATED,
 	)
@@ -458,6 +535,18 @@ def login_user(request):
 	if not user.is_active:
 		return Response({'error': 'This account is inactive.'}, status=status.HTTP_403_FORBIDDEN)
 
+	if ResidencyVerification.objects.filter(user=user, status=ResidencyVerification.STATUS_REJECTED).exists():
+		return Response(
+			{'error': 'Your Lucena City residency verification was rejected. This account cannot sign in.'},
+			status=status.HTTP_403_FORBIDDEN,
+		)
+
+	if ResidencyVerification.objects.filter(user=user, status=ResidencyVerification.STATUS_PENDING).exists():
+		return Response(
+			{'error': 'Your Lucena City residency verification is pending admin review. You can sign in after approval.'},
+			status=status.HTTP_403_FORBIDDEN,
+		)
+
 	# Ensure role/profile exists before checking OTP bypass rules.
 	# Staff/admin may be created outside the registration flow, so the OneToOne profile
 	# might not exist yet.
@@ -543,6 +632,18 @@ def verify_login_otp(request):
 	user = User.objects.filter(id=user_id).first() if user_id else User.objects.filter(email__iexact=email).first()
 	if not user:
 		return Response({'error': 'User account not found.'}, status=status.HTTP_400_BAD_REQUEST)
+
+	if not user.is_active or ResidencyVerification.objects.filter(user=user, status=ResidencyVerification.STATUS_REJECTED).exists():
+		return Response(
+			{'error': 'Your Lucena City residency verification was rejected. This account cannot sign in.'},
+			status=status.HTTP_403_FORBIDDEN,
+		)
+
+	if ResidencyVerification.objects.filter(user=user, status=ResidencyVerification.STATUS_PENDING).exists():
+		return Response(
+			{'error': 'Your Lucena City residency verification is pending admin review. You can sign in after approval.'},
+			status=status.HTTP_403_FORBIDDEN,
+		)
 
 	# A verified OTP should only be accepted once.
 	otp_record.is_used = True

@@ -4,8 +4,9 @@ import type { ClipboardEvent, FormEvent, KeyboardEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { useNavigate } from 'react-router-dom'
 import { requestRegisterOtp, verifyRegisterOtpCode } from '../../../services/auth'
+import { getBarangays } from '../../../services/api'
+import type { Barangay } from '../../../types/api'
 
-// Import ng background image at logo na katulad ng sa LoginPage.tsx
 import landingPageImage from '../../../images/LandingPage.jpg'
 import drrmoLogo from '../../../images/drrmo.png'
 
@@ -28,10 +29,16 @@ export function RegisterPage({ onRequestLogin, onRegistered, modalMode = false }
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [phoneNumber, setPhoneNumber] = useState('')
+  const [barangays, setBarangays] = useState<Barangay[]>([])
+  const [barangayId, setBarangayId] = useState('')
+  const [residentialAddress, setResidentialAddress] = useState('')
+  const [residencyProof, setResidencyProof] = useState<File | null>(null)
+  const [residentConfirmation, setResidentConfirmation] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const [otp, setOtp] = useState('')
   const [otpStep, setOtpStep] = useState(false)
+  const [registrationStep, setRegistrationStep] = useState<1 | 2>(1)
   const [cooldownRemaining, setCooldownRemaining] = useState(0)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [errorMessage, setErrorMessage] = useState('')
@@ -119,6 +126,28 @@ export function RegisterPage({ onRequestLogin, onRegistered, modalMode = false }
   }
 
   useEffect(() => {
+    let isActive = true
+
+    async function loadLucenaBarangays(): Promise<void> {
+      try {
+        const response = await getBarangays()
+        if (isActive) {
+          setBarangays(response.filter((barangay) => !barangay.city || barangay.city.toLowerCase() === 'lucena city'))
+        }
+      } catch {
+        if (isActive) {
+          setErrorMessage('Unable to load Lucena City barangays. Please refresh and try again.')
+        }
+      }
+    }
+
+    void loadLucenaBarangays()
+    return () => {
+      isActive = false
+    }
+  }, [])
+
+  useEffect(() => {
     if (!otpStep) {
       return
     }
@@ -190,19 +219,42 @@ export function RegisterPage({ onRequestLogin, onRegistered, modalMode = false }
       setErrorMessage('Phone number is required.')
       return
     }
-    if (!password) {
-      setErrorMessage('Password is required.')
-      return
-    }
-    if (password.length < 6) {
-      setErrorMessage('Password must be at least 6 characters.')
-      return
-    }
-    if (password !== confirmPassword) {
-      setErrorMessage('Password and confirm password do not match.')
-      return
-    }
 
+  if (!password) {
+    setErrorMessage('Password is required.')
+    return
+  }
+  if (password.length < 6) {
+    setErrorMessage('Password must be at least 6 characters.')
+    return
+  }
+  if (password !== confirmPassword) {
+    setErrorMessage('Password and confirm password do not match.')
+    return
+  }
+
+  if (registrationStep === 1) {
+    setErrorMessage('')
+    setRegistrationStep(2)
+    return
+  }
+
+    if (!barangayId) {
+      setErrorMessage('Select your Lucena City barangay.')
+      return
+    }
+    if (!residentialAddress.trim()) {
+      setErrorMessage('Residential address is required.')
+      return
+    }
+    if (!residencyProof) {
+      setErrorMessage('Upload a proof of Lucena City residency.')
+      return
+    }
+    if (!residentConfirmation) {
+      setErrorMessage('Confirm that you are a Lucena City resident.')
+      return
+    }
     setErrorMessage('')
     setIsSubmitting(true)
     const result = await requestRegisterOtp({
@@ -211,6 +263,10 @@ export function RegisterPage({ onRequestLogin, onRegistered, modalMode = false }
       username,
       password,
       phoneNumber,
+      barangayId,
+      residentialAddress,
+      residentConfirmation,
+      residencyProof,
     })
     setIsSubmitting(false)
 
@@ -285,6 +341,10 @@ export function RegisterPage({ onRequestLogin, onRegistered, modalMode = false }
       username,
       password,
       phoneNumber,
+      barangayId,
+      residentialAddress,
+      residentConfirmation,
+      residencyProof: residencyProof as File,
     })
     setIsSubmitting(false)
 
@@ -350,26 +410,36 @@ export function RegisterPage({ onRequestLogin, onRegistered, modalMode = false }
             <div className="relative z-10 mt-6 flex items-center gap-3 text-xs font-semibold uppercase tracking-wide text-slate-400">
               <span
                 className={`inline-flex h-6 w-6 items-center justify-center rounded-full text-[11px] border font-bold ${
-                  !otpStep ? 'border-[#0b2a57] bg-[#0b2a57] text-white shadow-[0_4px_10px_rgba(11,42,87,0.25)]' : 'border-emerald-600 bg-emerald-600 text-white'
+                  registrationStep === 1 && !otpStep ? 'border-[#0b2a57] bg-[#0b2a57] text-white shadow-[0_4px_10px_rgba(11,42,87,0.25)]' : 'border-emerald-600 bg-emerald-600 text-white'
                 }`}
               >
                 1
               </span>
-              <span className={!otpStep ? 'text-slate-800 font-bold' : 'text-slate-400'}>Credentials</span>
+              <span className={registrationStep === 1 && !otpStep ? 'text-slate-800 font-bold' : 'text-slate-400'}>Account</span>
               <span className="h-px w-6 bg-slate-200" />
               <span
                 className={`inline-flex h-6 w-6 items-center justify-center rounded-full text-[11px] border font-bold ${
-                  otpStep ? 'border-[#0b2a57] bg-[#0b2a57] text-white shadow-[0_4px_10px_rgba(11,42,87,0.25)]' : 'border-slate-200 bg-white text-slate-400'
+                  registrationStep === 2 && !otpStep ? 'border-[#0b2a57] bg-[#0b2a57] text-white shadow-[0_4px_10px_rgba(11,42,87,0.25)]' : otpStep ? 'border-emerald-600 bg-emerald-600 text-white' : 'border-slate-200 bg-white text-slate-400'
                 }`}
               >
                 2
               </span>
-              <span className={otpStep ? 'text-slate-800 font-bold' : 'text-slate-400'}>Verification</span>
+              <span className={registrationStep === 2 && !otpStep ? 'text-slate-800 font-bold' : 'text-slate-400'}>Residency</span>
+              <span className="h-px w-6 bg-slate-200" />
+              <span className={`inline-flex h-6 w-6 items-center justify-center rounded-full text-[11px] border font-bold ${otpStep ? 'border-[#0b2a57] bg-[#0b2a57] text-white shadow-[0_4px_10px_rgba(11,42,87,0.25)]' : 'border-slate-200 bg-white text-slate-400'}`}>3</span>
+              <span className={otpStep ? 'text-slate-800 font-bold' : 'text-slate-400'}>Email</span>
             </div>
 
             <form className="relative z-10 mt-8 space-y-5" onSubmit={otpStep ? handleOtpSubmit : handleCredentialSubmit}>
               {!otpStep ? (
                 <>
+                  {registrationStep === 2 ? (
+                  <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-xs leading-relaxed text-blue-900">
+                    Registration is exclusively for Lucena City residents. Select an official Lucena barangay and submit a valid proof of residency for admin review.
+                  </div>
+                  ) : null}
+                  {registrationStep === 1 ? (
+                  <>
                   <div className="grid gap-4 sm:grid-cols-2">
                     <label className="block">
                       <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500">First Name</span>
@@ -412,11 +482,11 @@ export function RegisterPage({ onRequestLogin, onRegistered, modalMode = false }
                     <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500">Phone Number</span>
                     <input
                       className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-3.5 py-2.5 text-sm outline-none placeholder:text-slate-400 transition focus:border-slate-400 focus:bg-white focus:ring-4 focus:ring-slate-100"
-                      type="tel"
-                      value={phoneNumber}
                       onChange={(event) => setPhoneNumber(event.target.value)}
                       placeholder="0917 123 4567"
                       required
+                      type="tel"
+                      value={phoneNumber}
                     />
                   </label>
 
@@ -424,30 +494,26 @@ export function RegisterPage({ onRequestLogin, onRegistered, modalMode = false }
                     <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500">Username (Optional)</span>
                     <input
                       className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-3.5 py-2.5 text-sm outline-none placeholder:text-slate-400 transition focus:border-slate-400 focus:bg-white focus:ring-4 focus:ring-slate-100"
-                      type="text"
-                      value={username}
                       onChange={(event) => setUsername(event.target.value)}
                       placeholder="Username"
+                      type="text"
+                      value={username}
                     />
                   </label>
 
                   <div className="grid gap-4 sm:grid-cols-2">
                     <label className="block">
                       <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500">Password</span>
-                      <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50/50 px-3.5 focus-within:border-slate-400 focus-within:bg-white focus-within:ring-4 focus-within:ring-slate-100 transition">
+                      <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50/50 px-3.5 transition focus-within:border-slate-400 focus-within:bg-white focus-within:ring-4 focus-within:ring-slate-100">
                         <input
                           className="w-full border-0 bg-transparent py-2.5 text-sm outline-none placeholder:text-slate-400"
-                          type={showPassword ? 'text' : 'password'}
-                          value={password}
                           onChange={(event) => setPassword(event.target.value)}
                           placeholder="Password"
                           required
+                          type={showPassword ? 'text' : 'password'}
+                          value={password}
                         />
-                        <button
-                          className="text-[11px] font-bold uppercase tracking-wider text-slate-400 hover:text-slate-600 transition"
-                          onClick={() => setShowPassword((previous) => !previous)}
-                          type="button"
-                        >
+                        <button className="text-[11px] font-bold uppercase tracking-wider text-slate-400 transition hover:text-slate-600" onClick={() => setShowPassword((previous) => !previous)} type="button">
                           {showPassword ? 'Hide' : 'Show'}
                         </button>
                       </div>
@@ -455,25 +521,78 @@ export function RegisterPage({ onRequestLogin, onRegistered, modalMode = false }
 
                     <label className="block">
                       <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500">Confirm Password</span>
-                      <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50/50 px-3.5 focus-within:border-slate-400 focus-within:bg-white focus-within:ring-4 focus-within:ring-slate-100 transition">
+                      <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50/50 px-3.5 transition focus-within:border-slate-400 focus-within:bg-white focus-within:ring-4 focus-within:ring-slate-100">
                         <input
                           className="w-full border-0 bg-transparent py-2.5 text-sm outline-none placeholder:text-slate-400"
+                          onChange={(event) => setConfirmPassword(event.target.value)}
+                          placeholder="Confirm password"
+                          required
                           type={showConfirmPassword ? 'text' : 'password'}
                           value={confirmPassword}
-                          onChange={(event) => setConfirmPassword(event.target.value)}
-                          placeholder="Confirm"
-                          required
                         />
-                        <button
-                          className="text-[11px] font-bold uppercase tracking-wider text-slate-400 hover:text-slate-600 transition"
-                          onClick={() => setShowConfirmPassword((previous) => !previous)}
-                          type="button"
-                        >
+                        <button className="text-[11px] font-bold uppercase tracking-wider text-slate-400 transition hover:text-slate-600" onClick={() => setShowConfirmPassword((previous) => !previous)} type="button">
                           {showConfirmPassword ? 'Hide' : 'Show'}
                         </button>
                       </div>
                     </label>
                   </div>
+                  </>
+                  ) : null}
+
+                  {registrationStep === 2 ? (
+                  <>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <label className="block">
+                      <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500">Lucena City Barangay</span>
+                      <select
+                        className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-3.5 py-2.5 text-sm outline-none transition focus:border-slate-400 focus:bg-white focus:ring-4 focus:ring-slate-100"
+                        onChange={(event) => setBarangayId(event.target.value)}
+                        required
+                        value={barangayId}
+                      >
+                        <option value="">Select barangay</option>
+                        {barangays.map((barangay) => (
+                          <option key={barangay.id} value={barangay.id}>{barangay.name}</option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="block">
+                      <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500">Proof of Residency</span>
+                      <input
+                        accept=".jpg,.jpeg,.png,image/jpeg,image/png"
+                        className="block w-full rounded-xl border border-slate-200 bg-slate-50/50 px-3 py-2 text-xs text-slate-600 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-700 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-white"
+                        onChange={(event) => setResidencyProof(event.target.files?.[0] ?? null)}
+                        required
+                        type="file"
+                      />
+                    </label>
+                  </div>
+
+                  <label className="block">
+                    <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500">Residential Address</span>
+                    <input
+                      className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-3.5 py-2.5 text-sm outline-none placeholder:text-slate-400 transition focus:border-slate-400 focus:bg-white focus:ring-4 focus:ring-slate-100"
+                      onChange={(event) => setResidentialAddress(event.target.value)}
+                      placeholder="House no., street, subdivision / sitio"
+                      required
+                      type="text"
+                      value={residentialAddress}
+                    />
+                  </label>
+
+                  <label className="flex items-start gap-3 rounded-xl border border-slate-200 bg-slate-50/60 px-4 py-3 text-xs leading-relaxed text-slate-600">
+                    <input
+                      checked={residentConfirmation}
+                      className="mt-0.5 h-4 w-4 accent-[#0b2a57]"
+                      onChange={(event) => setResidentConfirmation(event.target.checked)}
+                      required
+                      type="checkbox"
+                    />
+                    <span>I confirm that I am a resident of Lucena City and that the submitted residency document is accurate.</span>
+                  </label>
+                  </>
+                  ) : null}
                 </>
               ) : (
                 <section className={`rounded-xl border border-slate-200 bg-slate-50/60 p-5 ${otpShakeActive ? 'otp-shake' : ''}`}>
@@ -504,12 +623,25 @@ export function RegisterPage({ onRequestLogin, onRegistered, modalMode = false }
                 </section>
               )}
 
+              {!otpStep && registrationStep === 2 ? (
+                <button
+                  className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                  onClick={() => {
+                    setRegistrationStep(1)
+                    setErrorMessage('')
+                  }}
+                  type="button"
+                >
+                  Back to Account Details
+                </button>
+              ) : null}
+
               <button
                 className="w-full rounded-xl bg-gradient-to-r from-[#0b2a57] to-[#123e7a] px-4 py-3 text-sm font-semibold text-white shadow-[0_8px_20px_rgba(11,42,87,0.2)] transition hover:from-[#081e3f] hover:to-[#0d3161] disabled:cursor-not-allowed disabled:opacity-50"
                 type="submit"
                 disabled={isSubmitting}
               >
-                {otpStep ? 'Verify Key & Complete Registry' : 'Register'}
+                {otpStep ? 'Verify Key & Complete Registry' : registrationStep === 1 ? 'Continue to Residency' : 'Register'}
               </button>
 
               {!otpStep ? (

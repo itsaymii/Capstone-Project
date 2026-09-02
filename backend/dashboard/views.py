@@ -14,7 +14,7 @@ from rest_framework.permissions import BasePermission, IsAuthenticated
 from rest_framework import status
 from rest_framework.response import Response
 
-from accounts.models import AccountProfile, OneTimePassword, ensure_account_profile, get_user_role, user_has_dashboard_access
+from accounts.models import AccountProfile, OneTimePassword, ResidencyVerification, ensure_account_profile, get_user_role, user_has_dashboard_access
 from .models import (
     SimulationCourseCatalog,
     SimulationModuleQuiz,
@@ -62,8 +62,12 @@ def _get_user_full_name(user: User) -> str:
     return full_name or user.username
 
 
-def _serialize_dashboard_user(user: User) -> dict:
+def _serialize_dashboard_user(user: User, request=None) -> dict:
     role = get_user_role(user)
+    residency = ResidencyVerification.objects.filter(user=user).first()
+    proof_url = residency.proof_document.url if residency and residency.proof_document else None
+    if proof_url and request:
+        proof_url = request.build_absolute_uri(proof_url)
     return {
         'id': user.id,
         'fullName': _get_user_full_name(user),
@@ -76,6 +80,12 @@ def _serialize_dashboard_user(user: User) -> dict:
         'isActive': user.is_active,
         'dateJoined': timezone.localtime(user.date_joined).isoformat() if user.date_joined else None,
         'lastLogin': timezone.localtime(user.last_login).isoformat() if user.last_login else None,
+        'residencyStatus': residency.status if residency else None,
+        'barangay': residency.barangay_name if residency else None,
+        'residentialAddress': residency.residential_address if residency else None,
+        'residencyProofUrl': proof_url,
+        'residencyProofName': residency.proof_document_name if residency else None,
+        'residencyRejectionReason': residency.rejection_reason if residency else '',
     }
 
 
@@ -1036,7 +1046,44 @@ def create_dashboard_account(request):
 @permission_classes([HasDashboardAdminAccess])
 def list_dashboard_accounts(request):
     users = User.objects.order_by('-date_joined', '-id')
-    return Response({'users': [_serialize_dashboard_user(user) for user in users]})
+    return Response({'users': [_serialize_dashboard_user(user, request) for user in users]})
+
+
+@api_view(['PATCH'])
+@permission_classes([HasDashboardAdminAccess])
+def dashboard_account_residency_verification(request, user_id: int):
+    user = User.objects.filter(id=user_id).first()
+    if not user:
+        return Response({'error': 'User account not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+    residency = ResidencyVerification.objects.filter(user=user).first()
+    if not residency:
+        return Response({'error': 'This user has no residency verification request.'}, status=status.HTTP_404_NOT_FOUND)
+
+    decision = (request.data.get('status') or '').strip().lower()
+    if decision not in {ResidencyVerification.STATUS_VERIFIED, ResidencyVerification.STATUS_REJECTED}:
+        return Response({'error': 'status must be verified or rejected.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    rejection_reason = (request.data.get('rejectionReason') or '').strip()
+    if decision == ResidencyVerification.STATUS_REJECTED and not rejection_reason:
+        return Response({'error': 'Provide a rejection reason before rejecting residency verification.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    residency.status = decision
+    residency.rejection_reason = rejection_reason if decision == ResidencyVerification.STATUS_REJECTED else ''
+    residency.reviewed_by = request.user
+    residency.reviewed_at = timezone.now()
+    residency.save(update_fields=['status', 'rejection_reason', 'reviewed_by', 'reviewed_at', 'updated_at'])
+
+    user.is_active = decision == ResidencyVerification.STATUS_VERIFIED
+    user.save(update_fields=['is_active'])
+
+    return Response(
+        {
+            'message': f'Residency verification marked as {decision}.',
+            'user': _serialize_dashboard_user(user, request),
+        },
+        status=status.HTTP_200_OK,
+    )
 
 
 @api_view(['PUT', 'PATCH', 'DELETE'])

@@ -982,6 +982,7 @@ function DashboardDonutChart({ data }: { data: CountDataItem[] }) {
     return <EmptyChartState message="No distribution data available yet." />
   }
 
+  const chartKey = data.map((item) => `${item.name}:${item.count}`).join('|')
   const total = data.reduce((sum, item) => sum + item.count, 0)
   const radius = 78
   const circumference = 2 * Math.PI * radius
@@ -990,7 +991,7 @@ function DashboardDonutChart({ data }: { data: CountDataItem[] }) {
   const leadingPercentage = total > 0 ? Math.round((leading.count / total) * 100) : 0
 
   return (
-    <div className="relative flex h-full w-full flex-col gap-5 overflow-hidden rounded-[24px] border border-blue-100 bg-[radial-gradient(circle_at_top_left,#eff6ff_0%,#ffffff_44%,#f8fafc_100%)] p-5">
+    <div className="dashboard-chart-enter relative flex h-full w-full flex-col gap-5 overflow-hidden rounded-[24px] border border-blue-100 bg-[radial-gradient(circle_at_top_left,#eff6ff_0%,#ffffff_44%,#f8fafc_100%)] p-5" key={chartKey}>
       <div className="pointer-events-none absolute -left-16 top-8 h-36 w-36 rounded-full bg-blue-500/10 blur-3xl" />
       <div className="pointer-events-none absolute -right-12 bottom-8 h-36 w-36 rounded-full bg-emerald-400/10 blur-3xl" />
 
@@ -1031,6 +1032,8 @@ function DashboardDonutChart({ data }: { data: CountDataItem[] }) {
                 strokeLinecap="round"
                 strokeWidth="30"
                 transform="rotate(-90 120 120)"
+                className="dashboard-donut-segment"
+                style={{ animationDelay: `${index * 100}ms` }}
               >
                 <animate
                   attributeName="stroke-dasharray"
@@ -1090,8 +1093,9 @@ function DashboardDonutChart({ data }: { data: CountDataItem[] }) {
 
             return (
               <div
-                className="group rounded-2xl border border-white/80 bg-white/80 p-3 shadow-sm transition-all duration-300 hover:-translate-y-0.5 hover:border-blue-100 hover:bg-white hover:shadow-md"
+                className="dashboard-chart-row-enter group rounded-2xl border border-white/80 bg-white/80 p-3 shadow-sm transition-all duration-300 hover:-translate-y-0.5 hover:border-blue-100 hover:bg-white hover:shadow-md"
                 key={entry.name}
+                style={{ animationDelay: `${260 + index * 75}ms` }}
               >
                 <div className="mb-2 flex items-center justify-between gap-3">
                   <div className="flex min-w-0 items-center gap-2">
@@ -1108,8 +1112,9 @@ function DashboardDonutChart({ data }: { data: CountDataItem[] }) {
 
                 <div className="h-2 overflow-hidden rounded-full bg-slate-100">
                   <div
-                    className="h-full rounded-full transition-all duration-700 group-hover:brightness-110"
+                    className="dashboard-chart-bar-fill h-full rounded-full transition-all duration-700 group-hover:brightness-110"
                     style={{
+                      animationDelay: `${310 + index * 75}ms`,
                       background: `linear-gradient(90deg, ${softChartPalette[index % softChartPalette.length]}, ${chartPalette[index % chartPalette.length]})`,
                       width: `${Math.max(5, percentage)}%`,
                     }}
@@ -1139,16 +1144,21 @@ function DashboardBarChart({
     return <EmptyChartState message={emptyMessage} />
   }
 
+  const chartKey = data.map((item) => `${item.name}:${item.count}`).join('|')
   const maxCount = Math.max(1, ...data.map((item) => item.count))
 
   return (
-    <div className="flex h-full min-h-[240px] flex-col justify-center gap-3 rounded-[22px] bg-gradient-to-br from-amber-50 via-white to-slate-50 p-3 sm:p-4">
+    <div className="dashboard-chart-enter flex h-full min-h-[240px] flex-col justify-center gap-3 rounded-[22px] bg-gradient-to-br from-amber-50 via-white to-slate-50 p-3 sm:p-4" key={chartKey}>
       {data.map((item, index) => {
         const width = `${Math.max(10, (item.count / maxCount) * 100)}%`
         const percentage = Math.round((item.count / maxCount) * 100)
 
         return (
-          <div className="rounded-2xl border border-white/80 bg-white/80 p-3 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md" key={item.name}>
+          <div
+            className="dashboard-chart-row-enter rounded-2xl border border-white/80 bg-white/80 p-3 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+            key={item.name}
+            style={{ animationDelay: `${index * 90}ms` }}
+          >
             <div className="mb-2 flex items-center justify-between gap-3">
               <div className="flex min-w-0 items-center gap-2">
                 <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white" style={{ backgroundColor: chartPalette[index % chartPalette.length] }}>
@@ -1161,8 +1171,12 @@ function DashboardBarChart({
 
             <div className="relative h-4 overflow-hidden rounded-full bg-slate-100">
               <div
-                className="absolute inset-y-0 left-0 rounded-full shadow-[0_4px_14px_rgba(15,23,42,0.16)]"
-                style={{ background: `linear-gradient(90deg, ${softChartPalette[index % softChartPalette.length]}, ${chartPalette[index % chartPalette.length]})`, width }}
+                className="dashboard-chart-bar-fill absolute inset-y-0 left-0 rounded-full shadow-[0_4px_14px_rgba(15,23,42,0.16)]"
+                style={{
+                  animationDelay: `${120 + index * 90}ms`,
+                  background: `linear-gradient(90deg, ${softChartPalette[index % softChartPalette.length]}, ${chartPalette[index % chartPalette.length]})`,
+                  width,
+                }}
               />
             </div>
 

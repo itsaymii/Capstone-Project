@@ -74,6 +74,43 @@
 	}
 }
 
+@keyframes chart-panel-enter {
+	from {
+		opacity: 0;
+		transform: translateY(10px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+@keyframes chart-bar-grow {
+	from {
+		transform: scaleX(0);
+		filter: saturate(0.7) brightness(1.08);
+	}
+	to {
+		transform: scaleX(1);
+		filter: saturate(1) brightness(1);
+	}
+}
+
+@keyframes chart-donut-reveal {
+	0% {
+		opacity: 0;
+		filter: brightness(1.18) saturate(0.75);
+	}
+	70% {
+		opacity: 1;
+		filter: brightness(1.08) saturate(1.08);
+	}
+	100% {
+		opacity: 1;
+		filter: brightness(1) saturate(1);
+	}
+}
+
 @layer utilities {
 	.live-alert-track {
 		animation: live-alert-scroll 28s linear infinite;
@@ -86,5 +123,33 @@
 
 	.otp-shake {
 		animation: otp-shake 0.38s ease-in-out;
+	}
+
+	.dashboard-chart-enter {
+		animation: chart-panel-enter 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+	}
+
+	.dashboard-chart-row-enter {
+		animation: chart-panel-enter 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+	}
+
+	.dashboard-chart-bar-fill {
+		animation: chart-bar-grow 0.8s cubic-bezier(0.22, 1, 0.36, 1) both;
+		transform-origin: left center;
+		will-change: transform, filter;
+	}
+
+	.dashboard-donut-segment {
+		animation: chart-donut-reveal 0.78s cubic-bezier(0.22, 1, 0.36, 1) both;
+		will-change: opacity, filter;
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.dashboard-chart-enter,
+		.dashboard-chart-row-enter,
+		.dashboard-chart-bar-fill,
+		.dashboard-donut-segment {
+			animation: none;
+		}
 	}
 }

@@ -57,15 +57,9 @@ export function SimulationQuizManager({ embedded = false }: SimulationQuizManage
   const inputClass = embedded
     ? 'w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-700'
     : 'w-full rounded-xl border border-slate-600 bg-[#1d2230] px-3 py-2 text-sm text-white outline-none'
-  const textareaClass = embedded
-    ? 'min-h-20 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-700'
-    : 'min-h-20 w-full rounded-xl border border-slate-600 bg-[#1d2230] px-3 py-2 text-sm text-white outline-none'
   const buttonPrimaryClass = embedded
     ? 'rounded-xl bg-blue-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-800 disabled:opacity-60'
     : 'rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-500 disabled:opacity-60'
-  const buttonSecondaryClass = embedded
-    ? 'rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-60'
-    : 'rounded-xl border border-slate-600 px-4 py-2 text-sm font-semibold text-slate-200 transition hover:border-slate-500 disabled:opacity-60'
   const modalOverlayClass = 'fixed inset-0 z-[1500] bg-slate-950/35 p-4 backdrop-blur-md sm:p-8'
   const modalPanelClass = 'mx-auto flex h-full w-full max-w-5xl flex-col overflow-hidden rounded-[2rem] border border-slate-200 bg-white shadow-[0_32px_90px_rgba(15,23,42,0.28)]'
   const modalInputClass = 'w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-700'

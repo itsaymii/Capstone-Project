@@ -8,6 +8,7 @@ import type {
   DashboardCreateAccountPayload,
   DashboardCreateAccountResponse,
   DashboardDeleteAccountResponse,
+  DashboardResidencyVerificationResponse,
   DashboardUpdateAccountPayload,
   DashboardUpdateAccountResponse,
   SimulationAdminMetricsResponse,
@@ -165,7 +166,17 @@ export async function getTestMessage(): Promise<TestApiResponse> {
 }
 
 export async function registerAccount(payload: RegisterApiPayload): Promise<AuthApiResponse> {
-  const { data } = await api.post<AuthApiResponse>('/accounts/auth/register/', payload)
+  const formData = new FormData()
+  formData.append('fullName', payload.fullName)
+  formData.append('email', payload.email)
+  formData.append('password', payload.password)
+  if (payload.username) formData.append('username', payload.username)
+  if (payload.phoneNumber) formData.append('phoneNumber', payload.phoneNumber)
+  formData.append('barangayId', payload.barangayId)
+  formData.append('residentialAddress', payload.residentialAddress)
+  formData.append('residentConfirmation', String(payload.residentConfirmation))
+  formData.append('residencyProof', payload.residencyProof)
+  const { data } = await api.post<AuthApiResponse>('/accounts/auth/register/', formData)
   return data
 }
 
@@ -346,6 +357,18 @@ export async function updateDashboardAccount(userId: number, payload: DashboardU
 export async function deleteDashboardAccount(userId: number): Promise<DashboardDeleteAccountResponse> {
   await ensureCsrfCookie()
   const { data } = await api.delete<DashboardDeleteAccountResponse>(`/dashboard/admin/accounts/${userId}/`)
+  return data
+}
+
+export async function updateDashboardResidencyVerification(
+  userId: number,
+  payload: { status: 'verified' | 'rejected'; rejectionReason?: string },
+): Promise<DashboardResidencyVerificationResponse> {
+  await ensureCsrfCookie()
+  const { data } = await api.patch<DashboardResidencyVerificationResponse>(
+    `/dashboard/admin/accounts/${userId}/residency-verification/`,
+    payload,
+  )
   return data
 }
 

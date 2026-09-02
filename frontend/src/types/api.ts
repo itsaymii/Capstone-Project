@@ -17,6 +17,12 @@ export interface AuthUser {
   isActive?: boolean
   dateJoined?: string | null
   lastLogin?: string | null
+  residencyStatus?: 'pending' | 'verified' | 'rejected' | null
+  barangay?: string | null
+  residentialAddress?: string | null
+  residencyProofUrl?: string | null
+  residencyProofName?: string | null
+  residencyRejectionReason?: string
 }
 
 export interface AuthApiResponse {
@@ -24,6 +30,7 @@ export interface AuthApiResponse {
   user?: AuthUser
   otpEmail?: string
   skipOtp?: boolean
+  sessionExpiresInSeconds?: number | null
 }
 
 export interface RegisterApiPayload {
@@ -32,6 +39,10 @@ export interface RegisterApiPayload {
   password: string
   username?: string
   phoneNumber?: string
+  barangayId: string
+  residentialAddress: string
+  residentConfirmation: boolean
+  residencyProof: File
 }
 
 export interface LoginApiPayload {
@@ -205,6 +216,11 @@ export interface DashboardUpdateAccountResponse {
 
 export interface DashboardDeleteAccountResponse {
   message: string
+}
+
+export interface DashboardResidencyVerificationResponse {
+  message: string
+  user: AuthUser
 }
 
 export interface CreateEvacuationCenterPayload {
