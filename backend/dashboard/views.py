@@ -1,8 +1,11 @@
 from datetime import timedelta
+import re
 
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
 from django.contrib.auth.models import User
+from django.db import transaction
+from django.db.models import Max
 from django.utils import timezone
 from django.utils.text import slugify
 from rest_framework.decorators import api_view
@@ -11,14 +14,34 @@ from rest_framework.permissions import BasePermission, IsAuthenticated
 from rest_framework import status
 from rest_framework.response import Response
 
-from accounts.models import AccountProfile, OneTimePassword, ensure_account_profile, get_user_role, user_has_dashboard_access
-from .models import SimulationProgress
+from accounts.models import AccountProfile, OneTimePassword, ResidencyVerification, ensure_account_profile, get_user_role, user_has_dashboard_access
+from .models import (
+    SimulationCourseCatalog,
+    SimulationModuleQuiz,
+    SimulationProgress,
+    SimulationQuizAttempt,
+    SimulationQuizChoice,
+    SimulationQuizQuestion,
+)
+
+try:
+    from pypdf import PdfReader
+except Exception:  # pragma: no cover - optional dependency guard
+    PdfReader = None
 
 
 class HasDashboardAdminAccess(BasePermission):
     def has_permission(self, request, view) -> bool:
         user = getattr(request, 'user', None)
-        return bool(user and user.is_authenticated and user_has_dashboard_access(user))
+        return bool(
+            user
+            and user.is_authenticated
+            and (
+                user_has_dashboard_access(user)
+                or getattr(user, 'is_staff', False)
+                or getattr(user, 'is_superuser', False)
+            )
+        )
 
 
 def _build_unique_username(seed: str) -> str:
@@ -39,8 +62,12 @@ def _get_user_full_name(user: User) -> str:
     return full_name or user.username
 
 
-def _serialize_dashboard_user(user: User) -> dict:
+def _serialize_dashboard_user(user: User, request=None) -> dict:
     role = get_user_role(user)
+    residency = ResidencyVerification.objects.filter(user=user).first()
+    proof_url = residency.proof_document.url if residency and residency.proof_document else None
+    if proof_url and request:
+        proof_url = request.build_absolute_uri(proof_url)
     return {
         'id': user.id,
         'fullName': _get_user_full_name(user),
@@ -53,6 +80,12 @@ def _serialize_dashboard_user(user: User) -> dict:
         'isActive': user.is_active,
         'dateJoined': timezone.localtime(user.date_joined).isoformat() if user.date_joined else None,
         'lastLogin': timezone.localtime(user.last_login).isoformat() if user.last_login else None,
+        'residencyStatus': residency.status if residency else None,
+        'barangay': residency.barangay_name if residency else None,
+        'residentialAddress': residency.residential_address if residency else None,
+        'residencyProofUrl': proof_url,
+        'residencyProofName': residency.proof_document_name if residency else None,
+        'residencyRejectionReason': residency.rejection_reason if residency else '',
     }
 
 
@@ -190,6 +223,434 @@ def _serialize_simulation_admin_metrics() -> dict:
     return {'courses': metrics}
 
 
+def _coerce_passing_score(raw_value: object, default: int = 80) -> int:
+    try:
+        value = int(round(float(raw_value)))
+    except (TypeError, ValueError):
+        return default
+
+    return max(1, min(100, value))
+
+
+ALLOWED_COURSE_DIFFICULTIES = {'Beginner', 'Intermediate', 'Advanced'}
+ALLOWED_LESSON_TYPES = {'video', 'lesson', 'exam'}
+ALLOWED_MATERIAL_TYPES = {'PDF', 'Guide', 'Checklist', 'Worksheet', 'External Link'}
+
+
+def _sanitize_text_list(raw_value: object, fallback_prefix: str) -> list[str]:
+    if not isinstance(raw_value, list):
+        return []
+
+    values: list[str] = []
+    for index, value in enumerate(raw_value):
+        text = str(value or '').strip()
+        if text:
+            values.append(text)
+        elif fallback_prefix:
+            values.append(f'{fallback_prefix} {index + 1}')
+
+    return values
+
+
+def _sanitize_exam_questions(raw_questions: object) -> list[dict]:
+    if not isinstance(raw_questions, list):
+        return []
+
+    sanitized_questions: list[dict] = []
+    for q_index, raw_question in enumerate(raw_questions):
+        if not isinstance(raw_question, dict):
+            continue
+
+        prompt = str(raw_question.get('prompt') or '').strip() or f'Question {q_index + 1}'
+        options = [str(option or '').strip() for option in (raw_question.get('options') or []) if str(option or '').strip()]
+        if len(options) < 2:
+            options = ['Option 1', 'Option 2']
+
+        try:
+            correct_option_index = int(raw_question.get('correctOptionIndex', 0))
+        except (TypeError, ValueError):
+            correct_option_index = 0
+
+        sanitized_questions.append(
+            {
+                'id': str(raw_question.get('id') or f'question-{q_index + 1}').strip() or f'question-{q_index + 1}',
+                'prompt': prompt,
+                'options': options,
+                'correctOptionIndex': max(0, min(correct_option_index, len(options) - 1)),
+                'explanation': str(raw_question.get('explanation') or '').strip(),
+            }
+        )
+
+    return sanitized_questions
+
+
+def _sanitize_lessons(raw_lessons: object) -> list[dict]:
+    if not isinstance(raw_lessons, list):
+        return []
+
+    sanitized_lessons: list[dict] = []
+    for index, raw_lesson in enumerate(raw_lessons):
+        if not isinstance(raw_lesson, dict):
+            continue
+
+        lesson_type = str(raw_lesson.get('lessonType') or 'video').strip()
+        if lesson_type not in ALLOWED_LESSON_TYPES:
+            lesson_type = 'video'
+
+        sanitized_lessons.append(
+            {
+                'id': str(raw_lesson.get('id') or f'lesson-{index + 1}').strip() or f'lesson-{index + 1}',
+                'lessonType': lesson_type,
+                'title': str(raw_lesson.get('title') or '').strip() or f'Lesson {index + 1}',
+                'duration': str(raw_lesson.get('duration') or '').strip() or '10 min',
+                'videoUrl': str(raw_lesson.get('videoUrl') or '').strip(),
+                'videoFileName': str(raw_lesson.get('videoFileName') or '').strip(),
+                'summary': str(raw_lesson.get('summary') or '').strip(),
+                'points': _sanitize_text_list(raw_lesson.get('points'), ''),
+                'content': str(raw_lesson.get('content') or '').strip(),
+                'examQuestions': _sanitize_exam_questions(raw_lesson.get('examQuestions')) if lesson_type == 'exam' else [],
+                'passingScore': _coerce_passing_score(raw_lesson.get('passingScore'), default=70),
+            }
+        )
+
+    return sanitized_lessons
+
+
+def _sanitize_learning_materials(raw_materials: object) -> list[dict]:
+    if not isinstance(raw_materials, list):
+        return []
+
+    sanitized_materials: list[dict] = []
+    for index, raw_material in enumerate(raw_materials):
+        if not isinstance(raw_material, dict):
+            continue
+
+        material_type = str(raw_material.get('type') or 'Guide').strip()
+        if material_type not in ALLOWED_MATERIAL_TYPES:
+            material_type = 'Guide'
+
+        title = str(raw_material.get('title') or '').strip()
+        url = str(raw_material.get('url') or '').strip()
+        description = str(raw_material.get('description') or '').strip()
+        file_name = str(raw_material.get('fileName') or '').strip()
+
+        if not (title or url or description or file_name):
+            continue
+
+        sanitized_materials.append(
+            {
+                'id': str(raw_material.get('id') or f'material-{index + 1}').strip() or f'material-{index + 1}',
+                'title': title or f'Material {index + 1}',
+                'type': material_type,
+                'url': url,
+                'fileName': file_name,
+                'mimeType': str(raw_material.get('mimeType') or '').strip(),
+                'description': description,
+            }
+        )
+
+    return sanitized_materials
+
+
+def _sanitize_simulation_course(raw_course: object, index: int) -> dict:
+    if not isinstance(raw_course, dict):
+        raise ValidationError('Each course must be an object.')
+
+    difficulty = str(raw_course.get('difficulty') or 'Beginner').strip()
+    if difficulty not in ALLOWED_COURSE_DIFFICULTIES:
+        difficulty = 'Beginner'
+
+    lessons = _sanitize_lessons(raw_course.get('lessonOutline'))
+    if len(lessons) == 0:
+        lessons = [
+            {
+                'id': f'lesson-{index + 1}-1',
+                'lessonType': 'video',
+                'title': 'Lesson 1',
+                'duration': '10 min',
+                'videoUrl': '',
+                'videoFileName': '',
+                'summary': '',
+                'points': [],
+                'content': '',
+                'examQuestions': [],
+                'passingScore': 70,
+            }
+        ]
+
+    return {
+        'id': str(raw_course.get('id') or f'course-{index + 1}').strip() or f'course-{index + 1}',
+        'title': str(raw_course.get('title') or '').strip() or f'Course {index + 1}',
+        'tag': str(raw_course.get('tag') or '').strip() or 'Preparedness Training',
+        'difficulty': difficulty,
+        'duration': str(raw_course.get('duration') or '').strip() or '30 min',
+        'description': str(raw_course.get('description') or '').strip(),
+        'audience': str(raw_course.get('audience') or '').strip(),
+        'objectives': _sanitize_text_list(raw_course.get('objectives'), ''),
+        'prerequisites': _sanitize_text_list(raw_course.get('prerequisites'), ''),
+        'accent': str(raw_course.get('accent') or '').strip() or '#0b2a57',
+        'heroImageUrl': str(raw_course.get('heroImageUrl') or '').strip(),
+        'heroImageName': str(raw_course.get('heroImageName') or '').strip(),
+        'lessonOutline': lessons,
+        'learningMaterials': _sanitize_learning_materials(raw_course.get('learningMaterials')),
+    }
+
+
+def _sanitize_simulation_courses(raw_courses: object) -> list[dict]:
+    if not isinstance(raw_courses, list):
+        raise ValidationError('courses must be an array.')
+
+    sanitized_courses: list[dict] = []
+    seen_ids: set[str] = set()
+
+    for index, raw_course in enumerate(raw_courses):
+        course = _sanitize_simulation_course(raw_course, index)
+        if course['id'] in seen_ids:
+            raise ValidationError(f"Duplicate course id detected: {course['id']}")
+        seen_ids.add(course['id'])
+        sanitized_courses.append(course)
+
+    return sanitized_courses
+
+
+def _extract_text_from_pdf(uploaded_pdf) -> str:
+    if PdfReader is None:
+        raise ValidationError('PDF parser dependency is not installed. Please install pypdf first.')
+
+    try:
+        uploaded_pdf.seek(0)
+        reader = PdfReader(uploaded_pdf)
+    except Exception as error:
+        raise ValidationError(f'Unable to read PDF file: {error}')
+
+    page_texts: list[str] = []
+    for page in reader.pages:
+        try:
+            page_texts.append(page.extract_text() or '')
+        except Exception:
+            page_texts.append('')
+
+    extracted = '\n'.join(page_texts).strip()
+    if not extracted:
+        raise ValidationError('No readable text found in PDF. Use a text-based PDF or OCR-scanned content.')
+
+    return extracted
+
+
+def _parse_questions_from_pdf_text(text: str) -> tuple[list[dict], float, str]:
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    questions: list[dict] = []
+    current: dict | None = None
+
+    question_pattern = re.compile(r'^(?:(?:question|q)\s*)?(\d{1,3})[\).:\-\s]+(.+)$', re.IGNORECASE)
+    choice_pattern = re.compile(r'^(?:[\(\[]?([A-Ha-h]|\d{1,2})[\)\].:\-\s]+|[-•])\s*(.+)$')
+    answer_pattern = re.compile(r'^(?:answer|correct\s*answer|ans)\s*[:\-]\s*([A-Ha-h]|\d{1,2})\b', re.IGNORECASE)
+    explanation_pattern = re.compile(r'^(?:explanation|rationale|reason)\s*[:\-]\s*(.+)$', re.IGNORECASE)
+
+    def flush_current() -> None:
+        nonlocal current
+        if not current:
+            return
+
+        prompt = str(current.get('prompt') or '').strip()
+        options = [str(option).strip() for option in current.get('options', []) if str(option).strip()]
+        correct_option_index = current.get('correctOptionIndex')
+
+        if prompt and len(options) >= 2:
+            if not isinstance(correct_option_index, int) or correct_option_index < 0 or correct_option_index >= len(options):
+                correct_option_index = 0
+
+            questions.append({
+                'prompt': prompt,
+                'options': options,
+                'correctOptionIndex': correct_option_index,
+                'explanation': str(current.get('explanation') or '').strip(),
+            })
+
+        current = None
+
+    for line in lines:
+        question_match = question_pattern.match(line)
+        if question_match:
+            flush_current()
+            current = {
+                'prompt': question_match.group(2).strip(),
+                'options': [],
+                'correctOptionIndex': None,
+                'explanation': '',
+            }
+            continue
+
+        if current is None:
+            continue
+
+        choice_match = choice_pattern.match(line)
+        if choice_match:
+            token = choice_match.group(1)
+            option_text = choice_match.group(2).strip()
+            if option_text:
+                current['options'].append(option_text)
+                if current.get('correctOptionIndex') is None and token and token.isdigit() and len(current['options']) == 1:
+                    current['correctOptionIndex'] = None
+            continue
+
+        answer_match = answer_pattern.match(line)
+        if answer_match:
+            token = answer_match.group(1).strip()
+            if token.isdigit():
+                current['correctOptionIndex'] = max(0, int(token) - 1)
+            else:
+                current['correctOptionIndex'] = max(0, ord(token.upper()) - ord('A'))
+            continue
+
+        explanation_match = explanation_pattern.match(line)
+        if explanation_match:
+            current['explanation'] = explanation_match.group(1).strip()
+            continue
+
+        # Keep multiline question statements intact until choices start.
+        if isinstance(current.get('options'), list) and len(current['options']) == 0:
+            current['prompt'] = f"{current['prompt']} {line}".strip()
+            continue
+
+        # Allow wrapped option text lines after a choice has started.
+        if isinstance(current.get('options'), list) and len(current['options']) > 0:
+            current['options'][-1] = f"{current['options'][-1]} {line}".strip()
+
+    flush_current()
+
+    if len(questions) == 0:
+        return [], 0.0, 'No valid multiple-choice questions were detected. Use a text-based PDF with question numbers like 1., Question 1, or Q1, plus choices like A., B., C., D..'
+
+    with_answer_count = sum(1 for question in questions if question['correctOptionIndex'] > -1)
+    confidence = (with_answer_count / len(questions)) * 100
+    notes = (
+        'Questions parsed successfully.'
+        if confidence >= 60
+        else 'Questions parsed but several answers were unclear. Review before publishing.'
+    )
+    return questions, round(confidence, 2), notes
+
+
+def _sanitize_quiz_questions(raw_questions: object) -> list[dict]:
+    if not isinstance(raw_questions, list):
+        raise ValidationError('questions must be an array.')
+
+    sanitized: list[dict] = []
+    for index, raw_question in enumerate(raw_questions):
+        if not isinstance(raw_question, dict):
+            continue
+
+        prompt = str(raw_question.get('prompt') or '').strip()
+        raw_options = raw_question.get('options')
+        if not isinstance(raw_options, list):
+            raw_options = []
+
+        options = [str(option).strip() for option in raw_options if str(option).strip()]
+        if not prompt or len(options) < 2:
+            continue
+
+        try:
+            correct_option_index = int(raw_question.get('correctOptionIndex', 0))
+        except (TypeError, ValueError):
+            correct_option_index = 0
+
+        correct_option_index = max(0, min(correct_option_index, len(options) - 1))
+
+        sanitized.append({
+            'prompt': prompt,
+            'options': options,
+            'correctOptionIndex': correct_option_index,
+            'explanation': str(raw_question.get('explanation') or '').strip(),
+            'order': index,
+        })
+
+    if len(sanitized) == 0:
+        raise ValidationError('At least one valid question with 2 or more options is required.')
+
+    return sanitized
+
+
+def _replace_quiz_questions(quiz: SimulationModuleQuiz, sanitized_questions: list[dict]) -> None:
+    with transaction.atomic():
+        quiz.questions.all().delete()
+
+        for question_data in sanitized_questions:
+            question = SimulationQuizQuestion.objects.create(
+                quiz=quiz,
+                order=question_data['order'],
+                prompt=question_data['prompt'],
+                explanation=question_data['explanation'],
+            )
+
+            for option_index, option_text in enumerate(question_data['options']):
+                SimulationQuizChoice.objects.create(
+                    question=question,
+                    order=option_index,
+                    text=option_text,
+                    is_correct=option_index == question_data['correctOptionIndex'],
+                )
+
+
+def _serialize_quiz_for_admin(quiz: SimulationModuleQuiz) -> dict:
+    return {
+        'id': quiz.id,
+        'courseId': quiz.course_id,
+        'lessonId': quiz.lesson_id,
+        'lessonTitle': quiz.lesson_title,
+        'title': quiz.title,
+        'status': quiz.status,
+        'version': quiz.version,
+        'passingScore': quiz.passing_score,
+        'sourcePdfName': quiz.source_pdf_name,
+        'parseConfidence': float(quiz.parse_confidence),
+        'parseNotes': quiz.parse_notes,
+        'updatedAt': timezone.localtime(quiz.updated_at).isoformat() if quiz.updated_at else None,
+        'questions': [
+            {
+                'id': question.id,
+                'order': question.order,
+                'prompt': question.prompt,
+                'explanation': question.explanation,
+                'options': [choice.text for choice in question.choices.all().order_by('order', 'id')],
+                'correctOptionIndex': next(
+                    (idx for idx, choice in enumerate(question.choices.all().order_by('order', 'id')) if choice.is_correct),
+                    0,
+                ),
+            }
+            for question in quiz.questions.all().order_by('order', 'id')
+        ],
+    }
+
+
+def _serialize_quiz_for_learner(quiz: SimulationModuleQuiz) -> dict:
+    return {
+        'id': quiz.id,
+        'courseId': quiz.course_id,
+        'lessonId': quiz.lesson_id,
+        'lessonTitle': quiz.lesson_title,
+        'title': quiz.title,
+        'version': quiz.version,
+        'passingScore': quiz.passing_score,
+        'questions': [
+            {
+                'id': question.id,
+                'order': question.order,
+                'prompt': question.prompt,
+                'options': [
+                    {
+                        'id': choice.id,
+                        'order': choice.order,
+                        'text': choice.text,
+                    }
+                    for choice in question.choices.all().order_by('order', 'id')
+                ],
+            }
+            for question in quiz.questions.all().order_by('order', 'id')
+        ],
+    }
+
+
 @api_view(['GET', 'PUT'])
 @permission_classes([IsAuthenticated])
 def simulation_progress(request):
@@ -217,6 +678,299 @@ def simulation_progress(request):
 @permission_classes([HasDashboardAdminAccess])
 def simulation_admin_metrics(request):
     return Response(_serialize_simulation_admin_metrics(), status=status.HTTP_200_OK)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def simulation_courses(request):
+    catalog = SimulationCourseCatalog.objects.filter(key='default').first()
+    courses = catalog.courses if catalog and isinstance(catalog.courses, list) else []
+
+    try:
+        sanitized_courses = _sanitize_simulation_courses(courses)
+    except ValidationError:
+        sanitized_courses = []
+
+    return Response({'courses': sanitized_courses}, status=status.HTTP_200_OK)
+
+
+@api_view(['PUT'])
+@permission_classes([HasDashboardAdminAccess])
+def simulation_admin_sync_courses(request):
+    try:
+        sanitized_courses = _sanitize_simulation_courses(request.data.get('courses'))
+    except ValidationError as error:
+        return Response({'error': str(error)}, status=status.HTTP_400_BAD_REQUEST)
+
+    catalog, _ = SimulationCourseCatalog.objects.get_or_create(key='default')
+    catalog.courses = sanitized_courses
+    catalog.updated_by = request.user
+    catalog.save(update_fields=['courses', 'updated_by', 'updated_at'])
+
+    return Response({'courses': sanitized_courses}, status=status.HTTP_200_OK)
+
+
+@api_view(['GET'])
+@permission_classes([HasDashboardAdminAccess])
+def simulation_admin_quiz_detail(request):
+    course_id = (request.query_params.get('course_id') or '').strip()
+    lesson_id = (request.query_params.get('lesson_id') or '').strip()
+
+    if not course_id or not lesson_id:
+        return Response({'error': 'course_id and lesson_id are required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    quiz = (
+        SimulationModuleQuiz.objects.filter(course_id=course_id, lesson_id=lesson_id)
+        .prefetch_related('questions__choices')
+        .order_by('-version', '-updated_at')
+        .first()
+    )
+
+    return Response({'quiz': _serialize_quiz_for_admin(quiz) if quiz else None}, status=status.HTTP_200_OK)
+
+
+@api_view(['POST'])
+@permission_classes([HasDashboardAdminAccess])
+def simulation_admin_upload_quiz_pdf(request):
+    course_id = (request.data.get('courseId') or '').strip()
+    lesson_id = (request.data.get('lessonId') or '').strip()
+    lesson_title = (request.data.get('lessonTitle') or '').strip()
+    title = (request.data.get('title') or '').strip() or 'Module Quiz'
+    passing_score = _coerce_passing_score(request.data.get('passingScore'), default=80)
+    uploaded_pdf = request.FILES.get('pdf')
+
+    if not course_id or not lesson_id:
+        return Response({'error': 'courseId and lessonId are required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if not uploaded_pdf:
+        return Response({'error': 'A PDF file is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if not str(uploaded_pdf.name).lower().endswith('.pdf'):
+        return Response({'error': 'Only PDF files are supported.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        text = _extract_text_from_pdf(uploaded_pdf)
+        parsed_questions, parse_confidence, parse_notes = _parse_questions_from_pdf_text(text)
+        sanitized_questions = _sanitize_quiz_questions(parsed_questions)
+    except ValidationError as error:
+        return Response({'error': str(error)}, status=status.HTTP_400_BAD_REQUEST)
+
+    current_max_version = (
+        SimulationModuleQuiz.objects.filter(course_id=course_id, lesson_id=lesson_id).aggregate(max_version=Max('version')).get('max_version')
+        or 0
+    )
+
+    quiz = SimulationModuleQuiz.objects.create(
+        course_id=course_id,
+        lesson_id=lesson_id,
+        lesson_title=lesson_title,
+        title=title,
+        passing_score=passing_score,
+        version=current_max_version + 1,
+        status=SimulationModuleQuiz.STATUS_DRAFT,
+        source_pdf=uploaded_pdf,
+        source_pdf_name=uploaded_pdf.name,
+        parse_confidence=parse_confidence,
+        parse_notes=parse_notes,
+        created_by=request.user,
+    )
+
+    _replace_quiz_questions(quiz, sanitized_questions)
+    quiz.refresh_from_db()
+    return Response({'quiz': _serialize_quiz_for_admin(quiz)}, status=status.HTTP_201_CREATED)
+
+
+@api_view(['PUT'])
+@permission_classes([HasDashboardAdminAccess])
+def simulation_admin_quiz_update(request, quiz_id: int):
+    quiz = (
+        SimulationModuleQuiz.objects.filter(id=quiz_id)
+        .prefetch_related('questions__choices')
+        .first()
+    )
+    if not quiz:
+        return Response({'error': 'Quiz not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+    if quiz.status == SimulationModuleQuiz.STATUS_PUBLISHED:
+        return Response({'error': 'Published quizzes cannot be edited. Create a new draft version.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        sanitized_questions = _sanitize_quiz_questions(request.data.get('questions'))
+    except ValidationError as error:
+        return Response({'error': str(error)}, status=status.HTTP_400_BAD_REQUEST)
+
+    quiz.title = (request.data.get('title') or quiz.title).strip() or quiz.title
+    quiz.lesson_title = (request.data.get('lessonTitle') or quiz.lesson_title).strip()
+    quiz.passing_score = _coerce_passing_score(request.data.get('passingScore'), default=quiz.passing_score)
+    quiz.status = SimulationModuleQuiz.STATUS_DRAFT
+    quiz.save(update_fields=['title', 'lesson_title', 'passing_score', 'status', 'updated_at'])
+
+    _replace_quiz_questions(quiz, sanitized_questions)
+    quiz.refresh_from_db()
+    return Response({'quiz': _serialize_quiz_for_admin(quiz)}, status=status.HTTP_200_OK)
+
+
+@api_view(['POST'])
+@permission_classes([HasDashboardAdminAccess])
+def simulation_admin_quiz_publish(request, quiz_id: int):
+    quiz = SimulationModuleQuiz.objects.filter(id=quiz_id).prefetch_related('questions__choices').first()
+    if not quiz:
+        return Response({'error': 'Quiz not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+    questions = list(quiz.questions.all().order_by('order', 'id'))
+    if len(questions) == 0:
+        return Response({'error': 'Add at least one question before publishing.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    for question in questions:
+        choices = list(question.choices.all().order_by('order', 'id'))
+        if len(choices) < 2:
+            return Response({'error': 'Every question needs at least 2 options before publishing.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not any(choice.is_correct for choice in choices):
+            return Response({'error': 'Every question must have one correct answer before publishing.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    with transaction.atomic():
+        SimulationModuleQuiz.objects.filter(
+            course_id=quiz.course_id,
+            lesson_id=quiz.lesson_id,
+            status=SimulationModuleQuiz.STATUS_PUBLISHED,
+        ).exclude(id=quiz.id).update(status=SimulationModuleQuiz.STATUS_ARCHIVED)
+
+        quiz.status = SimulationModuleQuiz.STATUS_PUBLISHED
+        quiz.save(update_fields=['status', 'updated_at'])
+
+    quiz.refresh_from_db()
+    return Response({'quiz': _serialize_quiz_for_admin(quiz)}, status=status.HTTP_200_OK)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def simulation_module_quiz(request):
+    course_id = (request.query_params.get('course_id') or '').strip()
+    lesson_id = (request.query_params.get('lesson_id') or '').strip()
+
+    if not course_id or not lesson_id:
+        return Response({'error': 'course_id and lesson_id are required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    quiz = (
+        SimulationModuleQuiz.objects.filter(
+            course_id=course_id,
+            lesson_id=lesson_id,
+            status=SimulationModuleQuiz.STATUS_PUBLISHED,
+        )
+        .prefetch_related('questions__choices')
+        .order_by('-version', '-updated_at')
+        .first()
+    )
+
+    if not quiz:
+        return Response({'quiz': None}, status=status.HTTP_200_OK)
+
+    latest_attempt = SimulationQuizAttempt.objects.filter(user=request.user, quiz=quiz).order_by('-attempted_at').first()
+
+    return Response(
+        {
+            'quiz': _serialize_quiz_for_learner(quiz),
+            'latestAttempt': {
+                'score': latest_attempt.score,
+                'totalQuestions': latest_attempt.total_questions,
+                'passed': latest_attempt.passed,
+                'unanswered': latest_attempt.unanswered,
+                'attemptedAt': timezone.localtime(latest_attempt.attempted_at).isoformat() if latest_attempt else None,
+            }
+            if latest_attempt
+            else None,
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def simulation_submit_quiz_attempt(request, quiz_id: int):
+    quiz = (
+        SimulationModuleQuiz.objects.filter(id=quiz_id, status=SimulationModuleQuiz.STATUS_PUBLISHED)
+        .prefetch_related('questions__choices')
+        .first()
+    )
+    if not quiz:
+        return Response({'error': 'Published quiz not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+    raw_answers = request.data.get('answers')
+    if not isinstance(raw_answers, dict):
+        return Response({'error': 'answers must be an object keyed by question id.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    questions = list(quiz.questions.all().order_by('order', 'id'))
+    total_questions = len(questions)
+    if total_questions == 0:
+        return Response({'error': 'This quiz has no questions.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    correct_count = 0
+    unanswered = 0
+    details = []
+    normalized_answers: dict[str, int] = {}
+
+    for question in questions:
+        question_key = str(question.id)
+        selected_choice_raw = raw_answers.get(question_key)
+        selected_choice_id = None
+        if selected_choice_raw is not None:
+            try:
+                selected_choice_id = int(selected_choice_raw)
+            except (TypeError, ValueError):
+                selected_choice_id = None
+
+        choices = list(question.choices.all().order_by('order', 'id'))
+        correct_choice = next((choice for choice in choices if choice.is_correct), None)
+
+        if selected_choice_id is None:
+            unanswered += 1
+        elif correct_choice and selected_choice_id == correct_choice.id:
+            correct_count += 1
+
+        if selected_choice_id is not None:
+            normalized_answers[question_key] = selected_choice_id
+
+        details.append(
+            {
+                'questionId': question.id,
+                'selectedChoiceId': selected_choice_id,
+                'correctChoiceId': correct_choice.id if correct_choice else None,
+                'isCorrect': bool(correct_choice and selected_choice_id == correct_choice.id),
+                'explanation': question.explanation,
+            }
+        )
+
+    score = round((correct_count / total_questions) * 100)
+    passed = unanswered == 0 and score >= quiz.passing_score
+
+    SimulationQuizAttempt.objects.create(
+        user=request.user,
+        quiz=quiz,
+        answers=normalized_answers,
+        score=score,
+        total_questions=total_questions,
+        passed=passed,
+        unanswered=unanswered,
+    )
+
+    if passed:
+        progress, _ = SimulationProgress.objects.get_or_create(user=request.user)
+        completed_map = progress.completed_lesson_videos if isinstance(progress.completed_lesson_videos, dict) else {}
+        completed_map[f'{quiz.course_id}:{quiz.lesson_id}'] = True
+        progress.completed_lesson_videos = completed_map
+        progress.save(update_fields=['completed_lesson_videos', 'updated_at'])
+
+    return Response(
+        {
+            'score': score,
+            'totalQuestions': total_questions,
+            'passed': passed,
+            'unanswered': unanswered,
+            'requiredScore': quiz.passing_score,
+            'details': details,
+        },
+        status=status.HTTP_200_OK,
+    )
 
 
 @api_view(['GET'])
@@ -292,7 +1046,44 @@ def create_dashboard_account(request):
 @permission_classes([HasDashboardAdminAccess])
 def list_dashboard_accounts(request):
     users = User.objects.order_by('-date_joined', '-id')
-    return Response({'users': [_serialize_dashboard_user(user) for user in users]})
+    return Response({'users': [_serialize_dashboard_user(user, request) for user in users]})
+
+
+@api_view(['PATCH'])
+@permission_classes([HasDashboardAdminAccess])
+def dashboard_account_residency_verification(request, user_id: int):
+    user = User.objects.filter(id=user_id).first()
+    if not user:
+        return Response({'error': 'User account not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+    residency = ResidencyVerification.objects.filter(user=user).first()
+    if not residency:
+        return Response({'error': 'This user has no residency verification request.'}, status=status.HTTP_404_NOT_FOUND)
+
+    decision = (request.data.get('status') or '').strip().lower()
+    if decision not in {ResidencyVerification.STATUS_VERIFIED, ResidencyVerification.STATUS_REJECTED}:
+        return Response({'error': 'status must be verified or rejected.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    rejection_reason = (request.data.get('rejectionReason') or '').strip()
+    if decision == ResidencyVerification.STATUS_REJECTED and not rejection_reason:
+        return Response({'error': 'Provide a rejection reason before rejecting residency verification.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    residency.status = decision
+    residency.rejection_reason = rejection_reason if decision == ResidencyVerification.STATUS_REJECTED else ''
+    residency.reviewed_by = request.user
+    residency.reviewed_at = timezone.now()
+    residency.save(update_fields=['status', 'rejection_reason', 'reviewed_by', 'reviewed_at', 'updated_at'])
+
+    user.is_active = decision == ResidencyVerification.STATUS_VERIFIED
+    user.save(update_fields=['is_active'])
+
+    return Response(
+        {
+            'message': f'Residency verification marked as {decision}.',
+            'user': _serialize_dashboard_user(user, request),
+        },
+        status=status.HTTP_200_OK,
+    )
 
 
 @api_view(['PUT', 'PATCH', 'DELETE'])

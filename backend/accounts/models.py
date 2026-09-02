@@ -65,6 +65,36 @@ class AccountProfile(models.Model):
 		return cls.ROLE_CITIZEN
 
 
+class ResidencyVerification(models.Model):
+	STATUS_PENDING = 'pending'
+	STATUS_VERIFIED = 'verified'
+	STATUS_REJECTED = 'rejected'
+	STATUS_CHOICES = [
+		(STATUS_PENDING, 'Pending review'),
+		(STATUS_VERIFIED, 'Verified resident'),
+		(STATUS_REJECTED, 'Rejected'),
+	]
+
+	user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='residency_verification', blank=True, null=True)
+	email = models.EmailField(unique=True, db_index=True)
+	barangay_name = models.CharField(max_length=200)
+	residential_address = models.TextField()
+	proof_document = models.FileField(upload_to='residency_verification_documents/')
+	proof_document_name = models.CharField(max_length=255)
+	status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=STATUS_PENDING, db_index=True)
+	rejection_reason = models.TextField(blank=True)
+	reviewed_by = models.ForeignKey(User, on_delete=models.SET_NULL, blank=True, null=True, related_name='reviewed_residency_verifications')
+	reviewed_at = models.DateTimeField(blank=True, null=True)
+	created_at = models.DateTimeField(auto_now_add=True)
+	updated_at = models.DateTimeField(auto_now=True)
+
+	class Meta:
+		ordering = ['status', '-updated_at', '-id']
+
+	def __str__(self):
+		return f"{self.email} - {self.status}"
+
+
 def ensure_account_profile(user: User, default_role: str | None = None) -> AccountProfile:
 	resolved_role = default_role or AccountProfile.derive_role_from_user(user)
 	try:
@@ -99,6 +129,8 @@ def get_user_role(user: User) -> str:
 		return AccountProfile.derive_role_from_user(user)
 
 	if resolved_role in dict(AccountProfile.ROLE_CHOICES):
+		if resolved_role == AccountProfile.ROLE_CITIZEN and user.is_staff:
+			return AccountProfile.derive_role_from_user(user)
 		return resolved_role
 
 	return AccountProfile.derive_role_from_user(user)

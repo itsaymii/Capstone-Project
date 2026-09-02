@@ -8,7 +8,7 @@ from rest_framework.response import Response
 from rest_framework import status
 
 from incidents.models import Incident
-from .aggregators import get_barangay_profile, get_hazard_citywide_stats
+from .aggregators import get_barangay_profile, get_hazard_citywide_stats, get_incident_trend_comparison
 from .scoring import calculate_risk_score
 from .prediction import predict_top_hazard
 from .insights import generate_hazard_insight
@@ -43,6 +43,64 @@ def normalize_datetime_range(start_date, end_date):
         end_date = timezone.make_aware(end_date)
 
     return start_date, end_date
+
+
+def resolve_year_month_range(year, month=None):
+    start = datetime(year, month or 1, 1)
+    if month:
+        if month == 12:
+            end = datetime(year + 1, 1, 1)
+        else:
+            end = datetime(year, month + 1, 1)
+    else:
+        end = datetime(year + 1, 1, 1)
+
+    if timezone.is_naive(start):
+        start = timezone.make_aware(start)
+    if timezone.is_naive(end):
+        end = timezone.make_aware(end)
+
+    # Existing aggregations use an inclusive end date.
+    inclusive_end = end - timedelta(microseconds=1)
+    return start, inclusive_end
+
+
+def parse_year_month_params(request):
+    year_str = request.query_params.get('year')
+    month_str = request.query_params.get('month')
+    compare_year_str = request.query_params.get('compare_year')
+    compare_month_str = request.query_params.get('compare_month')
+
+    if month_str and not year_str:
+        return None, Response({'error': 'month requires year.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if compare_month_str and not compare_year_str:
+        return None, Response({'error': 'compare_month requires compare_year.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        year = int(year_str) if year_str else None
+        month = int(month_str) if month_str else None
+        compare_year = int(compare_year_str) if compare_year_str else None
+        compare_month = int(compare_month_str) if compare_month_str else None
+    except ValueError:
+        return None, Response(
+            {'error': 'year, month, compare_year, and compare_month must be integers.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if month is not None and (month < 1 or month > 12):
+        return None, Response({'error': 'month must be between 1 and 12.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if compare_month is not None and (compare_month < 1 or compare_month > 12):
+        return None, Response({'error': 'compare_month must be between 1 and 12.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    return {
+        'year': year,
+        'month': month,
+        'compare_year': compare_year,
+        'compare_month': compare_month,
+        'has_year_filter': bool(year_str),
+    }, None
 
 
 def build_incident_trend(barangay_id, days=90, buckets=9, start_date=None, end_date=None):
@@ -111,6 +169,21 @@ def barangay_risk_view(request):
 
     start_date_str = request.query_params.get('start_date')
     end_date_str = request.query_params.get('end_date')
+    year_params, year_param_error = parse_year_month_params(request)
+    if year_param_error:
+        return year_param_error
+
+    year = year_params['year']
+    month = year_params['month']
+    compare_year = year_params['compare_year']
+    compare_month = year_params['compare_month']
+
+    if (start_date_str or end_date_str) and year_params['has_year_filter']:
+        return Response(
+            {'error': 'Use either start_date/end_date or year/month filters, not both.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
     start_date = parse_date(start_date_str) if start_date_str else None
     end_date = parse_date(end_date_str) if end_date_str else None
 
@@ -128,6 +201,8 @@ def barangay_risk_view(request):
 
     if start_date and end_date:
         start_date, end_date = normalize_datetime_range(start_date, end_date)
+    elif year:
+        start_date, end_date = resolve_year_month_range(year, month)
 
     # 1. Build barangay profile for risk scoring and hazard breakdown
     profile = get_barangay_profile(barangay_id, days=days, start_date=start_date, end_date=end_date)
@@ -140,6 +215,13 @@ def barangay_risk_view(request):
 
     score_history = build_score_history(barangay_id, window_days=30, points=6)
     incident_trend = build_incident_trend(barangay_id, days=days, start_date=start_date, end_date=end_date, buckets=9)
+    incident_trend_comparison = get_incident_trend_comparison(
+        barangay_id=barangay_id,
+        year=year,
+        month=month,
+        compare_year=compare_year,
+        compare_month=compare_month,
+    )
     hazard_share = build_hazard_share(profile)
 
     # 4. Return combined tactical intelligence
@@ -151,6 +233,8 @@ def barangay_risk_view(request):
         'barangay_profile': profile,
         'score_history': score_history,
         'incident_trend': incident_trend,
+        'daily_incident_reports': incident_trend_comparison['current_period']['daily_reports'],
+        'incident_trend_comparison': incident_trend_comparison,
         'hazard_share': hazard_share,
     })
 

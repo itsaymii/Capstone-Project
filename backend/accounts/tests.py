@@ -2,11 +2,12 @@ from datetime import timedelta
 
 from django.contrib.auth.models import User
 from django.contrib.auth.hashers import make_password
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 from django.utils import timezone
 from django.urls import reverse
 
-from .models import AccountProfile, OneTimePassword, get_user_role
+from .models import AccountProfile, OneTimePassword, ResidencyVerification, get_user_role
 
 
 class AccountLoginFlowTests(TestCase):
@@ -76,6 +77,13 @@ class AccountLoginFlowTests(TestCase):
 		self.assertEqual(user.account_profile.role, AccountProfile.ROLE_CITIZEN)
 
 	def test_verify_register_otp_persists_phone_number(self):
+		verification = ResidencyVerification.objects.create(
+			email='citizen@example.com',
+			barangay_name='Barangay 1',
+			residential_address='123 Sample Street',
+			proof_document=SimpleUploadedFile('resident-id.jpg', b'proof-image', content_type='image/jpeg'),
+			proof_document_name='resident-id.jpg',
+		)
 		otp_record = OneTimePassword.objects.create(
 			email='citizen@example.com',
 			purpose=OneTimePassword.PURPOSE_REGISTER,
@@ -85,6 +93,7 @@ class AccountLoginFlowTests(TestCase):
 				'username': 'citizen-user',
 				'passwordHash': make_password('secret123'),
 				'phoneNumber': '09171234567',
+				'residencyVerificationId': verification.id,
 			},
 			expires_at=timezone.now() + timedelta(minutes=3),
 		)
@@ -98,6 +107,48 @@ class AccountLoginFlowTests(TestCase):
 		user = User.objects.filter(email__iexact='citizen@example.com').first()
 		self.assertIsNotNone(user)
 		self.assertEqual(user.account_profile.phone_number, '+639171234567')
+		self.assertEqual(user.residency_verification.status, ResidencyVerification.STATUS_PENDING)
+		self.assertEqual(self.client.session.get_expiry_age(), 24 * 60 * 60)
+
+	def test_pending_resident_cannot_start_login(self):
+		user = User.objects.create_user(username='pending-user', email='pending@example.com', password='secret123')
+		ResidencyVerification.objects.create(
+			user=user,
+			email=user.email,
+			barangay_name='Barangay 1',
+			residential_address='123 Sample Street',
+			proof_document=SimpleUploadedFile('resident-id.jpg', b'proof-image', content_type='image/jpeg'),
+			proof_document_name='resident-id.jpg',
+			status=ResidencyVerification.STATUS_PENDING,
+		)
+
+		response = self.client.post(
+			reverse('login-user'),
+			data={'email': 'pending@example.com', 'password': 'secret123'},
+		)
+
+		self.assertEqual(response.status_code, 403)
+		self.assertIn('pending admin review', response.json()['error'])
+
+	def test_rejected_resident_cannot_start_login(self):
+		user = User.objects.create_user(username='rejected-user', email='rejected@example.com', password='secret123')
+		ResidencyVerification.objects.create(
+			user=user,
+			email=user.email,
+			barangay_name='Barangay 1',
+			residential_address='123 Sample Street',
+			proof_document=SimpleUploadedFile('resident-id.jpg', b'proof-image', content_type='image/jpeg'),
+			proof_document_name='resident-id.jpg',
+			status=ResidencyVerification.STATUS_REJECTED,
+		)
+
+		response = self.client.post(
+			reverse('login-user'),
+			data={'email': 'rejected@example.com', 'password': 'secret123'},
+		)
+
+		self.assertEqual(response.status_code, 403)
+		self.assertIn('residency verification was rejected', response.json()['error'])
 
 	def test_current_user_profile_get_returns_authenticated_user(self):
 		user = User.objects.create_user(

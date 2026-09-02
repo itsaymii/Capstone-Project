@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { ChangeEvent } from 'react'
 import { getSimulationAdminMetrics } from '../services/api'
+import { SimulationQuizManager } from './SimulationQuizManager'
 import {
   SIMULATION_COURSES_CHANGED_EVENT,
   createEmptyExamQuestion,
@@ -8,8 +9,9 @@ import {
   createEmptyLesson,
   createEmptySimulationCourse,
   getSimulationCourses,
+  loadSimulationCoursesFromServer,
   readFileAsDataUrl,
-  saveSimulationCourses,
+  saveSimulationCoursesToServer,
   type LearningMaterialType,
   type SimulationCourse,
   type SimulationCourseDifficulty,
@@ -59,6 +61,8 @@ export function AdminSimulationManager({ embedded = false }: AdminSimulationMana
   const [editingCourse, setEditingCourse] = useState<EditableCourse>(null)
   const [draftCourse, setDraftCourse] = useState<EditableCourse>(null)
   const [isCreatingCourse, setIsCreatingCourse] = useState(false)
+  const [isSyncingCourses, setIsSyncingCourses] = useState(false)
+  const [isSavingCourse, setIsSavingCourse] = useState(false)
   const [feedbackMessage, setFeedbackMessage] = useState('')
   const [feedbackTone, setFeedbackTone] = useState<FeedbackTone>('success')
 
@@ -102,12 +106,38 @@ export function AdminSimulationManager({ embedded = false }: AdminSimulationMana
   }, [])
 
   useEffect(() => {
+    let isActive = true
+
+    async function syncFromServer(): Promise<void> {
+      setIsSyncingCourses(true)
+      try {
+        const syncedCourses = await loadSimulationCoursesFromServer()
+        if (!isActive) {
+          return
+        }
+        setCourses(syncedCourses)
+      } catch {
+        if (isActive) {
+          setCourses(getSimulationCourses())
+        }
+      } finally {
+        if (isActive) {
+          setIsSyncingCourses(false)
+        }
+      }
+    }
+
+    void syncFromServer()
+
     function syncCourses(): void {
       setCourses(getSimulationCourses())
     }
 
     window.addEventListener(SIMULATION_COURSES_CHANGED_EVENT, syncCourses)
-    return () => window.removeEventListener(SIMULATION_COURSES_CHANGED_EVENT, syncCourses)
+    return () => {
+      isActive = false
+      window.removeEventListener(SIMULATION_COURSES_CHANGED_EVENT, syncCourses)
+    }
   }, [])
 
   const totalModules = useMemo(() => courses.reduce((total, course) => total + course.lessonOutline.length, 0), [courses])
@@ -577,22 +607,132 @@ export function AdminSimulationManager({ embedded = false }: AdminSimulationMana
     }))
   }
 
-  function deleteCourse(courseId: string): void {
+  function applyOrganizedCourseTemplate(): void {
+    updateDraftCourse((current) => ({
+      ...current,
+      tag: current.tag || 'Preparedness Training',
+      audience: current.audience || 'Citizens, volunteers, and local community responders.',
+      objectives: current.objectives.filter(Boolean).length > 0
+        ? current.objectives
+        : [
+            'Understand the core emergency response workflow for this hazard.',
+            'Practice correct first actions during the first critical minutes.',
+            'Complete module quiz assessment with passing score.',
+          ],
+      prerequisites: current.prerequisites.filter(Boolean).length > 0
+        ? current.prerequisites
+        : [
+            'Stable internet connection and a device for video playback.',
+            'Commitment to complete modules in order.',
+          ],
+      lessonOutline: current.lessonOutline.length >= 3
+        ? current.lessonOutline
+        : [
+            {
+              ...createEmptyLesson(),
+              lessonType: 'video',
+              title: 'Module 1 - Orientation and Preparation',
+              summary: 'Introduce context, hazards, and preparedness checklist before incidents occur.',
+              points: ['Know warning signs', 'Prepare essentials', 'Review communication plan'],
+            },
+            {
+              ...createEmptyLesson(),
+              lessonType: 'lesson',
+              title: 'Module 2 - Response Procedure',
+              summary: 'Step-by-step process during and immediately after the incident.',
+              points: ['Immediate safety action', 'Evacuation decisions', 'Incident reporting'],
+              content: 'Document your standard operating procedure here.',
+            },
+            {
+              ...createEmptyLesson(),
+              lessonType: 'exam',
+              title: 'Module 3 - Competency Check',
+              summary: 'Assessment module to verify understanding before completion.',
+              examQuestions: [createEmptyExamQuestion()],
+              passingScore: 80,
+              points: ['Attempt all questions', 'Review explanations after submission'],
+            },
+          ],
+      learningMaterials: current.learningMaterials.length > 0
+        ? current.learningMaterials
+        : [
+            {
+              ...createEmptyLearningMaterial(),
+              title: 'Module Quick Reference',
+              type: 'Guide',
+              description: 'Summary handout covering key actions and reminders.',
+            },
+          ],
+    }))
+  }
+
+  function getReadinessIssues(course: SimulationCourse): string[] {
+    const issues: string[] = []
+
+    if (!course.title.trim()) issues.push('Course title is required.')
+    if (!course.description.trim()) issues.push('Course description is required.')
+    if (!course.audience.trim()) issues.push('Target audience is required.')
+    if (course.objectives.filter((item) => item.trim()).length === 0) issues.push('Add at least one learning objective.')
+    if (course.prerequisites.filter((item) => item.trim()).length === 0) issues.push('Add at least one prerequisite.')
+    if (course.lessonOutline.length === 0) issues.push('Add at least one module.')
+
+    course.lessonOutline.forEach((lesson, lessonIndex) => {
+      const moduleLabel = `Module ${lessonIndex + 1}`
+      if (!lesson.title.trim()) issues.push(`${moduleLabel}: title is required.`)
+      if (!lesson.summary.trim()) issues.push(`${moduleLabel}: summary is required.`)
+
+      if (lesson.lessonType === 'video' && !lesson.videoUrl.trim()) {
+        issues.push(`${moduleLabel}: add a video URL or upload a video file.`)
+      }
+
+      if (lesson.lessonType === 'lesson' && !lesson.content.trim()) {
+        issues.push(`${moduleLabel}: add lesson content.`)
+      }
+
+      if (lesson.lessonType === 'exam') {
+        if (lesson.examQuestions.length === 0) {
+          issues.push(`${moduleLabel}: add at least one exam question.`)
+        }
+        lesson.examQuestions.forEach((question, questionIndex) => {
+          if (!question.prompt.trim()) {
+            issues.push(`${moduleLabel}, Question ${questionIndex + 1}: prompt is required.`)
+          }
+          if (question.options.filter((option) => option.trim()).length < 2) {
+            issues.push(`${moduleLabel}, Question ${questionIndex + 1}: minimum two choices required.`)
+          }
+        })
+      }
+    })
+
+    const validMaterials = course.learningMaterials.filter((material) =>
+      material.title.trim() || material.url.trim() || material.fileName?.trim() || material.description.trim(),
+    )
+    if (validMaterials.length === 0) {
+      issues.push('Add at least one learning material.')
+    }
+
+    return issues
+  }
+
+  async function deleteCourse(courseId: string): Promise<void> {
     const nextCourses = courses.filter((course) => course.id !== courseId)
 
     try {
-      saveSimulationCourses(nextCourses)
-      setCourses(nextCourses)
+      setIsSavingCourse(true)
+      const syncedCourses = await saveSimulationCoursesToServer(nextCourses)
+      setCourses(syncedCourses)
       showFeedback('Course deleted successfully.', 'success')
       if (editingCourse?.id === courseId) {
         closeEditor()
       }
     } catch (error) {
       showFeedback(error instanceof Error ? error.message : 'Unable to delete the course right now.', 'error')
+    } finally {
+      setIsSavingCourse(false)
     }
   }
 
-  function saveCourse(): void {
+  async function saveCourse(): Promise<void> {
     if (!draftCourse) {
       return
     }
@@ -643,17 +783,26 @@ export function AdminSimulationManager({ embedded = false }: AdminSimulationMana
         .filter((material) => material.title || material.url || material.description || material.fileName),
     }
 
+    const readinessIssues = getReadinessIssues(sanitizedCourse)
+    if (readinessIssues.length > 0) {
+      showFeedback(`Please complete required course details before saving:\n- ${readinessIssues.slice(0, 5).join('\n- ')}`, 'error')
+      return
+    }
+
     const nextCourses = isCreatingCourse
       ? [sanitizedCourse, ...courses]
       : courses.map((course) => (course.id === sanitizedCourse.id ? sanitizedCourse : course))
 
     try {
-      saveSimulationCourses(nextCourses)
-      setCourses(nextCourses)
+      setIsSavingCourse(true)
+      const syncedCourses = await saveSimulationCoursesToServer(nextCourses)
+      setCourses(syncedCourses)
       showFeedback(isCreatingCourse ? 'Course created successfully.' : 'Course changes saved successfully.', 'success')
       closeEditor()
     } catch (error) {
       showFeedback(error instanceof Error ? error.message : 'Unable to save the course right now.', 'error')
+    } finally {
+      setIsSavingCourse(false)
     }
   }
 
@@ -671,10 +820,11 @@ export function AdminSimulationManager({ embedded = false }: AdminSimulationMana
             </div>
             <button
               className={primaryButtonClass}
+              disabled={isSavingCourse || isSyncingCourses}
               onClick={openCreateCourse}
               type="button"
             >
-              Add Course
+              {isSyncingCourses ? 'Syncing Courses...' : 'Add Course'}
             </button>
           </div>
 
@@ -694,7 +844,7 @@ export function AdminSimulationManager({ embedded = false }: AdminSimulationMana
           </div>
 
           <div className={infoBannerClass}>
-            Uploaded images, videos, and files are stored in this browser. For large videos, use a smaller file or an external video URL.
+            Course catalog now syncs to backend storage for consistency across devices. Uploaded images, videos, and files still use browser storage.
           </div>
 
           {feedbackMessage ? (
@@ -709,6 +859,8 @@ export function AdminSimulationManager({ embedded = false }: AdminSimulationMana
             </div>
           ) : null}
         </section>
+
+        <SimulationQuizManager embedded={embedded} />
 
         <section className="grid gap-5 lg:grid-cols-3">
           {coursesWithMetrics.map((course) => (
@@ -745,6 +897,7 @@ export function AdminSimulationManager({ embedded = false }: AdminSimulationMana
               <div className="mt-5 grid grid-cols-2 gap-2">
                 <button
                   className={primaryButtonClass}
+                  disabled={isSavingCourse || isSyncingCourses}
                   onClick={() => openEditor(course)}
                   type="button"
                 >
@@ -752,7 +905,8 @@ export function AdminSimulationManager({ embedded = false }: AdminSimulationMana
                 </button>
                 <button
                   className={dangerButtonClass}
-                  onClick={() => deleteCourse(course.id)}
+                  disabled={isSavingCourse || isSyncingCourses}
+                  onClick={() => void deleteCourse(course.id)}
                   type="button"
                 >
                   Delete
@@ -772,13 +926,36 @@ export function AdminSimulationManager({ embedded = false }: AdminSimulationMana
                   <p className={`text-xs font-bold uppercase tracking-[0.16em] ${mutedTextClass}`}>Course Editor</p>
                   <h3 className={`mt-1 text-2xl font-black ${headingTextClass}`}>{isCreatingCourse ? 'Create Simulation Course' : editingCourse.title}</h3>
                 </div>
-                <button
-                  className={tertiaryButtonClass}
-                  onClick={closeEditor}
-                  type="button"
-                >
-                  Close
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    className={tertiaryButtonClass}
+                    disabled={isSavingCourse}
+                    onClick={applyOrganizedCourseTemplate}
+                    type="button"
+                  >
+                    Generate Organized Skeleton
+                  </button>
+                  <button
+                    className={tertiaryButtonClass}
+                    onClick={closeEditor}
+                    type="button"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+
+              <div className={`${subPanelClass} mt-4 p-4`}>
+                <p className={`text-xs font-bold uppercase tracking-[0.16em] ${mutedTextClass}`}>Readiness Checklist</p>
+                {getReadinessIssues(draftCourse).length === 0 ? (
+                  <p className="mt-2 text-sm font-semibold text-emerald-700">All required course items are complete and ready to save.</p>
+                ) : (
+                  <div className="mt-2 space-y-1 text-xs text-amber-700">
+                    {getReadinessIssues(draftCourse).slice(0, 8).map((issue) => (
+                      <p key={issue}>- {issue}</p>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <div className="mt-5 flex-1 min-h-0 space-y-6 overflow-y-auto pb-14 pr-2 sm:pb-16">
@@ -1068,8 +1245,8 @@ export function AdminSimulationManager({ embedded = false }: AdminSimulationMana
                 <button className={secondaryButtonClass} onClick={closeEditor} type="button">
                   Cancel
                 </button>
-                <button className={primaryButtonClass} onClick={saveCourse} type="button">
-                  {isCreatingCourse ? 'Create Course' : 'Save Changes'}
+                <button className={primaryButtonClass} disabled={isSavingCourse} onClick={() => void saveCourse()} type="button">
+                  {isSavingCourse ? 'Saving...' : isCreatingCourse ? 'Create Course' : 'Save Changes'}
                 </button>
               </div>
             </section>

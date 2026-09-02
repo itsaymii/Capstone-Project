@@ -1,5 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
-import { getEvacuationCenters } from '../../../services/api'
+import { useMemo, useState } from 'react'
 import type { HazardIncident, HazardType, IncidentStatus } from '../../../data/adminOperations'
 import type { EarthquakeEvent } from '../../../services/earthquakes'
 import { glassPanelClass, glassPanelSoftClass } from './constants'
@@ -28,17 +27,20 @@ type RiskLocation = {
   severityPressure: number
 }
 
-type TrendItem = {
-  label: string
-  fire: number
-  accident: number
-  earthquake: number
-  total: number
-}
-
 type RadarAxis = {
   label: string
   value: number
+}
+
+type TeamPerformanceItem = {
+  team: string
+  assignments: number
+  resolvedCount: number
+  withResponseTimeCount: number
+  averageResponseMinutes: number
+  onTimeRate: number
+  resolutionRate: number
+  performanceScore: number
 }
 
 const hazardColors: Record<HazardType, string> = {
@@ -51,12 +53,6 @@ const hazardLabels: Record<HazardType, string> = {
   EQ: 'Earthquake',
   FR: 'Fire',
   AC: 'Accident',
-}
-
-const statusLabels: Record<'active' | 'pending' | 'resolved', string> = {
-  active: 'Active',
-  pending: 'Pending',
-  resolved: 'Resolved',
 }
 
 function getSeverityWeight(severity: HazardIncident['severity']): number {
@@ -93,28 +89,6 @@ function getPriorityLabel(score: number): string {
   if (score >= 8) return 'High Attention'
   if (score >= 4) return 'Monitor Closely'
   return 'Routine Watch'
-}
-
-function parseIncidentHour(time: string): number {
-  const value = String(time || '').trim()
-  const match = value.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i)
-
-  if (!match) return 8
-
-  let hour = Number(match[1])
-  const period = match[3].toUpperCase()
-
-  if (period === 'PM' && hour !== 12) hour += 12
-  if (period === 'AM' && hour === 12) hour = 0
-
-  return hour
-}
-
-function getPeakHourBucket(hour: number): string {
-  if (hour >= 0 && hour < 6) return '12AM - 6AM'
-  if (hour >= 6 && hour < 12) return '6AM - 12PM'
-  if (hour >= 12 && hour < 18) return '12PM - 6PM'
-  return '6PM - 12AM'
 }
 
 function percent(value: number, total: number): number {
@@ -186,26 +160,6 @@ function getEarthquakeEventDate(event: EarthquakeEvent): Date {
   return Number.isNaN(parsed.getTime()) ? new Date() : parsed
 }
 
-function getMonthLabel(date: Date): string {
-  return date.toLocaleDateString(undefined, { month: 'short' })
-}
-
-
-type EvacuationCenterRecord = {
-  capacity?: number | string
-  totalCapacity?: number | string
-  total_capacity?: number | string
-  maxCapacity?: number | string
-  max_capacity?: number | string
-  availableCapacity?: number | string
-  available_capacity?: number | string
-  occupancy?: number | string
-  currentOccupancy?: number | string
-  current_occupancy?: number | string
-  occupied?: number | string
-  evacuees?: number | string
-}
-
 function getNumberField(record: unknown, keys: string[]): number | null {
   const source = record as Record<string, unknown>
 
@@ -224,12 +178,86 @@ function getTextField(record: unknown, keys: string[]): string {
 
   for (const key of keys) {
     const value = source?.[key]
-
     if (typeof value === 'string' && value.trim()) return value.trim()
     if (typeof value === 'number' && Number.isFinite(value)) return String(value)
   }
 
   return ''
+}
+
+function parseDateValue(value: unknown): Date | null {
+  if (!value) return null
+
+  const parsed = new Date(String(value))
+  return Number.isNaN(parsed.getTime()) ? null : parsed
+}
+
+function getResponseTeamName(report: HazardIncident): string {
+  const value = getTextField(report, [
+    'responseTeam',
+    'responderTeam',
+    'responder_team',
+    'team_name',
+    'teamName',
+    'response_team',
+    'responder_username',
+    'responder',
+  ])
+
+  return value || 'Unassigned team'
+}
+
+function getReportStartDateTime(report: HazardIncident): Date | null {
+  return parseDateValue(
+    getTextField(report, [
+      'reported_at',
+      'createdAt',
+      'created_at',
+      'date_reported',
+      'incident_datetime',
+      'incidentDateTime',
+      'timeOccurred',
+      'time_occurred',
+    ]),
+  )
+}
+
+function getReportEndDateTime(report: HazardIncident): Date | null {
+  return parseDateValue(
+    getTextField(report, [
+      'resolvedAt',
+      'resolved_at',
+      'approvedAt',
+      'approved_at',
+      'completedAt',
+      'completed_at',
+      'arrivedAt',
+      'arrived_at',
+      'response_completed_at',
+      'updatedAt',
+      'updated_at',
+    ]),
+  )
+}
+
+function getResponseMinutes(report: HazardIncident): number | null {
+  const direct = getNumberField(report, [
+    'responseTimeMinutes',
+    'response_time_minutes',
+    'responseMinutes',
+    'response_minutes',
+    'arrival_minutes',
+    'response_duration',
+  ])
+
+  if (direct !== null && direct >= 0) return Math.round(direct)
+
+  const start = getReportStartDateTime(report)
+  const end = getReportEndDateTime(report)
+  if (!start || !end) return null
+
+  const minutes = Math.round((end.getTime() - start.getTime()) / (1000 * 60))
+  return minutes >= 0 ? minutes : null
 }
 
 function normalizeAnalyticsStatus(status: unknown): IncidentStatus {
@@ -279,120 +307,6 @@ function getReportVictimCount(report: HazardIncident): number {
   if (typeof (report as any).number_of_persons === 'number') return Math.max(0, (report as any).number_of_persons)
 
   return 0
-}
-
-function parseDateValue(value: unknown): Date | null {
-  if (!value) return null
-
-  const parsed = new Date(String(value))
-  if (!Number.isNaN(parsed.getTime())) return parsed
-
-  return null
-}
-
-function getReportDateTime(report: HazardIncident): Date | null {
-  const dateTime = parseDateValue(
-    getTextField(report, [
-      'createdAt',
-      'created_at',
-      'date_reported',
-      'reported_at',
-      'timeOccurred',
-      'time_occurred',
-      'incident_datetime',
-      'incidentDateTime',
-    ]),
-  )
-
-  if (dateTime) return dateTime
-
-  const dateText = getTextField(report, ['date', 'incident_date', 'dateOccurred', 'date_occurred'])
-  const timeText = getTextField(report, ['time', 'timeOccurred', 'time_occurred'])
-
-  if (dateText && timeText) {
-    const parsed = parseDateValue(`${dateText} ${timeText}`)
-    if (parsed) return parsed
-  }
-
-  return null
-}
-
-function getReportResolvedDateTime(report: HazardIncident): Date | null {
-  return parseDateValue(
-    getTextField(report, [
-      'resolvedAt',
-      'resolved_at',
-      'approvedAt',
-      'approved_at',
-      'completedAt',
-      'completed_at',
-      'arrivedAt',
-      'arrived_at',
-      'response_completed_at',
-      'updatedAt',
-      'updated_at',
-    ]),
-  )
-}
-
-function getActualResponseMinutes(report: HazardIncident): number | null {
-  const directValue = getNumberField(report, [
-    'responseTimeMinutes',
-    'response_time_minutes',
-    'responseMinutes',
-    'response_minutes',
-    'arrival_minutes',
-    'response_duration',
-  ])
-
-  if (directValue !== null && directValue >= 0) return Math.round(directValue)
-
-  const startedAt = getReportDateTime(report)
-  const completedAt = getReportResolvedDateTime(report)
-
-  if (!startedAt || !completedAt) return null
-
-  const minutes = Math.round((completedAt.getTime() - startedAt.getTime()) / (1000 * 60))
-  // Accept any non-negative response time, don't limit to 24 hours to capture extended operations
-  return minutes >= 0 ? minutes : null
-}
-
-function getEvacuationCenterCapacity(center: EvacuationCenterRecord): number {
-  return (
-    getNumberField(center, ['capacity', 'totalCapacity', 'total_capacity', 'maxCapacity', 'max_capacity']) || 0
-  )
-}
-
-function getEvacuationCenterOccupancy(center: EvacuationCenterRecord): number {
-  return (
-    getNumberField(center, ['occupancy', 'currentOccupancy', 'current_occupancy', 'occupied', 'evacuees']) || 0
-  )
-}
-
-function getEvacuationCenterAvailableCapacity(center: EvacuationCenterRecord): number {
-  const explicitAvailable = getNumberField(center, ['availableCapacity', 'available_capacity'])
-
-  if (explicitAvailable !== null) return Math.max(0, explicitAvailable)
-
-  return Math.max(0, getEvacuationCenterCapacity(center) - getEvacuationCenterOccupancy(center))
-}
-
-function calculateLinearProjection(values: number[]): number {
-  const usableValues = values.filter((value) => Number.isFinite(value))
-
-  if (usableValues.length === 0) return 0
-  if (usableValues.length === 1) return usableValues[0]
-
-  const n = usableValues.length
-  const xAverage = (n - 1) / 2
-  const yAverage = usableValues.reduce((sum, value) => sum + value, 0) / n
-
-  const numerator = usableValues.reduce((sum, value, index) => sum + (index - xAverage) * (value - yAverage), 0)
-  const denominator = usableValues.reduce((sum, _value, index) => sum + (index - xAverage) ** 2, 0)
-  const slope = denominator === 0 ? 0 : numerator / denominator
-  const intercept = yAverage - slope * xAverage
-
-  return Math.max(0, Math.round(intercept + slope * n))
 }
 
 function AnalyticsMetricCard({
@@ -522,104 +436,6 @@ function HorizontalBarChart({
           </article>
         )
       })}
-    </div>
-  )
-}
-
-function MultiLineTrendChart({ items }: { items: TrendItem[] }) {
-  const width = 920
-  const height = 360
-  const padding = { top: 44, right: 48, bottom: 58, left: 56 }
-  const chartWidth = width - padding.left - padding.right
-  const chartHeight = height - padding.top - padding.bottom
-  const maxValue = safeMax(items.flatMap((item) => [item.fire, item.accident, item.earthquake, item.total]))
-  const stepX = items.length > 1 ? chartWidth / (items.length - 1) : chartWidth
-
-  const getPoints = (key: keyof Pick<TrendItem, 'fire' | 'accident' | 'earthquake' | 'total'>) =>
-    items.map((item, index) => {
-      const x = padding.left + (items.length > 1 ? index * stepX : chartWidth / 2)
-      const y = padding.top + chartHeight - (item[key] / maxValue) * chartHeight
-      return { x, y, value: item[key], label: item.label }
-    })
-
-  const toPath = (points: Array<{ x: number; y: number }>) =>
-    points.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`).join(' ')
-
-  const series = [
-    { key: 'total' as const, label: 'Total', color: '#1d4ed8', points: getPoints('total') },
-    { key: 'fire' as const, label: 'Fire', color: '#ef4444', points: getPoints('fire') },
-    { key: 'accident' as const, label: 'Accident', color: '#3b82f6', points: getPoints('accident') },
-    { key: 'earthquake' as const, label: 'Earthquake', color: '#10b981', points: getPoints('earthquake') },
-  ]
-
-  return (
-    <div className="relative overflow-hidden rounded-[24px] border border-blue-100 bg-[radial-gradient(circle_at_top_left,#dbeafe_0%,#ffffff_45%,#f8fafc_100%)] p-3">
-      <div className="mb-3 flex flex-wrap gap-2 px-2 pt-1">
-        {series.map((item) => (
-          <span className="inline-flex items-center gap-2 rounded-full bg-white/80 px-3 py-1 text-xs font-semibold text-slate-600 shadow-sm" key={item.label}>
-            <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.color }} />
-            {item.label}
-          </span>
-        ))}
-      </div>
-
-      <svg className="h-[330px] w-full" preserveAspectRatio="xMidYMid meet" viewBox={`0 0 ${width} ${height}`}>
-        {[0, 0.25, 0.5, 0.75, 1].map((tick) => {
-          const y = padding.top + chartHeight - tick * chartHeight
-          const value = Math.round(maxValue * tick)
-
-          return (
-            <g key={tick}>
-              <line
-                stroke="#dbeafe"
-                strokeDasharray="7 7"
-                x1={padding.left}
-                x2={width - padding.right}
-                y1={y}
-                y2={y}
-              />
-              <text fill="#64748b" fontSize="11" fontWeight="700" textAnchor="end" x={padding.left - 12} y={y + 4}>
-                {value}
-              </text>
-            </g>
-          )
-        })}
-
-        {series.map((item) => (
-          <g key={item.label}>
-            <path
-              d={toPath(item.points)}
-              fill="none"
-              stroke={item.color}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={item.key === 'total' ? 5 : 3}
-              opacity={item.key === 'total' ? 1 : 0.8}
-            />
-            {item.points.map((point) => (
-              <circle
-                cx={point.x}
-                cy={point.y}
-                fill="#ffffff"
-                key={`${item.label}-${point.label}`}
-                r={item.key === 'total' ? 6 : 4}
-                stroke={item.color}
-                strokeWidth="3"
-              />
-            ))}
-          </g>
-        ))}
-
-        {items.map((item, index) => {
-          const x = padding.left + (items.length > 1 ? index * stepX : chartWidth / 2)
-
-          return (
-            <text fill="#64748b" fontSize="11" fontWeight="800" key={item.label} textAnchor="middle" x={x} y={height - 22}>
-              {item.label}
-            </text>
-          )
-        })}
-      </svg>
     </div>
   )
 }
@@ -758,59 +574,52 @@ function DonutChart({
   )
 }
 
-function GaugeChart({
-  value,
-  label,
-}: {
-  value: number
-  label: string
-}) {
-  const normalized = Math.min(100, Math.max(0, value))
-  const angle = -90 + (normalized / 100) * 180
-  const needleLength = 72
-  const radians = (angle * Math.PI) / 180
-  const x2 = 110 + needleLength * Math.cos(radians)
-  const y2 = 110 + needleLength * Math.sin(radians)
+function TeamResponseTimeChart({ items }: { items: TeamPerformanceItem[] }) {
+  const measurable = items.filter((item) => item.withResponseTimeCount > 0)
+
+  if (measurable.length === 0) {
+    return <EmptyState message="No response-time fields are available for team analytics yet." />
+  }
+
+  const maxMinutes = safeMax(measurable.map((item) => item.averageResponseMinutes))
 
   return (
-    <div className="rounded-[24px] border border-slate-100 bg-white/85 p-4 text-center">
-      <svg className="mx-auto h-[180px] w-[240px]" viewBox="0 0 220 150">
-        <path d="M 35 110 A 75 75 0 0 1 185 110" fill="none" stroke="#e2e8f0" strokeLinecap="round" strokeWidth="22" />
-        <path d="M 35 110 A 75 75 0 0 1 85 39" fill="none" stroke="#10b981" strokeLinecap="round" strokeWidth="22" />
-        <path d="M 85 39 A 75 75 0 0 1 135 39" fill="none" stroke="#f59e0b" strokeLinecap="round" strokeWidth="22" />
-        <path d="M 135 39 A 75 75 0 0 1 185 110" fill="none" stroke="#ef4444" strokeLinecap="round" strokeWidth="22" />
-        <line x1="110" x2={x2} y1="110" y2={y2} stroke="#0f172a" strokeLinecap="round" strokeWidth="5" />
-        <circle cx="110" cy="110" fill="#0f172a" r="8" />
-        <text fill="#0f172a" fontSize="26" fontWeight="800" textAnchor="middle" x="110" y="140">
-          {value}
-        </text>
-      </svg>
-      <p className="text-sm font-semibold text-slate-800">{label}</p>
-      <p className="mt-1 text-xs text-slate-500">Uses actual response-time fields when available. 0 means no response timestamp yet.</p>
-    </div>
-  )
-}
+    <div className="space-y-3">
+      {measurable.map((item) => {
+        const width = `${Math.max(8, (item.averageResponseMinutes / maxMinutes) * 100)}%`
+        const tone =
+          item.averageResponseMinutes <= 30
+            ? 'from-emerald-200 to-emerald-500'
+            : item.averageResponseMinutes <= 60
+              ? 'from-amber-200 to-amber-500'
+              : 'from-rose-200 to-rose-500'
 
-function ResponseTimeAnalysis({
-  items,
-  averageResponseMinutes,
-}: {
-  items: ChartItem[]
-  averageResponseMinutes: number
-}) {
-  return (
-    <div className={`${glassPanelClass} p-5 sm:p-6`}>
-      <SectionHeader
-        badge={`${averageResponseMinutes} min avg`}
-        description="The bar chart shows the number of incidents by time of day, while the gauge displays the average response time based on the response timestamps recorded in the system."
-        eyebrow="Response Time Analysis"
-        title="Response Time Analysis"
-      />
+        return (
+          <article
+            className="rounded-2xl border border-slate-100 bg-white/85 p-4 shadow-sm"
+            key={`team-time-${item.team}`}
+          >
+            <div className="mb-2 flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold text-slate-800">{item.team}</p>
+                <p className="mt-0.5 text-xs text-slate-500">
+                  {item.withResponseTimeCount} timed reports • {item.resolvedCount} resolved
+                </p>
+              </div>
+              <span className="shrink-0 rounded-full bg-slate-50 px-3 py-1 text-xs font-bold text-slate-900">
+                {item.averageResponseMinutes} min avg
+              </span>
+            </div>
 
-      <div className="grid gap-5 xl:grid-cols-[1.1fr_0.9fr]">
-        <HorizontalBarChart items={items} />
-        <GaugeChart label="Average Response Time" value={averageResponseMinutes} />
-      </div>
+            <div className="h-3 overflow-hidden rounded-full bg-slate-100">
+              <div
+                className={`h-full rounded-full bg-gradient-to-r ${tone}`}
+                style={{ width }}
+              />
+            </div>
+          </article>
+        )
+      })}
     </div>
   )
 }
@@ -1013,45 +822,6 @@ function HeatRiskMapGrid({ locations }: { locations: RiskLocation[] }) {
   )
 }
 
-function SeverityBubbleChart({ items }: { items: ChartItem[] }) {
-  const maxValue = safeMax(items.map((item) => item.value))
-  const colors = ['#10b981', '#f59e0b', '#f97316', '#dc2626']
-
-  return (
-    <div className="rounded-[24px] border border-slate-100 bg-[radial-gradient(circle_at_top_left,#f8fafc_0%,#ffffff_45%,#eff6ff_100%)] p-5">
-      <div className="flex min-h-[300px] flex-wrap items-center justify-center gap-6">
-        {items.map((item, index) => {
-          const size = 78 + (item.value / maxValue) * 92
-
-          return (
-            <div
-              className="group flex flex-col items-center gap-3 text-center"
-              key={item.label}
-              style={{ minWidth: 150 }}
-            >
-              <div
-                className="flex items-center justify-center rounded-full text-white shadow-[0_18px_42px_rgba(15,23,42,0.18)] transition-all duration-300 group-hover:-translate-y-1 group-hover:scale-105"
-                style={{
-                  width: size,
-                  height: size,
-                  background: `radial-gradient(circle at 35% 30%, #ffffff66 0%, ${colors[index % colors.length]} 34%, ${colors[index % colors.length]} 100%)`,
-                }}
-              >
-                <span className="text-3xl font-semibold">{item.value}</span>
-              </div>
-              <div>
-                <p className="text-sm font-semibold text-slate-800">{item.label}</p>
-                <p className="text-xs text-slate-500">Severity category</p>
-              </div>
-            </div>
-          )
-        })}
-      </div>
-    </div>
-  )
-}
-
-
 function getAnalyticsRecordKey(report: HazardIncident): string {
   const record = report as any
 
@@ -1138,9 +908,6 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
 
   const [selectedYear, setSelectedYear] = useState<string | null>(null)
   const [selectedMonth, setSelectedMonth] = useState<string | null>(null)
-  const [evacuationCenters, setEvacuationCenters] = useState<EvacuationCenterRecord[]>([])
-  const [evacuationCenterCount, setEvacuationCenterCount] = useState<number | null>(null)
-  const [evacuationCenterError, setEvacuationCenterError] = useState<string | null>(null)
 
   const filteredEarthquakeEvents = useMemo(() => {
     let result = earthquakeEvents
@@ -1225,30 +992,7 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
   const earthquakeApiCount = filteredEarthquakeEvents.length
   const totalRecords = totalIncidentReports + earthquakeApiCount
 
-  useEffect(() => {
-    let active = true
-
-    void getEvacuationCenters()
-      .then((centers) => {
-        if (!active) return
-        const centerList = Array.isArray(centers) ? (centers as EvacuationCenterRecord[]) : []
-        setEvacuationCenters(centerList)
-        setEvacuationCenterCount(centerList.length)
-      })
-      .catch(() => {
-        if (!active) return
-        setEvacuationCenters([])
-        setEvacuationCenterCount(0)
-        setEvacuationCenterError('Unable to load evacuation resources data.')
-      })
-
-    return () => {
-      active = false
-    }
-  }, [])
-
   const activeCount = filteredReports.filter((report) => getDisplayReportStatus(report) === 'active').length
-  const pendingCount = filteredReports.filter((report) => getDisplayReportStatus(report) === 'pending').length
 
   const fireCount = filteredReports.filter((report) => getAnalyticsIncidentType(report) === 'Fire').length
   const accidentCount = filteredReports.filter((report) => getAnalyticsIncidentType(report) === 'Accident').length
@@ -1318,63 +1062,138 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
     [accidentCount, earthquakeTotalCount, fireCount],
   )
 
-  const statusDistribution = useMemo(
-    () =>
-      (['active', 'pending', 'resolved'] as const).map((status) => ({
-        label: statusLabels[status],
-        value: filteredReports.filter((report) => getDisplayReportStatus(report) === status).length,
-      })),
-    [filteredReports],
-  )
-
-  const severityDistribution = useMemo(
-    () =>
-      (['Low', 'Moderate', 'High', 'Critical'] as HazardIncident['severity'][]).map((severity) => ({
-        label: severity,
-        value: filteredReports.filter((report) => report.severity === severity).length,
-      })),
-    [filteredReports],
-  )
-
-  const responseTimeData = useMemo(() => {
-    const buckets = ['12AM - 6AM', '6AM - 12PM', '12PM - 6PM', '6PM - 12AM']
-
-    return buckets.map((bucket) => {
-      const incidents = filteredReports.filter((report) => {
-        const reportDateTime = getReportDateTime(report)
-        const hour = reportDateTime ? reportDateTime.getHours() : parseIncidentHour((report as any).time || '')
-        return getPeakHourBucket(hour) === bucket
-      })
-
-      const responseMinutes = incidents
-        .map((report) => getActualResponseMinutes(report))
-        .filter((value): value is number => value !== null)
-
-      const averageBucketMinutes =
-        responseMinutes.length > 0
-          ? Math.round(responseMinutes.reduce((sum, value) => sum + value, 0) / responseMinutes.length)
-          : 0
-
-      return {
-        label: bucket,
-        value: incidents.length,
-        helper:
-          responseMinutes.length > 0
-            ? `${averageBucketMinutes} min actual avg response`
-            : 'No response-time field yet',
+  const teamPerformanceData = useMemo<TeamPerformanceItem[]>(() => {
+    const bucket = new Map<
+      string,
+      {
+        assignments: number
+        resolvedCount: number
+        withResponseTimeCount: number
+        responseMinutesSum: number
+        onTimeCount: number
       }
+    >()
+
+    filteredReports.forEach((report) => {
+      const team = getResponseTeamName(report)
+      const current =
+        bucket.get(team) ||
+        {
+          assignments: 0,
+          resolvedCount: 0,
+          withResponseTimeCount: 0,
+          responseMinutesSum: 0,
+          onTimeCount: 0,
+        }
+
+      current.assignments += 1
+
+      if (getDisplayReportStatus(report) === 'resolved') {
+        current.resolvedCount += 1
+      }
+
+      const minutes = getResponseMinutes(report)
+      if (minutes !== null) {
+        current.withResponseTimeCount += 1
+        current.responseMinutesSum += minutes
+
+        if (minutes <= 30) {
+          current.onTimeCount += 1
+        }
+      }
+
+      bucket.set(team, current)
     })
+
+    const maxAssignments = safeMax(Array.from(bucket.values()).map((item) => item.assignments))
+
+    return Array.from(bucket.entries())
+      .map(([team, summary]) => {
+        const averageResponseMinutes =
+          summary.withResponseTimeCount > 0
+            ? Math.round(summary.responseMinutesSum / summary.withResponseTimeCount)
+            : 0
+
+        const resolutionRate = percent(summary.resolvedCount, summary.assignments)
+        const onTimeRate =
+          summary.withResponseTimeCount > 0
+            ? percent(summary.onTimeCount, summary.withResponseTimeCount)
+            : 0
+
+        const speedScore =
+          summary.withResponseTimeCount > 0
+            ? Math.max(0, 100 - Math.min(100, (averageResponseMinutes / 120) * 100))
+            : 0
+
+        const loadScore = Math.min(100, Math.round((summary.assignments / maxAssignments) * 100))
+
+        const performanceScore = Math.round(
+          speedScore * 0.45 + resolutionRate * 0.35 + onTimeRate * 0.15 + loadScore * 0.05,
+        )
+
+        return {
+          team,
+          assignments: summary.assignments,
+          resolvedCount: summary.resolvedCount,
+          withResponseTimeCount: summary.withResponseTimeCount,
+          averageResponseMinutes,
+          onTimeRate,
+          resolutionRate,
+          performanceScore,
+        }
+      })
+      .sort((a, b) => b.performanceScore - a.performanceScore)
+      .slice(0, 8)
   }, [filteredReports])
 
-  const averageResponseMinutes = useMemo(() => {
-    const responseMinutes = filteredReports
-      .map((report) => getActualResponseMinutes(report))
-      .filter((value): value is number => value !== null)
+  const teamPerformanceChartData = useMemo<ChartItem[]>(
+    () =>
+      teamPerformanceData.map((item) => ({
+        label: item.team,
+        value: item.performanceScore,
+        helper: `${item.resolutionRate}% resolved • ${item.onTimeRate}% <=30m • ${item.assignments} assignments`,
+        color:
+          item.performanceScore >= 80
+            ? '#16a34a'
+            : item.performanceScore >= 60
+              ? '#f59e0b'
+              : '#dc2626',
+      })),
+    [teamPerformanceData],
+  )
 
-    if (responseMinutes.length === 0) return 0
+  const teamPerformanceSummary = useMemo(() => {
+    if (teamPerformanceData.length === 0) {
+      return {
+        topTeam: 'N/A',
+        topScore: 0,
+        overallAvgResponse: 0,
+        overallOnTimeRate: 0,
+      }
+    }
 
-    return Math.round(responseMinutes.reduce((sum, value) => sum + value, 0) / responseMinutes.length)
-  }, [filteredReports])
+    const top = teamPerformanceData[0]
+    const measuredTeams = teamPerformanceData.filter((item) => item.withResponseTimeCount > 0)
+
+    const overallAvgResponse =
+      measuredTeams.length > 0
+        ? Math.round(
+            measuredTeams.reduce((sum, item) => sum + item.averageResponseMinutes, 0) / measuredTeams.length,
+          )
+        : 0
+
+    const overallOnTimeRate =
+      measuredTeams.length > 0
+        ? Math.round(measuredTeams.reduce((sum, item) => sum + item.onTimeRate, 0) / measuredTeams.length)
+        : 0
+
+    return {
+      topTeam: top.team,
+      topScore: top.performanceScore,
+      overallAvgResponse,
+      overallOnTimeRate,
+    }
+  }, [teamPerformanceData])
 
   const barangayRiskData = useMemo(() => {
     const map = new Map<string, RiskLocation>()
@@ -1445,161 +1264,6 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
       .slice(0, 6)
   }, [filteredEarthquakeEvents, filteredReports])
 
-  const evacuationCapacity = useMemo(() => {
-    const totalCapacity = evacuationCenters.reduce((sum, center) => sum + getEvacuationCenterCapacity(center), 0)
-    const occupied = evacuationCenters.reduce((sum, center) => sum + getEvacuationCenterOccupancy(center), 0)
-    const available = evacuationCenters.reduce((sum, center) => sum + getEvacuationCenterAvailableCapacity(center), 0)
-
-    return { totalCapacity, occupied, available }
-  }, [evacuationCenters])
-
-  const evacuationStats = useMemo(() => {
-    const criticalVictims = filteredReports
-      .filter((report) => report.severity === 'Critical')
-      .reduce((sum, report) => sum + Math.max(1, getReportVictimCount(report)), 0)
-    const highVictims = filteredReports
-      .filter((report) => report.severity === 'High')
-      .reduce((sum, report) => sum + Math.max(1, getReportVictimCount(report)), 0)
-    const moderateVictims = filteredReports
-      .filter((report) => report.severity === 'Moderate')
-      .reduce((sum, report) => sum + Math.max(1, getReportVictimCount(report)), 0)
-    const earthquakeWatch = filteredEarthquakeEvents.filter((event) => event.magnitude >= 4).length + earthquakeReportCount
-
-    return [
-      {
-        label: 'Immediate evacuation',
-        value: criticalVictims,
-        helper: 'Victims from critical severity reports',
-        color: '#dc2626',
-      },
-      {
-        label: 'Standby evacuation',
-        value: highVictims,
-        helper: 'Victims from high severity reports',
-        color: '#f97316',
-      },
-      {
-        label: 'Earthquake standby',
-        value: earthquakeWatch,
-        helper: 'Magnitude 4+ events and EQ reports',
-        color: '#10b981',
-      },
-      {
-        label: 'Available support',
-        value: evacuationCapacity.available,
-        helper: 'Available evacuation center capacity from resources',
-        color: '#2563eb',
-      },
-      {
-        label: 'Shelter monitoring',
-        value: moderateVictims,
-        helper: 'Victims from moderate severity reports',
-        color: '#f59e0b',
-      },
-    ]
-  }, [evacuationCapacity.available, filteredEarthquakeEvents, earthquakeReportCount, filteredReports])
-
-  const evacuationResourceComparison = useMemo<ChartItem[]>(() => {
-    const urgentVictimNeed = filteredReports
-      .filter((report) => report.severity === 'Critical' || report.severity === 'High')
-      .reduce((sum, report) => sum + Math.max(1, getReportVictimCount(report)), 0)
-
-    return [
-      {
-        label: 'Evacuation centers available',
-        value: evacuationCenterCount ?? 0,
-        helper:
-          evacuationCenterCount === null
-            ? 'Loading evacuation resources data...'
-            : 'Registered centers from the resources app',
-        color: '#2563eb',
-      },
-      {
-        label: 'Total center capacity',
-        value: evacuationCapacity.totalCapacity,
-        helper: 'Sum of capacity fields from evacuation centers',
-        color: '#0f766e',
-      },
-      {
-        label: 'Available capacity',
-        value: evacuationCapacity.available,
-        helper: 'Capacity minus current occupancy when fields exist',
-        color: '#10b981',
-      },
-      {
-        label: 'Urgent evacuation need',
-        value: urgentVictimNeed,
-        helper: 'Victims from critical + high reports',
-        color: '#dc2626',
-      },
-    ]
-  }, [filteredReports, evacuationCenterCount, evacuationCapacity])
-
-  const monthlyTrend = useMemo<TrendItem[]>(() => {
-    const sourceDates = [
-      ...filteredReports.map((report) => getReportDate(report)),
-      ...filteredEarthquakeEvents.map((event) => getEarthquakeEventDate(event)),
-    ].filter((date) => !Number.isNaN(date.getTime()))
-
-    let months: Array<{ label: string; month: number; year: number }> = []
-
-    if (selectedYear) {
-      const year = Number(selectedYear)
-      const monthIndexes = selectedMonth
-        ? [Number(selectedMonth) - 1]
-        : Array.from({ length: 12 }, (_, index) => index)
-
-      months = monthIndexes.map((month) => ({
-        label: getMonthLabel(new Date(year, month, 1)),
-        month,
-        year,
-      }))
-    } else if (sourceDates.length > 0) {
-      const latestDate = sourceDates.reduce((latest, date) => (date > latest ? date : latest), sourceDates[0])
-
-      months = Array.from({ length: 6 }, (_, index) => {
-        const date = new Date(latestDate.getFullYear(), latestDate.getMonth() - (5 - index), 1)
-        return {
-          label: `${getMonthLabel(date)} ${date.getFullYear()}`,
-          month: date.getMonth(),
-          year: date.getFullYear(),
-        }
-      })
-    }
-
-    return months.map((monthInfo) => {
-      const fire = filteredReports.filter((report) => {
-        const date = getReportDate(report)
-        return getAnalyticsIncidentType(report) === 'Fire' && date.getMonth() === monthInfo.month && date.getFullYear() === monthInfo.year
-      }).length
-
-      const accident = filteredReports.filter((report) => {
-        const date = getReportDate(report)
-        return getAnalyticsIncidentType(report) === 'Accident' && date.getMonth() === monthInfo.month && date.getFullYear() === monthInfo.year
-      }).length
-
-      const earthquakeReports = filteredReports.filter((report) => {
-        const date = getReportDate(report)
-        return getAnalyticsIncidentType(report) === 'Earthquake' && date.getMonth() === monthInfo.month && date.getFullYear() === monthInfo.year
-      }).length
-
-      const apiEarthquakes = filteredEarthquakeEvents.filter((event) => {
-        const date = getEarthquakeEventDate(event)
-        return date.getMonth() === monthInfo.month && date.getFullYear() === monthInfo.year
-      }).length
-
-      const earthquake = earthquakeReports + apiEarthquakes
-
-      return {
-        label: monthInfo.label,
-        fire,
-        accident,
-        earthquake,
-        total: fire + accident + earthquake,
-      }
-    })
-  }, [filteredEarthquakeEvents, filteredReports, selectedMonth, selectedYear])
-
   const earthquakeAnalytics = useMemo(() => {
     const magnitudeDistribution: ChartItem[] = [
       {
@@ -1663,16 +1327,6 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
     significantEarthquakes,
   ])
 
-  const currentMonthTotal = monthlyTrend[monthlyTrend.length - 1]?.total || 0
-  const previousMonthTotal = monthlyTrend[monthlyTrend.length - 2]?.total || 0
-  const forecastDirection =
-    currentMonthTotal > previousMonthTotal
-      ? 'Increasing'
-      : currentMonthTotal < previousMonthTotal
-        ? 'Decreasing'
-        : 'Stable'
-  const projectedNextMonth = calculateLinearProjection(monthlyTrend.map((item) => item.total))
-
   const radarAxes: RadarAxis[] = [
     { label: 'Incidents', value: barangayRiskData[0]?.incidents || 0 },
     { label: 'Risk', value: barangayRiskData[0]?.score || 0 },
@@ -1680,42 +1334,6 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
     { label: 'Severity', value: barangayRiskData[0]?.severityPressure || 0 },
     { label: 'Fire', value: barangayRiskData[0]?.fire || 0 },
     { label: 'Earthquake', value: barangayRiskData[0]?.earthquake || 0 },
-  ]
-
-  const forecastCards = [
-    {
-      title: 'Next Month Projection',
-      value: projectedNextMonth,
-      note: `${forecastDirection} trend based on incident reports and earthquake movement.`,
-      tone: getRiskTone(riskScore),
-    },
-    {
-      title: 'Fire Monitoring',
-      value: getRiskLabel(percent(fireCount + activeCount, Math.max(totalRecords, 1))),
-      note:
-        fireCount > accidentCount
-          ? 'Fire-related incidents are prominent in the dataset.'
-          : 'Fire reports remain within routine monitoring range.',
-      tone: getRiskTone(percent(fireCount + activeCount, Math.max(totalRecords, 1))),
-    },
-    {
-      title: 'Road Accident Monitoring',
-      value: getRiskLabel(percent(accidentCount + pendingCount, Math.max(totalRecords, 1))),
-      note:
-        accidentCount >= fireCount
-          ? 'Accident-related incidents need closer traffic monitoring.'
-          : 'Accident reports are lower than other major hazard groups.',
-      tone: getRiskTone(percent(accidentCount + pendingCount, Math.max(totalRecords, 1))),
-    },
-    {
-      title: 'Earthquake Monitoring',
-      value: getRiskLabel(percent(recentEarthquake30Days + significantEarthquakes, Math.max(earthquakeApiCount, 1))),
-      note:
-        earthquakeApiCount > 0
-          ? 'Live earthquake data is included in risk scoring and evacuation standby.'
-          : 'No live earthquake records detected.',
-      tone: getRiskTone(percent(recentEarthquake30Days + significantEarthquakes, Math.max(earthquakeApiCount, 1))),
-    },
   ]
 
   return (
@@ -1852,16 +1470,6 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
 
         <div className={`${glassPanelClass} p-5 sm:p-6`}>
           <SectionHeader
-            badge="Line Chart"
-            description="Monthly trend comparing Fire, Accident, live Earthquake events, and total movement."
-            eyebrow="Incident Trends"
-            title="Incident Trends by Year / Month"
-          />
-          <MultiLineTrendChart items={monthlyTrend} />
-        </div>
-
-        <div className={`${glassPanelClass} p-5 sm:p-6`}>
-          <SectionHeader
             badge="Donut + Stacked Bar"
             description="Shows both percentage share and stacked comparison of Fire, Accident, and live Earthquake data."
             eyebrow="Disaster Type Analysis"
@@ -1937,11 +1545,6 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
           </div>
         </div>
 
-        <ResponseTimeAnalysis
-          averageResponseMinutes={averageResponseMinutes}
-          items={responseTimeData}
-        />
-
         <div className={`${glassPanelClass} p-5 sm:p-6`}>
           <SectionHeader
             badge="Ranking + Radar"
@@ -1972,38 +1575,6 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
 
         <div className={`${glassPanelClass} p-5 sm:p-6`}>
           <SectionHeader
-            badge="Evacuation"
-            description="Evacuation categories are computed from actual victim counts, severity, earthquake standby records, and evacuation resource capacity."
-            eyebrow="Evacuation Statistics"
-            title="Evacuation Statistics"
-          />
-          <HorizontalBarChart items={evacuationStats} />
-        </div>
-
-        <div className={`${glassPanelClass} p-5 sm:p-6`}>
-          <SectionHeader
-            badge="Resources Comparison"
-            description="Compare evacuation statistics against the evacuation center resources available in the resources map."
-            eyebrow="Evacuation Resource Comparison"
-            title="Evacuation Resource Comparison"
-          />
-          <HorizontalBarChart items={evacuationResourceComparison} emptyText="No evacuation resource comparison data available yet." />
-          {evacuationCenterError ? (
-            <p className="mt-4 text-sm text-rose-600">{evacuationCenterError}</p>
-          ) : null}
-          {evacuationCenterCount !== null ? (
-            <p className="mt-4 text-sm text-slate-500">
-              {evacuationCapacity.available >= filteredReports
-                .filter((report) => report.severity === 'Critical' || report.severity === 'High')
-                .reduce((sum, report) => sum + Math.max(1, getReportVictimCount(report)), 0)
-                ? 'Available evacuation capacity is currently enough for urgent victim-based alerts.'
-                : 'Urgent victim-based evacuation needs currently exceed available capacity; review resource coverage.'}
-            </p>
-          ) : null}
-        </div>
-
-        <div className={`${glassPanelClass} p-5 sm:p-6`}>
-          <SectionHeader
             badge="Heat + Risk"
             description="Combined heat map and risk map showing incident reports and earthquake hotspot areas from the API."
             eyebrow="Heat Map / Risk Map"
@@ -2014,62 +1585,65 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
 
         <div className={`${glassPanelClass} p-5 sm:p-6`}>
           <SectionHeader
-            badge="Forecasting"
-            description="Prediction cards use the latest monthly incident history, disaster distribution, live earthquake activity, and current response load."
-            eyebrow="Forecasting Analytics"
-            title="Forecasting Analytics"
+            badge="Team Performance"
+            description="Measures team responsiveness and operational performance using actual response timestamps, resolution rate, and on-time response share."
+            eyebrow="Emergency Response Teams"
+            title="Responsiveness and Performance Analytics"
           />
 
-          <div className="grid gap-4 lg:grid-cols-4">
-            {forecastCards.map((card) => (
-              <article
-                className={`${glassPanelSoftClass} flex flex-col gap-3 p-5`}
-                key={card.title}
-              >
-                <div>
-                  <p className="text-sm font-semibold text-slate-900">{card.title}</p>
-                  <p className="mt-1 text-xs leading-relaxed text-slate-500">{card.note}</p>
-                </div>
-                <span className={`w-fit rounded-full border px-3 py-1 text-xs font-bold ${card.tone}`}>
-                  {card.value}
-                </span>
-              </article>
-            ))}
+          <div className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <AnalyticsMetricCard
+              accentClass="border-t-emerald-600"
+              helper="Highest composite performance score in current filter window."
+              label="Top Team"
+              value={teamPerformanceSummary.topTeam}
+            />
+            <AnalyticsMetricCard
+              accentClass="border-t-blue-600"
+              helper="Composite team performance score out of 100."
+              label="Top Score"
+              value={teamPerformanceSummary.topScore}
+            />
+            <AnalyticsMetricCard
+              accentClass="border-t-orange-600"
+              helper="Mean average response time across teams with measurable timestamps."
+              label="Avg Response Time"
+              value={`${teamPerformanceSummary.overallAvgResponse} min`}
+            />
+            <AnalyticsMetricCard
+              accentClass="border-t-violet-600"
+              helper="Average share of team responses completed within 30 minutes."
+              label="On-Time Rate"
+              value={`${teamPerformanceSummary.overallOnTimeRate}%`}
+            />
+          </div>
+
+          <div className="grid gap-5 xl:grid-cols-2">
+            <div>
+              <SectionHeader
+                badge="Score"
+                description="Higher score indicates better speed, resolution output, and on-time response consistency."
+                eyebrow="Composite Ranking"
+                title="Team Performance Score"
+              />
+              <HorizontalBarChart
+                items={teamPerformanceChartData}
+                emptyText="No assigned response team data available yet."
+              />
+            </div>
+
+            <div>
+              <SectionHeader
+                badge="Minutes"
+                description="Average response time in minutes from report start to response completion per team."
+                eyebrow="Speed Breakdown"
+                title="Average Response Time by Team"
+              />
+              <TeamResponseTimeChart items={teamPerformanceData} />
+            </div>
           </div>
         </div>
 
-        <div className={`${glassPanelClass} p-5 sm:p-6`}>
-          <SectionHeader
-            badge="Bubble Chart"
-            description="Bubble size represents the number of incidents per severity category."
-            eyebrow="Severity Bubble Chart"
-            title="Severity Bubble Chart"
-          />
-          <SeverityBubbleChart items={severityDistribution} />
-        </div>
-
-        <div className={`${glassPanelClass} p-5 sm:p-6`}>
-          <SectionHeader
-            badge="Status"
-            description="Operational status summary from actual report statuses. Approved reports are counted as Resolved."
-            eyebrow="Operational Status Summary"
-            title="Incident Status Overview"
-          />
-
-          <div className="grid gap-3 sm:grid-cols-3">
-            {statusDistribution.map((item) => (
-              <article className="rounded-2xl border border-slate-100 bg-slate-50 p-4" key={item.label}>
-                <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-slate-400">
-                  {item.label}
-                </p>
-                <p className="mt-1 text-2xl font-semibold text-slate-900">{item.value}</p>
-                <p className="text-xs font-medium text-slate-500">
-                  {percent(item.value, totalIncidentReports)}% of reports
-                </p>
-              </article>
-            ))}
-          </div>
-        </div>
       </div>
     </section>
   )

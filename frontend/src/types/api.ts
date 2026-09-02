@@ -17,6 +17,12 @@ export interface AuthUser {
   isActive?: boolean
   dateJoined?: string | null
   lastLogin?: string | null
+  residencyStatus?: 'pending' | 'verified' | 'rejected' | null
+  barangay?: string | null
+  residentialAddress?: string | null
+  residencyProofUrl?: string | null
+  residencyProofName?: string | null
+  residencyRejectionReason?: string
 }
 
 export interface AuthApiResponse {
@@ -24,6 +30,7 @@ export interface AuthApiResponse {
   user?: AuthUser
   otpEmail?: string
   skipOtp?: boolean
+  sessionExpiresInSeconds?: number | null
 }
 
 export interface RegisterApiPayload {
@@ -32,6 +39,10 @@ export interface RegisterApiPayload {
   password: string
   username?: string
   phoneNumber?: string
+  barangayId: string
+  residentialAddress: string
+  residentConfirmation: boolean
+  residencyProof: File
 }
 
 export interface LoginApiPayload {
@@ -111,6 +122,26 @@ export interface BarangayIncidentTrendItem {
   count: number
 }
 
+export interface IncidentTrendPeriod {
+  year: number
+  month: number | null
+  start_date: string
+  end_date: string
+  total: number
+  daily_reports: BarangayIncidentTrendItem[]
+}
+
+export interface IncidentTrendComparison {
+  current_period: IncidentTrendPeriod
+  comparison_period: IncidentTrendPeriod
+  trend: {
+    percent_change: number | null
+    direction: 'increase' | 'decrease' | 'flat'
+    current_total: number
+    previous_total: number
+  }
+}
+
 export interface BarangayHazardShareItem {
   hazard: string
   frequency: number
@@ -136,6 +167,8 @@ export interface BarangayRiskScoreResponse {
   barangay_profile: BarangayProfileResponse
   score_history: BarangayScoreHistoryItem[]
   incident_trend: BarangayIncidentTrendItem[]
+  daily_incident_reports: BarangayIncidentTrendItem[]
+  incident_trend_comparison: IncidentTrendComparison
   hazard_share: BarangayHazardShareItem[]
 }
 
@@ -185,6 +218,11 @@ export interface DashboardDeleteAccountResponse {
   message: string
 }
 
+export interface DashboardResidencyVerificationResponse {
+  message: string
+  user: AuthUser
+}
+
 export interface CreateEvacuationCenterPayload {
   name: string
   latitude: number
@@ -223,4 +261,132 @@ export interface SimulationAdminCourseMetrics {
 
 export interface SimulationAdminMetricsResponse {
   courses: Record<string, SimulationAdminCourseMetrics>
+}
+
+export interface SimulationCourseCatalogResponse {
+  courses: Array<{
+    id: string
+    title: string
+    tag: string
+    difficulty: 'Beginner' | 'Intermediate' | 'Advanced'
+    duration: string
+    description: string
+    audience: string
+    objectives: string[]
+    prerequisites: string[]
+    accent: string
+    heroImageUrl: string
+    heroImageName?: string
+    lessonOutline: Array<{
+      id: string
+      lessonType: 'video' | 'lesson' | 'exam'
+      title: string
+      duration: string
+      videoUrl: string
+      videoFileName?: string
+      summary: string
+      points: string[]
+      content: string
+      examQuestions: Array<{
+        id: string
+        prompt: string
+        options: string[]
+        correctOptionIndex: number
+        explanation: string
+      }>
+      passingScore: number
+    }>
+    learningMaterials: Array<{
+      id: string
+      title: string
+      type: 'PDF' | 'Guide' | 'Checklist' | 'Worksheet' | 'External Link'
+      url: string
+      fileName?: string
+      mimeType?: string
+      description: string
+    }>
+  }>
+}
+
+export interface SimulationAdminQuizQuestion {
+  id: number
+  order: number
+  prompt: string
+  explanation: string
+  options: string[]
+  correctOptionIndex: number
+}
+
+export interface SimulationAdminQuiz {
+  id: number
+  courseId: string
+  lessonId: string
+  lessonTitle: string
+  title: string
+  status: 'draft' | 'published' | 'archived'
+  version: number
+  passingScore: number
+  sourcePdfName: string
+  parseConfidence: number
+  parseNotes: string
+  updatedAt?: string | null
+  questions: SimulationAdminQuizQuestion[]
+}
+
+export interface SimulationAdminQuizDetailResponse {
+  quiz: SimulationAdminQuiz | null
+}
+
+export interface SimulationAdminQuizMutationResponse {
+  quiz: SimulationAdminQuiz
+}
+
+export interface SimulationLearnerQuizOption {
+  id: number
+  order: number
+  text: string
+}
+
+export interface SimulationLearnerQuizQuestion {
+  id: number
+  order: number
+  prompt: string
+  options: SimulationLearnerQuizOption[]
+}
+
+export interface SimulationLearnerQuiz {
+  id: number
+  courseId: string
+  lessonId: string
+  lessonTitle: string
+  title: string
+  version: number
+  passingScore: number
+  questions: SimulationLearnerQuizQuestion[]
+}
+
+export interface SimulationLearnerQuizDetailResponse {
+  quiz: SimulationLearnerQuiz | null
+  latestAttempt: {
+    score: number
+    totalQuestions: number
+    passed: boolean
+    unanswered: number
+    attemptedAt?: string | null
+  } | null
+}
+
+export interface SimulationQuizSubmitResponse {
+  score: number
+  totalQuestions: number
+  passed: boolean
+  unanswered: number
+  requiredScore: number
+  details: Array<{
+    questionId: number
+    selectedChoiceId: number | null
+    correctChoiceId: number | null
+    isCorrect: boolean
+    explanation: string
+  }>
 }

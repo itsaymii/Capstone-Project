@@ -230,38 +230,81 @@ function getRecordDate(record: any): Date {
   return Number.isNaN(parsed.getTime()) ? new Date() : parsed
 }
 
-function formatShortDate(date: Date): string {
-  return date.toLocaleDateString(undefined, {
-    month: 'short',
-    day: 'numeric',
+function parseTimeParts(value: string): { hours: number; minutes: number; seconds: number } | null {
+  const match = value.trim().match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/)
+  if (!match) return null
+
+  const hours = Number(match[1])
+  const minutes = Number(match[2])
+  const seconds = Number(match[3] || '0')
+
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59 || seconds < 0 || seconds > 59) {
+    return null
+  }
+
+  return { hours, minutes, seconds }
+}
+
+function getIncidentTimelineDate(record: any): Date {
+  const occurrenceValue = getRecordValue(
+    record,
+    'incident_datetime',
+    'incidentDateTime',
+    'date_reported',
+    'report_time',
+    'reportTime',
+  )
+
+  if (occurrenceValue) {
+    const parsed = new Date(occurrenceValue)
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed
+    }
+  }
+
+  const createdDate = getRecordDate(record)
+  const timeOnly = getRecordValue(record, 'time_occurred', 'timeOccurred')
+  const timeParts = timeOnly ? parseTimeParts(timeOnly) : null
+
+  if (timeParts) {
+    const merged = new Date(createdDate)
+    merged.setHours(timeParts.hours, timeParts.minutes, timeParts.seconds, 0)
+    return merged
+  }
+
+  return createdDate
+}
+
+function buildDailyTrendForPeriod(records: any[], year: number): TrendDataItem[] {
+  const grouped = new Map<string, number>()
+  records.forEach((record) => {
+    const date = getIncidentTimelineDate(record)
+    const sameYear = date.getFullYear() === year
+    if (sameYear) {
+      const monthKey = String(date.getMonth() + 1).padStart(2, '0')
+      grouped.set(monthKey, (grouped.get(monthKey) || 0) + 1)
+    }
+  })
+
+  return Array.from({ length: 12 }, (_, index) => {
+    const month = index + 1
+    const monthKey = String(month).padStart(2, '0')
+    const monthDate = new Date(year, index, 1)
+    return {
+      date: monthDate.toLocaleDateString(undefined, { month: 'short' }),
+      isoDate: `${year}-${monthKey}`,
+      dayKey: monthKey,
+      count: grouped.get(monthKey) || 0,
+    }
   })
 }
 
-function buildLastSevenDaysTrend(records: any[]): TrendDataItem[] {
-  const grouped = new Map<string, number>()
+function calculateTrendPercentChange(currentTotal: number, previousTotal: number): number | null {
+  if (previousTotal === 0) {
+    return currentTotal === 0 ? 0 : null
+  }
 
-  records.forEach((record) => {
-    const key = formatShortDate(getRecordDate(record))
-    grouped.set(key, (grouped.get(key) || 0) + 1)
-  })
-
-  const latestRecordTime = records.reduce((latest, record) => {
-    return Math.max(latest, getRecordDate(record).getTime())
-  }, Date.now())
-
-  const endDate = new Date(latestRecordTime)
-  endDate.setHours(0, 0, 0, 0)
-
-  return Array.from({ length: 7 }, (_, index) => {
-    const date = new Date(endDate)
-    date.setDate(endDate.getDate() - (6 - index))
-    const key = formatShortDate(date)
-
-    return {
-      date: key,
-      count: grouped.get(key) || 0,
-    }
-  })
+  return Number((((currentTotal - previousTotal) / previousTotal) * 100).toFixed(2))
 }
 
 
@@ -375,14 +418,14 @@ function getDashboardBarangay(record: any): string {
 
   const explicitBarangay = getRecordValue(
     record,
-    'barangayName',
     'barangay_name',
-    'brgyName',
-    'brgy_name',
-    'barangay_label',
+    'barangay',
+    'brgy',
+    'barangayName',
+    'barangayLabel',
   )
 
-  if (explicitBarangay && explicitBarangay !== '[object Object]') {
+  if (explicitBarangay) {
     return explicitBarangay.toLowerCase().startsWith('barangay')
       ? toTitleCase(explicitBarangay)
       : `Barangay ${toTitleCase(explicitBarangay)}`
@@ -467,7 +510,7 @@ const chartPalette = ['#2563eb', '#f59e0b', '#059669', '#dc2626', '#7c3aed', '#0
 const softChartPalette = ['#dbeafe', '#fef3c7', '#d1fae5', '#fee2e2', '#ede9fe', '#cffafe']
 
 type CountDataItem = { name: string; count: number }
-type TrendDataItem = { date: string; count: number }
+type TrendDataItem = { date: string; isoDate: string; dayKey: string; count: number }
 
 function EmptyChartState({ message }: { message: string }) {
   return (
@@ -477,23 +520,126 @@ function EmptyChartState({ message }: { message: string }) {
   )
 }
 
-function DashboardLineChart({ data }: { data: TrendDataItem[] }) {
+function DashboardLineChart({
+  data,
+  comparisonData = [],
+  currentYearLabel,
+  comparisonYearLabel,
+  incidentTypeLabel,
+}: {
+  data: TrendDataItem[]
+  comparisonData?: TrendDataItem[]
+  currentYearLabel?: string
+  comparisonYearLabel?: string
+  incidentTypeLabel?: string
+}) {
   if (data.length === 0) {
     return <EmptyChartState message="No incident trend data available yet." />
   }
 
-  const width = 760
-  const height = 280
-  const padding = { top: 60, right: 48, bottom: 50, left: 60 }
+  const [animatedData, setAnimatedData] = useState<TrendDataItem[]>(data)
+  const [animatedComparisonData, setAnimatedComparisonData] = useState<TrendDataItem[]>(comparisonData)
+  const animationFrameRef = useRef<number | null>(null)
+  const previousDataRef = useRef<TrendDataItem[]>(data)
+  const previousComparisonDataRef = useRef<TrendDataItem[]>(comparisonData)
+
+  useEffect(() => {
+    if (animationFrameRef.current !== null) {
+      cancelAnimationFrame(animationFrameRef.current)
+      animationFrameRef.current = null
+    }
+
+    const previousData = previousDataRef.current
+    const previousComparisonData = previousComparisonDataRef.current
+
+    const previousDataMap = new Map(previousData.map((item) => [item.dayKey, item.count]))
+    const previousComparisonMap = new Map(previousComparisonData.map((item) => [item.dayKey, item.count]))
+
+    const startData = data.map((item) => ({
+      ...item,
+      count: previousDataMap.get(item.dayKey) ?? item.count,
+    }))
+
+    const startComparisonData = comparisonData.map((item) => ({
+      ...item,
+      count: previousComparisonMap.get(item.dayKey) ?? item.count,
+    }))
+
+    setAnimatedData(startData)
+    setAnimatedComparisonData(startComparisonData)
+
+    const durationMs = 420
+    const startTime = performance.now()
+
+    const easeInOutCubic = (value: number) => {
+      return value < 0.5 ? 4 * value * value * value : 1 - Math.pow(-2 * value + 2, 3) / 2
+    }
+
+    const animate = (now: number) => {
+      const elapsed = now - startTime
+      const progress = Math.min(1, elapsed / durationMs)
+      const eased = easeInOutCubic(progress)
+
+      setAnimatedData(
+        data.map((targetItem, index) => {
+          const startCount = startData[index]?.count ?? targetItem.count
+          return {
+            ...targetItem,
+            count: startCount + (targetItem.count - startCount) * eased,
+          }
+        }),
+      )
+
+      setAnimatedComparisonData(
+        comparisonData.map((targetItem, index) => {
+          const startCount = startComparisonData[index]?.count ?? targetItem.count
+          return {
+            ...targetItem,
+            count: startCount + (targetItem.count - startCount) * eased,
+          }
+        }),
+      )
+
+      if (progress < 1) {
+        animationFrameRef.current = requestAnimationFrame(animate)
+      } else {
+        animationFrameRef.current = null
+        previousDataRef.current = data
+        previousComparisonDataRef.current = comparisonData
+      }
+    }
+
+    animationFrameRef.current = requestAnimationFrame(animate)
+
+    return () => {
+      if (animationFrameRef.current !== null) {
+        cancelAnimationFrame(animationFrameRef.current)
+        animationFrameRef.current = null
+      }
+    }
+  }, [data, comparisonData])
+
+  const displayData = animatedData.length === data.length ? animatedData : data
+  const displayComparisonData =
+    animatedComparisonData.length === comparisonData.length ? animatedComparisonData : comparisonData
+
+  const width = 1120
+  const height = 360
+  const padding = { top: 24, right: 28, bottom: 56, left: 52 }
   const chartWidth = width - padding.left - padding.right
   const chartHeight = height - padding.top - padding.bottom
-  const maxCount = Math.max(1, ...data.map((item) => item.count))
+  const maxCount = Math.max(1, ...data.map((item) => item.count), ...comparisonData.map((item) => item.count))
   const totalCount = data.reduce((sum, item) => sum + item.count, 0)
   const peakPoint = data.reduce((top, item) => (item.count > top.count ? item : top), data[0])
-  const stepX = data.length > 1 ? chartWidth / (data.length - 1) : chartWidth
+  const stepX = displayData.length > 1 ? chartWidth / (displayData.length - 1) : chartWidth
+  const xLabelStep = 1
+  const denseMode = false
+  const markerStep = 1
+  const [selectedIndex, setSelectedIndex] = useState<number>(Math.max(0, data.length - 1))
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
 
-  const points = data.map((item, index) => {
-    const x = padding.left + (data.length > 1 ? index * stepX : chartWidth / 2)
+  const points = displayData.map((item, index) => {
+    const x = padding.left + (displayData.length > 1 ? index * stepX : chartWidth / 2)
     const y = padding.top + chartHeight - (item.count / maxCount) * chartHeight
     return { ...item, x, y }
   })
@@ -502,9 +648,26 @@ function DashboardLineChart({ data }: { data: TrendDataItem[] }) {
     .map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`)
     .join(' ')
 
-  const areaPath = `${linePath} L ${points[points.length - 1]?.x ?? padding.left} ${height - padding.bottom} L ${points[0]?.x ?? padding.left} ${height - padding.bottom} Z`
+  const comparisonCountByDayKey = new Map<string, number>()
+  displayComparisonData.forEach((item) => {
+    comparisonCountByDayKey.set(item.dayKey, item.count)
+  })
 
-  const yTickCount = Math.min(Math.max(maxCount, 1), 4)
+  const comparisonPoints = points.map((point) => {
+    const count = comparisonCountByDayKey.get(point.dayKey) || 0
+    const y = padding.top + chartHeight - (count / maxCount) * chartHeight
+    return {
+      ...point,
+      count,
+      y,
+    }
+  })
+
+  const comparisonPath = comparisonPoints
+    .map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`)
+    .join(' ')
+
+  const yTickCount = 5
   const yTicks = Array.from({ length: yTickCount + 1 }, (_, index) => {
     const value = Math.round((maxCount / yTickCount) * index)
     const y = padding.top + chartHeight - (value / maxCount) * chartHeight
@@ -513,46 +676,105 @@ function DashboardLineChart({ data }: { data: TrendDataItem[] }) {
 
   const lastPoint = points[points.length - 1]
   const peakIndex = points.findIndex((point) => point.date === peakPoint.date && point.count === peakPoint.count)
+  const safeSelectedIndex = Math.max(0, Math.min(selectedIndex, points.length - 1))
+  const activeIndex = hoveredIndex === null ? safeSelectedIndex : Math.max(0, Math.min(hoveredIndex, points.length - 1))
+  const selectedPoint = points[safeSelectedIndex]
+  const activePoint = points[activeIndex]
+  const selectedComparisonPoint = comparisonPoints[safeSelectedIndex]
+  const activeComparisonPoint = comparisonPoints[activeIndex]
+  const selectedCurrentCount = Math.round(selectedPoint?.count || 0)
+  const selectedComparisonCount = Math.round(selectedComparisonPoint?.count || 0)
+  const selectedDifference = selectedCurrentCount - selectedComparisonCount
+  const selectedPercentChange = calculateTrendPercentChange(selectedCurrentCount, selectedComparisonCount)
+  const activeCurrentCount = Math.round(activePoint?.count || 0)
+  const activeComparisonCount = Math.round(activeComparisonPoint?.count || 0)
+  const activeDifference = activeCurrentCount - activeComparisonCount
+  const activePercentChange = calculateTrendPercentChange(activeCurrentCount, activeComparisonCount)
+
+  const tooltipBoxWidth = 190
+  const tooltipBoxHeight = 84
+  const tooltipX = activePoint
+    ? Math.min(width - tooltipBoxWidth - 8, Math.max(8, activePoint.x + 12))
+    : 8
+  const tooltipY = activePoint
+    ? Math.max(8, activePoint.y - tooltipBoxHeight - 12)
+    : 8
+
+  useEffect(() => {
+    setSelectedIndex(Math.max(0, data.length - 1))
+  }, [data.length, comparisonData.length])
+
+  function resolveIndexFromMouseEvent(event: React.MouseEvent<SVGSVGElement>): number | null {
+    const rect = event.currentTarget.getBoundingClientRect()
+    if (!rect.width || data.length <= 1) {
+      return null
+    }
+
+    const clickX = event.clientX - rect.left
+    const svgX = (clickX / rect.width) * width
+    const ratio = (svgX - padding.left) / chartWidth
+    const nextIndex = Math.round(ratio * (data.length - 1))
+    return Math.max(0, Math.min(nextIndex, data.length - 1))
+  }
+
+  function handleChartClick(event: React.MouseEvent<SVGSVGElement>) {
+    const resolved = resolveIndexFromMouseEvent(event)
+    if (resolved !== null) {
+      setSelectedIndex(resolved)
+    }
+  }
+
+  function handleChartMouseMove(event: React.MouseEvent<SVGSVGElement>) {
+    const resolved = resolveIndexFromMouseEvent(event)
+    if (resolved !== null) {
+      setHoveredIndex(resolved)
+    }
+  }
 
   return (
-    <div className="relative h-full w-full overflow-hidden rounded-[26px] border border-blue-100 bg-[radial-gradient(circle_at_top_left,#dbeafe_0%,#ffffff_42%,#f8fafc_100%)] p-3 shadow-inner">
-      <div className="pointer-events-none absolute -left-20 top-10 h-44 w-44 rounded-full bg-blue-500/10 blur-3xl" />
-      <div className="pointer-events-none absolute -right-16 bottom-4 h-40 w-40 rounded-full bg-cyan-400/10 blur-3xl" />
+    <div className="relative h-full w-full overflow-hidden rounded-[18px] border border-slate-200 bg-gradient-to-br from-blue-50 via-sky-50 to-cyan-50 p-3 shadow-[0_10px_24px_rgba(15,23,42,0.06)]">
+
+      <div className="pointer-events-none absolute -right-10 -top-10 h-32 w-32 rounded-full bg-blue-200/20 blur-2xl" />
 
       <div className="absolute left-4 top-4 z-10 flex flex-wrap items-center gap-2 sm:left-5 sm:top-5">
-        <span className="rounded-full bg-blue-700 px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-white shadow-lg shadow-blue-700/20">
+        <span className="rounded-full bg-blue-600 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-white">
           Live trend
         </span>
-        <span className="rounded-full border border-blue-100 bg-white/80 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-blue-700 shadow-sm">
-          Last {data.length} days
+        <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-700">
+          {data.length} monthly points
         </span>
+        {comparisonData.length > 0 ? (
+          <span className="rounded-full border border-orange-200 bg-white px-3 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-orange-700">
+            Comparison overlay
+          </span>
+        ) : null}
       </div>
 
-      <div className="absolute right-4 top-4 z-10 hidden rounded-2xl border border-white/80 bg-white/90 px-4 py-2 text-right shadow-sm backdrop-blur sm:right-5 sm:top-5">
-        <p className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">Trend total</p>
-        <p className="text-lg font-black text-blue-800">{totalCount} reports</p>
+      <div className="absolute right-4 top-4 z-10 hidden rounded-xl border border-slate-200 bg-white px-3 py-2 text-right sm:right-5 sm:top-5">
+        <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">Trend total</p>
+        <p className="text-base font-semibold text-slate-900">{totalCount} reports</p>
       </div>
 
-      <svg className="relative z-[1] h-full w-full" preserveAspectRatio="xMidYMid meet" viewBox={`0 0 ${width} ${height}`}>
+      <svg
+        className="relative z-[1] h-full w-full cursor-crosshair"
+        preserveAspectRatio="xMidYMid meet"
+        viewBox={`0 0 ${width} ${height}`}
+        onClick={handleChartClick}
+        onMouseMove={handleChartMouseMove}
+        onMouseLeave={() => setHoveredIndex(null)}
+      >
         <defs>
-          <linearGradient id="incidentTrendStroke" x1="0" x2="1" y1="0" y2="0">
-            <stop offset="0%" stopColor="#1d4ed8" />
-            <stop offset="48%" stopColor="#2563eb" />
-            <stop offset="100%" stopColor="#06b6d4" />
-            <animate attributeName="x1" dur="3s" repeatCount="indefinite" values="0;0.2;0" />
-            <animate attributeName="x2" dur="3s" repeatCount="indefinite" values="1;1.2;1" />
-          </linearGradient>
-
-          <linearGradient id="incidentTrendArea" x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0%" stopColor="#2563eb" stopOpacity="0.30" />
-            <stop offset="60%" stopColor="#38bdf8" stopOpacity="0.09" />
-            <stop offset="100%" stopColor="#2563eb" stopOpacity="0.01" />
-          </linearGradient>
-
-          <filter id="incidentTrendGlow" height="220%" width="220%" x="-60%" y="-60%">
-            <feGaussianBlur result="coloredBlur" stdDeviation="5" />
+          <filter id="neonBlueGlow" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur in="SourceGraphic" stdDeviation="2.6" result="blur" />
             <feMerge>
-              <feMergeNode in="coloredBlur" />
+              <feMergeNode in="blur" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+          <filter id="neonOrangeGlow" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur in="SourceGraphic" stdDeviation="2.3" result="blur" />
+            <feMerge>
+              <feMergeNode in="blur" />
               <feMergeNode in="SourceGraphic" />
             </feMerge>
           </filter>
@@ -561,73 +783,113 @@ function DashboardLineChart({ data }: { data: TrendDataItem[] }) {
         {yTicks.map((tick) => (
           <g key={tick.value}>
             <line
-              stroke="#dbeafe"
+              stroke="#e5e7eb"
               strokeDasharray="7 7"
-              strokeWidth="1.2"
+              strokeWidth="1"
               x1={padding.left}
               x2={width - padding.right}
               y1={tick.y}
               y2={tick.y}
             />
-            <text fill="#64748b" fontSize="12" fontWeight="800" x={padding.left - 14} y={tick.y + 4} textAnchor="end">
+            <text fill="#6b7280" fontSize="12" fontWeight="600" x={padding.left - 10} y={tick.y + 4} textAnchor="end">
               {tick.value}
             </text>
           </g>
         ))}
 
         <line
-          stroke="#cbd5e1"
+          stroke="#d1d5db"
           strokeLinecap="round"
-          strokeWidth="1.4"
+          strokeWidth="1"
           x1={padding.left}
           x2={padding.left}
           y1={padding.top}
           y2={height - padding.bottom}
         />
         <line
-          stroke="#cbd5e1"
+          stroke="#d1d5db"
           strokeLinecap="round"
-          strokeWidth="1.4"
+          strokeWidth="1"
           x1={padding.left}
           x2={width - padding.right}
           y1={height - padding.bottom}
           y2={height - padding.bottom}
         />
 
-        <path d={areaPath} fill="url(#incidentTrendArea)">
-          <animate attributeName="opacity" dur="1.2s" values="0;1" fill="freeze" />
-        </path>
+        {activePoint ? (
+          <line
+            x1={activePoint.x}
+            x2={activePoint.x}
+            y1={padding.top}
+            y2={height - padding.bottom}
+            stroke="#9ca3af"
+            strokeDasharray="5 5"
+            strokeWidth="1"
+          />
+        ) : null}
 
         <path
           d={linePath}
           fill="none"
-          filter="url(#incidentTrendGlow)"
-          stroke="url(#incidentTrendStroke)"
-          strokeDasharray="1300"
-          strokeDashoffset="1300"
+          stroke="#2d5bff"
+          filter="url(#neonBlueGlow)"
           strokeLinecap="round"
           strokeLinejoin="round"
-          strokeWidth="7"
-        >
-          <animate attributeName="stroke-dashoffset" begin="0s" dur="1.35s" fill="freeze" values="1300;0" />
-        </path>
-
-        <path
-          d={linePath}
-          fill="none"
-          stroke="#ffffff"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeOpacity="0.65"
-          strokeWidth="2"
+          strokeWidth="2.5"
         />
+
+        {comparisonData.length > 0 ? (
+          <path
+            d={comparisonPath}
+            fill="none"
+            stroke="#ff7b1a"
+            filter="url(#neonOrangeGlow)"
+            strokeDasharray="4 4"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth="2.4"
+          />
+        ) : null}
+
+        {activePoint ? (
+          <g>
+            <rect
+              x={tooltipX}
+              y={tooltipY}
+              rx="10"
+              ry="10"
+              width={tooltipBoxWidth}
+              height={tooltipBoxHeight}
+              fill="#ffffff"
+              stroke="#cbd5e1"
+              strokeWidth="1"
+            />
+            <text x={tooltipX + 10} y={tooltipY + 18} fill="#111827" fontSize="11" fontWeight="700">
+              {activePoint.isoDate}
+            </text>
+            <text x={tooltipX + 10} y={tooltipY + 36} fill="#1d4ed8" fontSize="10" fontWeight="700">
+              {currentYearLabel || 'Current'}: {activeCurrentCount}
+            </text>
+            <text x={tooltipX + 10} y={tooltipY + 52} fill="#c2410c" fontSize="10" fontWeight="700">
+              {comparisonYearLabel || 'Compare'}: {activeComparisonCount}
+            </text>
+            <text x={tooltipX + 10} y={tooltipY + 68} fill="#334155" fontSize="10" fontWeight="700">
+              Diff: {activeDifference > 0 ? '+' : ''}{activeDifference}
+              {activePercentChange === null ? ' (N/A%)' : ` (${activePercentChange > 0 ? '+' : ''}${activePercentChange}%)`}
+            </text>
+          </g>
+        ) : null}
 
         {points.map((point, index) => {
           const isPeak = index === peakIndex
           const isLast = index === points.length - 1
+          const isSelected = index === safeSelectedIndex
+          const isActive = index === activeIndex
+          const shouldShowMarker = !denseMode || isPeak || isLast || index % markerStep === 0
+          const shouldShowCountLabel = (!denseMode && point.count > 0) || isPeak || isLast
 
           return (
-            <g key={`${point.date}-${point.count}-${index}`}>
+            <g key={`${point.date}-${point.count}-${index}`} onClick={() => setSelectedIndex(index)}>
               {isPeak || isLast ? (
                 <circle cx={point.x} cy={point.y} fill="#2563eb" opacity="0.18" r="14">
                   <animate attributeName="r" dur="1.5s" repeatCount="indefinite" values="10;22;10" />
@@ -635,31 +897,82 @@ function DashboardLineChart({ data }: { data: TrendDataItem[] }) {
                 </circle>
               ) : null}
 
-              <circle cx={point.x} cy={point.y} fill="#ffffff" r="9" stroke="#bfdbfe" strokeWidth="7" />
-              <circle cx={point.x} cy={point.y} fill={isPeak ? '#f59e0b' : '#2563eb'} r={isPeak ? '6' : '5'} />
+              {isSelected ? <circle cx={point.x} cy={point.y} fill="#2d5bff" opacity="0.26" r="9" /> : null}
+              {isActive ? <circle cx={point.x} cy={point.y} fill="#1dd3ff" opacity="0.2" r="8" /> : null}
 
-              <text fill="#0f172a" fontSize="12" fontWeight="900" x={point.x} y={point.y - 16} textAnchor="middle">
-                {point.count}
-              </text>
+              {shouldShowMarker ? (
+                <>
+                  <circle cx={point.x} cy={point.y} fill="#ffffff" r="5" stroke="#66b7ff" strokeWidth="2" />
+                  <circle cx={point.x} cy={point.y} fill={isPeak ? '#ffb020' : '#2d5bff'} r={isPeak ? '4.5' : '3.5'} />
+                </>
+              ) : null}
 
-              <text fill={isLast ? '#1d4ed8' : '#64748b'} fontSize="11" fontWeight="900" x={point.x} y={height - 22} textAnchor="middle">
-                {point.date}
-              </text>
+              {shouldShowCountLabel ? (
+                <text fill="#111827" fontSize="11" fontWeight="600" x={point.x} y={point.y - 12} textAnchor="middle">
+                  {point.count}
+                </text>
+              ) : null}
+
+              {index % xLabelStep === 0 || isLast ? (
+                <text fill={isLast ? '#2563eb' : '#6b7280'} fontSize="12" fontWeight="600" x={point.x} y={height - 18} textAnchor="middle">
+                  {point.date}
+                </text>
+              ) : null}
             </g>
           )
         })}
 
         {lastPoint ? (
           <g>
-            <circle cx={lastPoint.x} cy={lastPoint.y} fill="#06b6d4" r="4">
-              <animate attributeName="opacity" dur="0.9s" repeatCount="indefinite" values="1;0.35;1" />
-            </circle>
-            <text fill="#0369a1" fontSize="11" fontWeight="900" x={lastPoint.x - 2} y={Math.min(lastPoint.y + 34, height - padding.bottom - 10)} textAnchor="end">
+            <circle cx={lastPoint.x} cy={lastPoint.y} fill="#00c8ff" r="4" />
+            <text fill="#0a4be6" fontSize="11" fontWeight="700" x={lastPoint.x - 2} y={Math.min(lastPoint.y + 30, height - padding.bottom - 8)} textAnchor="end">
               Latest
             </text>
           </g>
         ) : null}
       </svg>
+
+      <div className="mt-3 flex flex-wrap items-center gap-4 text-[11px] font-semibold text-slate-600">
+        <span className="inline-flex items-center gap-2">
+          <span className="h-2.5 w-2.5 rounded-full bg-[#2d5bff]" />
+          {currentYearLabel || 'Current year'}
+        </span>
+        {comparisonData.length > 0 ? (
+          <span className="inline-flex items-center gap-2">
+            <span className="h-2.5 w-2.5 rounded-full bg-[#ff7b1a]" />
+            {comparisonYearLabel || 'Comparison year'}
+          </span>
+        ) : null}
+        <span className="inline-flex items-center gap-2">
+          <span className="h-2.5 w-2.5 rounded-full bg-amber-500" />
+          Peak marker
+        </span>
+      </div>
+
+      {selectedPoint ? (
+        <div className="mt-3 grid gap-3 rounded-2xl border border-slate-200 bg-white/95 p-3 text-xs text-slate-700 shadow-[0_8px_18px_rgba(15,23,42,0.05)] sm:grid-cols-4">
+          <div>
+            <p className="font-semibold uppercase tracking-[0.12em] text-slate-500">Selected month</p>
+            <p className="mt-1 text-sm font-bold text-slate-900">{selectedPoint.date}</p>
+          </div>
+          <div>
+            <p className="font-semibold uppercase tracking-[0.12em] text-slate-500">{currentYearLabel || 'Current year'}</p>
+            <p className="mt-1 text-sm font-bold text-slate-900">{selectedCurrentCount} reports</p>
+          </div>
+          <div>
+            <p className="font-semibold uppercase tracking-[0.12em] text-slate-500">{comparisonYearLabel || 'Comparison year'}</p>
+            <p className="mt-1 text-sm font-bold text-slate-900">{selectedComparisonCount} reports</p>
+          </div>
+          <div>
+            <p className="font-semibold uppercase tracking-[0.12em] text-slate-500">Difference</p>
+            <p className="mt-1 text-sm font-bold text-slate-900">
+              {selectedDifference > 0 ? '+' : ''}{selectedDifference}
+              {selectedPercentChange === null ? ' (N/A%)' : ` (${selectedPercentChange > 0 ? '+' : ''}${selectedPercentChange}%)`}
+            </p>
+            <p className="mt-1 text-[11px] text-slate-500">{incidentTypeLabel || 'All incident types'}</p>
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -669,6 +982,7 @@ function DashboardDonutChart({ data }: { data: CountDataItem[] }) {
     return <EmptyChartState message="No distribution data available yet." />
   }
 
+  const chartKey = data.map((item) => `${item.name}:${item.count}`).join('|')
   const total = data.reduce((sum, item) => sum + item.count, 0)
   const radius = 78
   const circumference = 2 * Math.PI * radius
@@ -677,7 +991,7 @@ function DashboardDonutChart({ data }: { data: CountDataItem[] }) {
   const leadingPercentage = total > 0 ? Math.round((leading.count / total) * 100) : 0
 
   return (
-    <div className="relative flex h-full w-full flex-col gap-5 overflow-hidden rounded-[24px] border border-blue-100 bg-[radial-gradient(circle_at_top_left,#eff6ff_0%,#ffffff_44%,#f8fafc_100%)] p-5">
+    <div className="dashboard-chart-enter relative flex h-full w-full flex-col gap-5 overflow-hidden rounded-[24px] border border-blue-100 bg-[radial-gradient(circle_at_top_left,#eff6ff_0%,#ffffff_44%,#f8fafc_100%)] p-5" key={chartKey}>
       <div className="pointer-events-none absolute -left-16 top-8 h-36 w-36 rounded-full bg-blue-500/10 blur-3xl" />
       <div className="pointer-events-none absolute -right-12 bottom-8 h-36 w-36 rounded-full bg-emerald-400/10 blur-3xl" />
 
@@ -718,6 +1032,8 @@ function DashboardDonutChart({ data }: { data: CountDataItem[] }) {
                 strokeLinecap="round"
                 strokeWidth="30"
                 transform="rotate(-90 120 120)"
+                className="dashboard-donut-segment"
+                style={{ animationDelay: `${index * 100}ms` }}
               >
                 <animate
                   attributeName="stroke-dasharray"
@@ -777,8 +1093,9 @@ function DashboardDonutChart({ data }: { data: CountDataItem[] }) {
 
             return (
               <div
-                className="group rounded-2xl border border-white/80 bg-white/80 p-3 shadow-sm transition-all duration-300 hover:-translate-y-0.5 hover:border-blue-100 hover:bg-white hover:shadow-md"
+                className="dashboard-chart-row-enter group rounded-2xl border border-white/80 bg-white/80 p-3 shadow-sm transition-all duration-300 hover:-translate-y-0.5 hover:border-blue-100 hover:bg-white hover:shadow-md"
                 key={entry.name}
+                style={{ animationDelay: `${260 + index * 75}ms` }}
               >
                 <div className="mb-2 flex items-center justify-between gap-3">
                   <div className="flex min-w-0 items-center gap-2">
@@ -795,8 +1112,9 @@ function DashboardDonutChart({ data }: { data: CountDataItem[] }) {
 
                 <div className="h-2 overflow-hidden rounded-full bg-slate-100">
                   <div
-                    className="h-full rounded-full transition-all duration-700 group-hover:brightness-110"
+                    className="dashboard-chart-bar-fill h-full rounded-full transition-all duration-700 group-hover:brightness-110"
                     style={{
+                      animationDelay: `${310 + index * 75}ms`,
                       background: `linear-gradient(90deg, ${softChartPalette[index % softChartPalette.length]}, ${chartPalette[index % chartPalette.length]})`,
                       width: `${Math.max(5, percentage)}%`,
                     }}
@@ -815,21 +1133,32 @@ function DashboardDonutChart({ data }: { data: CountDataItem[] }) {
   )
 }
 
-function DashboardBarChart({ data }: { data: CountDataItem[] }) {
+function DashboardBarChart({
+  data,
+  emptyMessage = 'No barangay hotspot data available yet.',
+}: {
+  data: CountDataItem[]
+  emptyMessage?: string
+}) {
   if (data.length === 0) {
-    return <EmptyChartState message="No barangay hotspot data available yet." />
+    return <EmptyChartState message={emptyMessage} />
   }
 
+  const chartKey = data.map((item) => `${item.name}:${item.count}`).join('|')
   const maxCount = Math.max(1, ...data.map((item) => item.count))
 
   return (
-    <div className="flex h-full min-h-[240px] flex-col justify-center gap-3 rounded-[22px] bg-gradient-to-br from-amber-50 via-white to-slate-50 p-3 sm:p-4">
+    <div className="dashboard-chart-enter flex h-full min-h-[240px] flex-col justify-center gap-3 rounded-[22px] bg-gradient-to-br from-amber-50 via-white to-slate-50 p-3 sm:p-4" key={chartKey}>
       {data.map((item, index) => {
         const width = `${Math.max(10, (item.count / maxCount) * 100)}%`
         const percentage = Math.round((item.count / maxCount) * 100)
 
         return (
-          <div className="rounded-2xl border border-white/80 bg-white/80 p-3 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md" key={item.name}>
+          <div
+            className="dashboard-chart-row-enter rounded-2xl border border-white/80 bg-white/80 p-3 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+            key={item.name}
+            style={{ animationDelay: `${index * 90}ms` }}
+          >
             <div className="mb-2 flex items-center justify-between gap-3">
               <div className="flex min-w-0 items-center gap-2">
                 <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white" style={{ backgroundColor: chartPalette[index % chartPalette.length] }}>
@@ -842,8 +1171,12 @@ function DashboardBarChart({ data }: { data: CountDataItem[] }) {
 
             <div className="relative h-4 overflow-hidden rounded-full bg-slate-100">
               <div
-                className="absolute inset-y-0 left-0 rounded-full shadow-[0_4px_14px_rgba(15,23,42,0.16)]"
-                style={{ background: `linear-gradient(90deg, ${softChartPalette[index % softChartPalette.length]}, ${chartPalette[index % chartPalette.length]})`, width }}
+                className="dashboard-chart-bar-fill absolute inset-y-0 left-0 rounded-full shadow-[0_4px_14px_rgba(15,23,42,0.16)]"
+                style={{
+                  animationDelay: `${120 + index * 90}ms`,
+                  background: `linear-gradient(90deg, ${softChartPalette[index % softChartPalette.length]}, ${chartPalette[index % chartPalette.length]})`,
+                  width,
+                }}
               />
             </div>
 
@@ -898,6 +1231,13 @@ export function AdminDashboardPage() {
   const [eqLastUpdated, setEqLastUpdated] = useState<Date | null>(null)
   const [eqCardStatus, setEqCardStatus] = useState<'loading' | 'ready' | 'error'>('loading')
   const [dashboardSearchQuery, setDashboardSearchQuery] = useState('')
+  const [trendYear, setTrendYear] = useState<string>('')
+  const [trendCompareYear, setTrendCompareYear] = useState<string>('')
+  const [trendIncidentType, setTrendIncidentType] = useState<string>('')
+  const [distributionYear, setDistributionYear] = useState<string>('')
+  const [distributionBarangay, setDistributionBarangay] = useState<string>('')
+  const [hotspotYear, setHotspotYear] = useState<string>('')
+  const [hotspotIncidentType, setHotspotIncidentType] = useState<string>('')
   const isMountedRef = useRef(true)
 
   const loadBackendData = useCallback(async () => {
@@ -1282,23 +1622,167 @@ export function AdminDashboardPage() {
     },
   ]
 
+  const availableTrendIncidentTypes = useMemo(() => {
+    return Array.from(new Set(dashboardIncidentRecords.map((record) => getDashboardIncidentType(record))))
+      .sort((left, right) => left.localeCompare(right))
+  }, [dashboardIncidentRecords])
+
+  const trendRecords = useMemo(() => {
+    if (!trendIncidentType) {
+      return dashboardIncidentRecords
+    }
+
+    return dashboardIncidentRecords.filter((record) => getDashboardIncidentType(record) === trendIncidentType)
+  }, [dashboardIncidentRecords, trendIncidentType])
+
+  const trendIncidentTypeLabel = trendIncidentType || 'All incident types'
+
   const incidentTrendData = useMemo(
-    () => buildLastSevenDaysTrend(dashboardIncidentRecords),
-    [dashboardIncidentRecords],
+    () =>
+      buildDailyTrendForPeriod(
+        trendRecords,
+        Number(trendYear || new Date().getFullYear()),
+      ),
+    [trendRecords, trendYear],
   )
 
-  const incidentDistributionData = useMemo(
-    () => buildCountData(dashboardIncidentRecords, getDashboardIncidentType),
-    [dashboardIncidentRecords],
+  const incidentTrendComparisonData = useMemo(
+    () =>
+      buildDailyTrendForPeriod(
+        trendRecords,
+        Number(trendCompareYear || Number(trendYear || new Date().getFullYear()) - 1),
+      ),
+    [trendRecords, trendCompareYear, trendYear],
   )
+
+  const availableTrendYears = useMemo(() => {
+    const years = new Set<number>()
+    trendRecords.forEach((record) => years.add(getIncidentTimelineDate(record).getFullYear()))
+
+    if (years.size === 0) {
+      years.add(new Date().getFullYear())
+    }
+
+    return Array.from(years)
+      .sort((left, right) => right - left)
+      .map((year) => String(year))
+  }, [trendRecords])
+
+  useEffect(() => {
+    if (!trendYear && availableTrendYears.length > 0) {
+      setTrendYear(availableTrendYears[0])
+    }
+  }, [availableTrendYears, trendYear])
+
+  useEffect(() => {
+    if (trendYear && !trendCompareYear) {
+      setTrendCompareYear(String(Number(trendYear) - 1))
+    }
+  }, [trendYear, trendCompareYear])
+
+  const incidentTrendCurrentTotal = useMemo(
+    () => incidentTrendData.reduce((sum, item) => sum + item.count, 0),
+    [incidentTrendData],
+  )
+
+  const incidentTrendComparisonTotal = useMemo(
+    () => incidentTrendComparisonData.reduce((sum, item) => sum + item.count, 0),
+    [incidentTrendComparisonData],
+  )
+
+  const incidentTrendPercentChange = useMemo(
+    () => calculateTrendPercentChange(incidentTrendCurrentTotal, incidentTrendComparisonTotal),
+    [incidentTrendCurrentTotal, incidentTrendComparisonTotal],
+  )
+
+  const availableHotspotYears = useMemo(() => {
+    const years = new Set<number>()
+
+    dashboardIncidentRecords.forEach((record) => {
+      years.add(getIncidentTimelineDate(record).getFullYear())
+    })
+
+    if (years.size === 0) {
+      years.add(new Date().getFullYear())
+    }
+
+    return Array.from(years)
+      .sort((left, right) => right - left)
+      .map((year) => String(year))
+  }, [dashboardIncidentRecords])
+
+  useEffect(() => {
+    if (availableHotspotYears.length === 0) return
+
+    if (!distributionYear || !availableHotspotYears.includes(distributionYear)) {
+      setDistributionYear(availableHotspotYears[0])
+    }
+  }, [availableHotspotYears, distributionYear])
+
+  const distributionRecords = useMemo(() => {
+    return dashboardIncidentRecords
+      .filter((record) => {
+        if (!distributionYear) return true
+        return getIncidentTimelineDate(record).getFullYear() === Number(distributionYear)
+      })
+      .filter((record) => {
+        if (!distributionBarangay) return true
+        return getDashboardBarangay(record) === distributionBarangay
+      })
+  }, [dashboardIncidentRecords, distributionBarangay, distributionYear])
+
+  const availableDistributionBarangays = useMemo(() => {
+    const items = dashboardIncidentRecords
+      .filter((record) => {
+        if (!distributionYear) return true
+        return getIncidentTimelineDate(record).getFullYear() === Number(distributionYear)
+      })
+      .filter((record) => !isPlaceholderLocation(getDashboardLocation(record)))
+      .map((record) => getDashboardBarangay(record))
+
+    return Array.from(new Set(items)).sort((left, right) => left.localeCompare(right))
+  }, [dashboardIncidentRecords, distributionYear])
+
+  useEffect(() => {
+    if (!distributionBarangay) return
+    if (!availableDistributionBarangays.includes(distributionBarangay)) {
+      setDistributionBarangay('')
+    }
+  }, [availableDistributionBarangays, distributionBarangay])
+
+  const incidentDistributionData = useMemo(
+    () => buildCountData(distributionRecords, getDashboardIncidentType),
+    [distributionRecords],
+  )
+
+  useEffect(() => {
+    if (availableHotspotYears.length === 0) return
+
+    if (!hotspotYear || !availableHotspotYears.includes(hotspotYear)) {
+      setHotspotYear(availableHotspotYears[0])
+    }
+  }, [availableHotspotYears, hotspotYear])
+
+  const hotspotRecords = useMemo(() => {
+    return dashboardIncidentRecords
+      .filter((record) => !isPlaceholderLocation(getDashboardLocation(record)))
+      .filter((record) => {
+        if (!hotspotYear) return true
+        return getIncidentTimelineDate(record).getFullYear() === Number(hotspotYear)
+      })
+      .filter((record) => {
+        if (!hotspotIncidentType) return true
+        return getDashboardIncidentType(record) === hotspotIncidentType
+      })
+  }, [dashboardIncidentRecords, hotspotIncidentType, hotspotYear])
 
   const topBarangayData = useMemo(
     () =>
       buildCountData(
-        dashboardIncidentRecords.filter((record) => !isPlaceholderLocation(getDashboardLocation(record))),
+        hotspotRecords,
         getDashboardBarangay,
       ).slice(0, 5),
-    [dashboardIncidentRecords],
+    [hotspotRecords],
   )
 
 
@@ -1695,53 +2179,97 @@ export function AdminDashboardPage() {
                       Incident Trend
                     </p>
                     <h2 className="mt-1 text-lg font-bold text-slate-900 sm:text-xl">
-                      Daily Incident Reports
+                      Disaster Trend Analysis
                     </h2>
                     <p className="mt-1 text-sm text-slate-500">
-                      Number of reports submitted by date based on current dashboard data.
+                      Compare monthly incident counts by year and optional incident type. Timeline uses incident occurrence date/time when available, with report created date as fallback.
                     </p>
                   </div>
 
-                  <div className="rounded-2xl bg-blue-50 px-4 py-2 text-left sm:text-right">
-                    <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-blue-500">Peak day</p>
-                    <p className="text-sm font-bold text-blue-800">
-                      {incidentTrendData.length > 0
-                        ? incidentTrendData.reduce((top, item) => (item.count > top.count ? item : top), incidentTrendData[0]).date
-                        : 'No data'}
-                    </p>
-                  </div>
                 </div>
 
-                <div className="h-[230px] w-full sm:h-[250px] lg:h-[270px]">
-                  <DashboardLineChart data={incidentTrendData} />
+                <div className="mb-4 grid gap-3 sm:grid-cols-3">
+                  <label className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+                    Year
+                    <select
+                      className="mt-2 block w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900"
+                      value={trendYear}
+                      onChange={(event) => setTrendYear(event.target.value)}
+                    >
+                      {availableTrendYears.map((year) => (
+                        <option key={year} value={year}>{year}</option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+                    Compare with Year
+                    <select
+                      className="mt-2 block w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900"
+                      value={trendCompareYear}
+                      onChange={(event) => setTrendCompareYear(event.target.value)}
+                    >
+                      {availableTrendYears.concat(String(Number(trendYear || new Date().getFullYear()) - 1)).filter((value, index, array) => array.indexOf(value) === index).map((year) => (
+                        <option key={`compare-${year}`} value={year}>{year}</option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+                    Incident Type
+                    <select
+                      className="mt-2 block w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900"
+                      value={trendIncidentType}
+                      onChange={(event) => setTrendIncidentType(event.target.value)}
+                    >
+                      <option value="">All incident types</option>
+                      {availableTrendIncidentTypes.map((type) => (
+                        <option key={type} value={type}>{type}</option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+
+                <p className="mb-3 text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+                  Viewing: {trendIncidentTypeLabel}
+                </p>
+
+                <div className="h-[300px] w-full sm:h-[340px] lg:h-[380px]">
+                  <DashboardLineChart
+                    data={incidentTrendData}
+                    comparisonData={incidentTrendComparisonData}
+                    currentYearLabel={trendYear || 'Current year'}
+                    comparisonYearLabel={trendCompareYear || 'Comparison year'}
+                    incidentTypeLabel={trendIncidentTypeLabel}
+                  />
                 </div>
 
                 <div className="mt-5 grid gap-3 rounded-2xl border border-slate-100 bg-slate-50/80 p-3 text-center sm:grid-cols-3 sm:p-4">
                   <div>
-                    <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-blue-600">Total last 7 days</p>
-                    <p className="mt-1 text-xl font-bold text-slate-900">{incidentTrendData.reduce((sum, item) => sum + item.count, 0)}</p>
-                    <p className="text-xs text-slate-500">reports</p>
+                    <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-blue-600">Current period total</p>
+                    <p className="mt-1 text-xl font-bold text-slate-900">{incidentTrendCurrentTotal}</p>
+                    <p className="text-xs text-slate-500">{trendIncidentType ? `${trendIncidentType} reports` : 'reports'}</p>
                   </div>
                   <div className="sm:border-x sm:border-slate-200">
-                    <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-blue-600">Average per day</p>
+                    <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-blue-600">Comparison period total</p>
                     <p className="mt-1 text-xl font-bold text-slate-900">
-                      {(incidentTrendData.reduce((sum, item) => sum + item.count, 0) / Math.max(incidentTrendData.length, 1)).toFixed(2)}
+                      {incidentTrendComparisonTotal}
                     </p>
-                    <p className="text-xs text-slate-500">reports</p>
+                    <p className="text-xs text-slate-500">{trendIncidentType ? `${trendIncidentType} reports` : 'reports'}</p>
                   </div>
                   <div>
-                    <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-blue-600">Peak count</p>
+                    <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-blue-600">Percent change</p>
                     <p className="mt-1 text-xl font-bold text-slate-900">
-                      {incidentTrendData.length > 0
-                        ? incidentTrendData.reduce((top, item) => (item.count > top.count ? item : top), incidentTrendData[0]).count
-                        : 0}
+                      {incidentTrendPercentChange === null
+                        ? 'N/A'
+                        : `${incidentTrendPercentChange > 0 ? '+' : ''}${incidentTrendPercentChange}%`}
                     </p>
-                    <p className="text-xs text-slate-500">reports</p>
+                    <p className="text-xs text-slate-500">trend vs comparison year</p>
                   </div>
                 </div>
               </div>
 
-              <div className="mt-5 grid gap-5 xl:grid-cols-2">
+              <div className="mt-5 space-y-5">
                 <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white p-4 shadow-[0_16px_38px_rgba(15,23,42,0.09)] sm:p-5">
                   <p className="text-xs font-bold uppercase tracking-[0.22em] text-slate-500">
                     Incident Distribution
@@ -1751,6 +2279,39 @@ export function AdminDashboardPage() {
                   </h2>
                   <p className="mt-1 text-sm text-slate-500">
                     Shows which incident type has the largest share of all submitted reports.
+                  </p>
+
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                    <label className="text-[11px] font-semibold uppercase tracking-[0.13em] text-slate-500">
+                      Year
+                      <select
+                        className="mt-2 block w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900"
+                        value={distributionYear}
+                        onChange={(event) => setDistributionYear(event.target.value)}
+                      >
+                        {availableHotspotYears.map((year) => (
+                          <option key={`distribution-year-${year}`} value={year}>{year}</option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="text-[11px] font-semibold uppercase tracking-[0.13em] text-slate-500">
+                      Barangay
+                      <select
+                        className="mt-2 block w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900"
+                        value={distributionBarangay}
+                        onChange={(event) => setDistributionBarangay(event.target.value)}
+                      >
+                        <option value="">All barangays</option>
+                        {availableDistributionBarangays.map((barangay) => (
+                          <option key={`distribution-barangay-${barangay}`} value={barangay}>{barangay}</option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+
+                  <p className="mt-3 text-[11px] font-semibold uppercase tracking-[0.13em] text-slate-500">
+                    Viewing: {distributionYear || 'All years'} • {distributionBarangay || 'All barangays'}
                   </p>
 
                   <div className="mt-4 min-h-[720px] w-full sm:min-h-[700px] lg:min-h-[720px]">
@@ -1770,7 +2331,7 @@ export function AdminDashboardPage() {
                         Top 5 Barangays with Most Incidents
                       </h2>
                       <p className="mt-1.5 text-xs text-slate-500 leading-relaxed">
-                        Highest incident concentration based on barangay-linked report data.
+                        Identify barangays with the highest number of a specific incident type.
                       </p>
                     </div>
 
@@ -1796,8 +2357,44 @@ export function AdminDashboardPage() {
                     </div>
                   </div>
 
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                    <label className="text-[11px] font-semibold uppercase tracking-[0.13em] text-slate-500">
+                      Year
+                      <select
+                        className="mt-2 block w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900"
+                        value={hotspotYear}
+                        onChange={(event) => setHotspotYear(event.target.value)}
+                      >
+                        {availableHotspotYears.map((year) => (
+                          <option key={`hotspot-year-${year}`} value={year}>{year}</option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="text-[11px] font-semibold uppercase tracking-[0.13em] text-slate-500">
+                      Incident Type
+                      <select
+                        className="mt-2 block w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900"
+                        value={hotspotIncidentType}
+                        onChange={(event) => setHotspotIncidentType(event.target.value)}
+                      >
+                        <option value="">All incident types</option>
+                        {availableTrendIncidentTypes.map((type) => (
+                          <option key={`hotspot-type-${type}`} value={type}>{type}</option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+
+                  <p className="mt-3 text-[11px] font-semibold uppercase tracking-[0.13em] text-slate-500">
+                    Viewing: {hotspotIncidentType || 'All incident types'} in {hotspotYear || 'All years'}
+                  </p>
+
                   <div className="mt-5 min-h-[340px] w-full sm:min-h-[360px]">
-                    <DashboardBarChart data={topBarangayData} />
+                    <DashboardBarChart
+                      data={topBarangayData}
+                      emptyMessage={`No hotspot data found for ${hotspotIncidentType || 'the selected incident filter'} in ${hotspotYear || 'the selected year'}.`}
+                    />
                   </div>
 
                 </div>

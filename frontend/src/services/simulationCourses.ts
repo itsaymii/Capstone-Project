@@ -1,3 +1,5 @@
+import { getSimulationCoursesCatalog, syncSimulationCoursesCatalog } from './api'
+
 export type SimulationCourseDifficulty = 'Beginner' | 'Intermediate' | 'Advanced'
 
 export type SimulationLessonType = 'video' | 'lesson' | 'exam'
@@ -608,4 +610,23 @@ export function saveSimulationCourses(courses: SimulationCourse[]): void {
   } catch {
     throw new Error(SIMULATION_COURSE_STORAGE_ERROR)
   }
+}
+
+export async function loadSimulationCoursesFromServer(): Promise<SimulationCourse[]> {
+  const response = await getSimulationCoursesCatalog()
+  const normalized = normalizeCourses(response.courses) ?? cloneCourses(defaultSimulationCourses)
+  saveSimulationCourses(normalized)
+  return cloneCourses(normalized)
+}
+
+export async function saveSimulationCoursesToServer(courses: SimulationCourse[]): Promise<SimulationCourse[]> {
+  const normalized = normalizeCourses(courses)
+  if (!normalized) {
+    throw new Error('At least one valid simulation course is required.')
+  }
+
+  const response = await syncSimulationCoursesCatalog(normalized)
+  const synced = normalizeCourses(response.courses) ?? normalized
+  saveSimulationCourses(synced)
+  return cloneCourses(synced)
 }

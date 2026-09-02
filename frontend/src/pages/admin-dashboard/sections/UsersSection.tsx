@@ -1,6 +1,6 @@
 import axios from 'axios'
 import { useEffect, useMemo, useState } from 'react'
-import { createDashboardAccount, deleteDashboardAccount, getDashboardAccounts, updateDashboardAccount } from '../../../services/api'
+import { createDashboardAccount, deleteDashboardAccount, getDashboardAccounts, updateDashboardAccount, updateDashboardResidencyVerification } from '../../../services/api'
 import type { AuthUser, UserRole } from '../../../types/api'
 import { glassPanelClass, glassPanelSoftClass } from './constants'
 
@@ -64,6 +64,20 @@ function getRoleLabel(role: UserRole): string {
   return 'Citizen'
 }
 
+function getResidencyStatusLabel(status?: AuthUser['residencyStatus']): string {
+  if (status === 'verified') return 'Verified resident'
+  if (status === 'rejected') return 'Rejected'
+  if (status === 'pending') return 'Pending review'
+  return 'Not submitted'
+}
+
+function getResidencyStatusClass(status?: AuthUser['residencyStatus']): string {
+  if (status === 'verified') return 'border-emerald-200 bg-emerald-50 text-emerald-700'
+  if (status === 'rejected') return 'border-red-200 bg-red-50 text-red-700'
+  if (status === 'pending') return 'border-amber-200 bg-amber-50 text-amber-700'
+  return 'border-slate-200 bg-slate-50 text-slate-600'
+}
+
 function formatUserDateTime(value?: string | null): string {
   if (!value) return 'Not available'
   const parsed = new Date(value)
@@ -107,7 +121,9 @@ export function UsersSection({ searchQuery = '' }: UsersSectionProps) {
   const [userFormState, setUserFormState] = useState<DashboardUserFormState>(defaultDashboardUserFormState)
   const [isSavingUser, setIsSavingUser] = useState(false)
   const [deletingUserId, setDeletingUserId] = useState<number | null>(null)
+  const [reviewingUserId, setReviewingUserId] = useState<number | null>(null)
   const [isUserModalOpen, setIsUserModalOpen] = useState(false)
+  const [proofPreviewUser, setProofPreviewUser] = useState<AuthUser | null>(null)
 
   const normalizedSearchQuery = searchQuery.trim().toLowerCase()
 
@@ -260,6 +276,29 @@ export function UsersSection({ searchQuery = '' }: UsersSectionProps) {
     }
   }
 
+  async function handleResidencyDecision(user: AuthUser, status: 'verified' | 'rejected'): Promise<void> {
+    if (!user.id) return
+
+    let rejectionReason = ''
+    if (status === 'rejected') {
+      rejectionReason = window.prompt('Provide the reason for rejecting this residency verification:')?.trim() || ''
+      if (!rejectionReason) return
+    }
+
+    setReviewingUserId(user.id)
+    setUsersMessage('')
+    setUsersError('')
+    try {
+      const response = await updateDashboardResidencyVerification(user.id, { status, rejectionReason })
+      setDashboardUsers((currentUsers) => currentUsers.map((currentUser) => (currentUser.id === user.id ? response.user : currentUser)))
+      setUsersMessage(response.message)
+    } catch (error) {
+      setUsersError(getUsersApiErrorMessage(error, 'Unable to update residency verification right now.'))
+    } finally {
+      setReviewingUserId(null)
+    }
+  }
+
   function renderLoadingSkeleton() {
     return (
       <div className="space-y-4">
@@ -338,7 +377,7 @@ export function UsersSection({ searchQuery = '' }: UsersSectionProps) {
             renderLoadingSkeleton()
           ) : (
             <>
-              <div className="grid gap-3 sm:grid-cols-4">
+              <div className="grid gap-3 sm:grid-cols-5">
                 <div className={`${glassPanelSoftClass} p-4`}>
                   <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Total accounts</p>
                   <p className="mt-2 text-2xl font-bold text-slate-900">{userAccountStats.total}</p>
@@ -354,6 +393,10 @@ export function UsersSection({ searchQuery = '' }: UsersSectionProps) {
                 <div className={`${glassPanelSoftClass} p-4`}>
                   <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Admin accounts</p>
                   <p className="mt-2 text-2xl font-bold text-slate-900">{userAccountStats.admin}</p>
+                </div>
+                <div className={`${glassPanelSoftClass} p-4`}>
+                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Pending residents</p>
+                  <p className="mt-2 text-2xl font-bold text-amber-700">{filteredDashboardUsers.filter((user) => user.residencyStatus === 'pending').length}</p>
                 </div>
               </div>
 
@@ -385,6 +428,7 @@ export function UsersSection({ searchQuery = '' }: UsersSectionProps) {
                           <th className="px-4 py-3.5 text-left text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Username</th>
                           <th className="px-4 py-3.5 text-left text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Role</th>
                           <th className="px-4 py-3.5 text-left text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Status</th>
+                          <th className="px-4 py-3.5 text-left text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Residency</th>
                           <th className="px-4 py-3.5 text-left text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Joined</th>
                           <th className="px-4 py-3.5 text-right text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Actions</th>
                         </tr>
@@ -406,6 +450,22 @@ export function UsersSection({ searchQuery = '' }: UsersSectionProps) {
                               </span>
                             </td>
                             <td className="px-4 py-4 align-top">
+                              <span className={`rounded-full border px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.1em] ${getResidencyStatusClass(user.residencyStatus)}`}>
+                                {getResidencyStatusLabel(user.residencyStatus)}
+                              </span>
+                              {user.barangay ? <p className="mt-2 text-xs text-slate-600">{user.barangay}</p> : null}
+                              {user.residencyProofUrl ? (
+                                <button
+                                  className="mt-1 inline-block text-xs font-semibold text-blue-700 hover:text-blue-800"
+                                  onClick={() => setProofPreviewUser(user)}
+                                  type="button"
+                                >
+                                  View proof
+                                </button>
+                              ) : null}
+                              {user.residencyStatus === 'rejected' && user.residencyRejectionReason ? <p className="mt-1 text-xs text-red-600">{user.residencyRejectionReason}</p> : null}
+                            </td>
+                            <td className="px-4 py-4 align-top">
                               <span className={`rounded-full border px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.14em] ${user.isActive === false ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>
                                 {user.isActive === false ? 'Inactive' : 'Active'}
                               </span>
@@ -413,6 +473,26 @@ export function UsersSection({ searchQuery = '' }: UsersSectionProps) {
                             <td className="px-4 py-4 align-top text-slate-600">{formatUserDateTime(user.dateJoined)}</td>
                             <td className="px-4 py-4 align-top">
                               <div className="flex justify-end gap-2">
+                                {user.residencyStatus === 'pending' ? (
+                                  <>
+                                    <button
+                                      className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-50"
+                                      disabled={reviewingUserId === user.id}
+                                      onClick={() => void handleResidencyDecision(user, 'verified')}
+                                      type="button"
+                                    >
+                                      Verify
+                                    </button>
+                                    <button
+                                      className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700 transition hover:bg-amber-100 disabled:opacity-50"
+                                      disabled={reviewingUserId === user.id}
+                                      onClick={() => void handleResidencyDecision(user, 'rejected')}
+                                      type="button"
+                                    >
+                                      Reject
+                                    </button>
+                                  </>
+                                ) : null}
                                 <button
                                   className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 font-semibold text-blue-700 transition hover:bg-blue-100"
                                   onClick={() => handleEditUser(user)}
@@ -567,6 +647,41 @@ export function UsersSection({ searchQuery = '' }: UsersSectionProps) {
                 </div>
               </div>
             </div>
+          </div>
+        ) : null}
+
+        {proofPreviewUser?.residencyProofUrl ? (
+          <div
+            className="fixed inset-0 z-[1500] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-md"
+            onClick={() => setProofPreviewUser(null)}
+          >
+            <section
+              className="w-full max-w-3xl overflow-hidden rounded-2xl bg-white shadow-[0_28px_70px_rgba(15,23,42,0.34)]"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Residency Proof</p>
+                  <h3 className="mt-1 text-lg font-bold text-slate-900">{proofPreviewUser.fullName}</h3>
+                  <p className="mt-1 text-sm text-slate-600">{proofPreviewUser.barangay || 'Lucena City'}{proofPreviewUser.residencyProofName ? ` • ${proofPreviewUser.residencyProofName}` : ''}</p>
+                </div>
+                <button
+                  aria-label="Close proof preview"
+                  className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-300 text-lg text-slate-600 transition hover:bg-slate-50"
+                  onClick={() => setProofPreviewUser(null)}
+                  type="button"
+                >
+                  x
+                </button>
+              </div>
+              <div className="max-h-[72vh] overflow-auto bg-slate-100 p-4">
+                <img
+                  alt={`Residency proof for ${proofPreviewUser.fullName}`}
+                  className="mx-auto max-h-[64vh] max-w-full rounded-lg bg-white object-contain shadow-sm"
+                  src={proofPreviewUser.residencyProofUrl}
+                />
+              </div>
+            </section>
           </div>
         ) : null}
       </div>
