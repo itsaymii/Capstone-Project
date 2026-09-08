@@ -72,6 +72,13 @@ class Supply(models.Model):
 
 class EvacuationCenter(models.Model):
     """Evacuation centers/shelters"""
+
+    STATUS_CHOICES = [
+        ('available', 'Available'),
+        ('full', 'Full'),
+        ('closed', 'Closed'),
+        ('maintenance', 'Under Maintenance'),
+    ]
     
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=200, unique=True)
@@ -80,6 +87,9 @@ class EvacuationCenter(models.Model):
     latitude = models.DecimalField(max_digits=9, decimal_places=6)
     longitude = models.DecimalField(max_digits=9, decimal_places=6)
     address = models.TextField()
+    capacity = models.PositiveIntegerField(default=0)
+    current_occupancy = models.PositiveIntegerField(default=0)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='available')
     barangay = models.ForeignKey(
         'locations.Barangay',
         on_delete=models.SET_NULL,

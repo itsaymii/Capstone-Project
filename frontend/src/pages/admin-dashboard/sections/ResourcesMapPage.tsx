@@ -3,7 +3,7 @@ import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet'
 import { icon } from 'leaflet'
 import axios from 'axios'
 import 'leaflet/dist/leaflet.css'
-import { createEvacuationCenters, getEvacuationCenters } from '../../../services/api'
+import { createEvacuationCenters, deleteEvacuationCenter, getEvacuationCenters, updateEvacuationCenterStatus } from '../../../services/api'
 import { glassPanelClass } from './constants'
 
 type ResourceLocation = {
@@ -12,6 +12,9 @@ type ResourceLocation = {
   description: string
   category: 'Evacuation' | 'Vehicle Hub' | 'Medical'
   coordinates: [number, number]
+  capacity: number
+  currentOccupancy: number
+  status: 'available' | 'full' | 'closed' | 'maintenance'
 }
 
 const lucenaCenter: [number, number] = [13.94, 121.62]
@@ -34,6 +37,20 @@ const categoryMarkerIcons: Record<ResourceLocation['category'], ReturnType<typeo
   Evacuation: createHouseIcon('#2563eb'),
   'Vehicle Hub': createHouseIcon('#f59e0b'),
   Medical: createHouseIcon('#22c55e'),
+}
+
+const statusLabels: Record<ResourceLocation['status'], string> = {
+  available: 'Available',
+  full: 'Full',
+  maintenance: 'Under Maintenance',
+  closed: 'Closed',
+}
+
+const statusBadgeClasses: Record<ResourceLocation['status'], string> = {
+  available: 'bg-emerald-100 text-emerald-800',
+  full: 'bg-amber-100 text-amber-800',
+  maintenance: 'bg-orange-100 text-orange-800',
+  closed: 'bg-rose-100 text-rose-800',
 }
 
 const parseCsvLine = (line: string): string[] => {
@@ -125,6 +142,9 @@ const parseCsv = (csvText: string): ResourceLocation[] => {
         description: row.description || 'Evacuation center uploaded from CSV.',
         category: 'Evacuation',
         coordinates: [latitude, longitude],
+        capacity: 0,
+        currentOccupancy: 0,
+        status: 'available',
       },
     ]
   })
@@ -135,6 +155,7 @@ export function ResourcesMapPage() {
   const [csvError, setCsvError] = useState<string | null>(null)
   const [csvUploadMessage, setCsvUploadMessage] = useState<string | null>(null)
   const [csvFilename, setCsvFilename] = useState<string | null>(null)
+  const [formMessage, setFormMessage] = useState<string | null>(null)
 
   useEffect(() => {
     const loadSavedCenters = async (): Promise<void> => {
@@ -148,6 +169,9 @@ export function ResourcesMapPage() {
               description: center.address,
               category: 'Evacuation',
               coordinates: [center.latitude, center.longitude],
+              capacity: center.capacity,
+              currentOccupancy: center.current_occupancy,
+              status: center.status,
             })),
           )
           return
@@ -180,12 +204,39 @@ export function ResourcesMapPage() {
 
   const filteredLocations = useMemo(() => [...resourceLocations, ...uploadedLocations], [uploadedLocations])
 
+  const handleDeleteCenter = async (id: string): Promise<void> => {
+    if (!id || id.startsWith('csv-')) return
+    try {
+      await deleteEvacuationCenter(id)
+      setUploadedLocations((current) => current.filter((location) => location.id !== id))
+      setFormMessage('Evacuation center removed.')
+    } catch {
+      setFormMessage('Unable to remove this center.')
+    }
+  }
+
+  const handleStatusChange = async (id: string, status: ResourceLocation['status']): Promise<void> => {
+    if (!id || id.startsWith('csv-')) return
+    const previousLocations = uploadedLocations
+    setUploadedLocations((current) => current.map((location) => (location.id === id ? { ...location, status } : location)))
+    try {
+      await updateEvacuationCenterStatus(id, status)
+      setFormMessage('Evacuation center status updated.')
+    } catch {
+      setUploadedLocations(previousLocations)
+      setFormMessage('Unable to update status. Check your admin session and try again.')
+    }
+  }
+
   const uploadCsvToResourcesApp = async (locations: ResourceLocation[]): Promise<void> => {
     const payload = locations.map((location) => ({
       name: location.label,
       latitude: Number(location.coordinates[0]),
       longitude: Number(location.coordinates[1]),
       address: location.description,
+      capacity: location.capacity,
+      current_occupancy: location.currentOccupancy,
+      status: location.status,
     }))
 
     try {
@@ -256,7 +307,7 @@ export function ResourcesMapPage() {
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Resources Map</p>
             <h3 className="mt-2 text-2xl font-bold text-slate-900">Evacuation Center Map</h3>
             <p className="mt-3 max-w-3xl text-sm leading-relaxed text-slate-600">
-              Upload a CSV of evacuation centers and display them instantly on the Lucena City map. Required columns: label, description, latitude, longitude.
+              Upload a CSV of evacuation centers and display them instantly on the Lucena City map. Required columns: label, description, latitude, longitude. Click a marker to update its status (available, full, under maintenance, closed) or remove it.
             </p>
           </div>
 
@@ -292,9 +343,10 @@ export function ResourcesMapPage() {
           <div className="grid gap-3 border-b border-slate-200 bg-slate-50 px-5 py-4 sm:grid-cols-[1fr_auto] sm:items-center">
             <div className="flex flex-col gap-1">
               <p className="text-sm font-semibold text-slate-900">Evacuation center map</p>
-              <p className="text-xs text-slate-500">Displaying {filteredLocations.length} location{filteredLocations.length === 1 ? '' : 's'}.</p>
+              <p className="text-xs text-slate-500">Displaying {filteredLocations.length} location{filteredLocations.length === 1 ? '' : 's'}. Click a marker to update its status.</p>
             </div>
           </div>
+          {formMessage ? <p className="border-b border-slate-200 bg-slate-50 px-5 py-2 text-xs text-slate-600">{formMessage}</p> : null}
 
           <MapContainer
             center={mapCenter}
@@ -315,10 +367,34 @@ export function ResourcesMapPage() {
                 position={location.coordinates}
                 icon={categoryMarkerIcons[location.category]}
               >
-                <Popup>
-                  <div className="space-y-1 text-sm">
-                    <p className="font-semibold text-slate-900">{location.label}</p>
+                <Popup minWidth={220}>
+                  <div className="min-w-[200px] space-y-2 text-sm">
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="font-semibold leading-snug text-slate-900">{location.label}</p>
+                      <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.08em] ${statusBadgeClasses[location.status]}`}>
+                        {statusLabels[location.status]}
+                      </span>
+                    </div>
                     <p className="text-slate-600">{location.description}</p>
+                    <p className="font-medium text-slate-700">{location.currentOccupancy} / {location.capacity} occupied</p>
+                    {location.id && !location.id.startsWith('csv-') ? (
+                      <div className="space-y-2 border-t border-slate-100 pt-2">
+                        <label className="block text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
+                          Update status
+                          <select
+                            value={location.status}
+                            onChange={(event) => void handleStatusChange(location.id, event.target.value as ResourceLocation['status'])}
+                            className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs font-semibold normal-case text-slate-800"
+                          >
+                            <option value="available">Available</option>
+                            <option value="full">Full</option>
+                            <option value="maintenance">Under Maintenance</option>
+                            <option value="closed">Closed</option>
+                          </select>
+                        </label>
+                        <button type="button" onClick={() => void handleDeleteCenter(location.id)} className="text-xs font-semibold text-rose-700 hover:text-rose-900">Remove center</button>
+                      </div>
+                    ) : null}
                     <p className="text-xs uppercase tracking-[0.18em] text-slate-400">{location.category}</p>
                   </div>
                 </Popup>

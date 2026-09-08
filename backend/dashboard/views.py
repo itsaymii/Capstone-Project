@@ -1,5 +1,6 @@
 from datetime import timedelta
 import re
+import secrets
 
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
@@ -16,6 +17,7 @@ from rest_framework.response import Response
 
 from accounts.models import AccountProfile, OneTimePassword, ResidencyVerification, ensure_account_profile, get_user_role, user_has_dashboard_access
 from .models import (
+    SimulationCertificate,
     SimulationCourseCatalog,
     SimulationModuleQuiz,
     SimulationProgress,
@@ -703,11 +705,61 @@ def simulation_admin_sync_courses(request):
         return Response({'error': str(error)}, status=status.HTTP_400_BAD_REQUEST)
 
     catalog, _ = SimulationCourseCatalog.objects.get_or_create(key='default')
+    previous_courses = catalog.courses if isinstance(catalog.courses, list) else []
+    new_course_ids = {course.get('id') for course in sanitized_courses}
+    removed_courses = [
+        course for course in previous_courses
+        if isinstance(course, dict) and course.get('id') not in new_course_ids
+    ]
+
+    if removed_courses:
+        archived_courses = catalog.archived_courses if isinstance(catalog.archived_courses, list) else []
+        archived_ids = {course.get('id') for course in archived_courses if isinstance(course, dict)}
+        for course in removed_courses:
+            if course.get('id') not in archived_ids:
+                archived_courses.append(course)
+                archived_ids.add(course.get('id'))
+        catalog.archived_courses = archived_courses
+
     catalog.courses = sanitized_courses
     catalog.updated_by = request.user
-    catalog.save(update_fields=['courses', 'updated_by', 'updated_at'])
+    catalog.save(update_fields=['courses', 'archived_courses', 'updated_by', 'updated_at'])
 
     return Response({'courses': sanitized_courses}, status=status.HTTP_200_OK)
+
+
+@api_view(['GET'])
+@permission_classes([HasDashboardAdminAccess])
+def simulation_admin_archived_courses(request):
+    catalog = SimulationCourseCatalog.objects.filter(key='default').first()
+    archived_courses = catalog.archived_courses if catalog and isinstance(catalog.archived_courses, list) else []
+    return Response({'courses': archived_courses}, status=status.HTTP_200_OK)
+
+
+@api_view(['POST'])
+@permission_classes([HasDashboardAdminAccess])
+def simulation_admin_restore_course(request):
+    course_id = str(request.data.get('courseId') or '').strip()
+    if not course_id:
+        return Response({'error': 'courseId is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    catalog, _ = SimulationCourseCatalog.objects.get_or_create(key='default')
+    archived_courses = catalog.archived_courses if isinstance(catalog.archived_courses, list) else []
+    restored_course = next((course for course in archived_courses if isinstance(course, dict) and course.get('id') == course_id), None)
+
+    if not restored_course:
+        return Response({'error': 'Archived course not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+    active_courses = catalog.courses if isinstance(catalog.courses, list) else []
+    if not any(isinstance(course, dict) and course.get('id') == course_id for course in active_courses):
+        active_courses = [*active_courses, restored_course]
+
+    catalog.archived_courses = [course for course in archived_courses if course is not restored_course]
+    catalog.courses = active_courses
+    catalog.updated_by = request.user
+    catalog.save(update_fields=['courses', 'archived_courses', 'updated_by', 'updated_at'])
+
+    return Response({'courses': catalog.courses, 'archivedCourses': catalog.archived_courses}, status=status.HTTP_200_OK)
 
 
 @api_view(['GET'])
@@ -968,6 +1020,163 @@ def simulation_submit_quiz_attempt(request, quiz_id: int):
             'unanswered': unanswered,
             'requiredScore': quiz.passing_score,
             'details': details,
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+def _generate_ticket_code() -> str:
+    while True:
+        code = f"TCKT-{secrets.token_hex(4).upper()}"
+        if not SimulationCertificate.objects.filter(ticket_code=code).exists():
+            return code
+
+
+def _serialize_certificate(certificate: SimulationCertificate) -> dict:
+    return {
+        'id': certificate.id,
+        'courseId': certificate.course_id,
+        'courseTitle': certificate.course_title,
+        'ticketCode': certificate.ticket_code,
+        'certificateNumber': certificate.certificate_number,
+        'status': certificate.status,
+        'traineeName': _get_user_full_name(certificate.user),
+        'traineeEmail': certificate.user.email,
+        'issuedBy': _get_user_full_name(certificate.issued_by) if certificate.issued_by else None,
+        'issuedAt': timezone.localtime(certificate.issued_at).isoformat() if certificate.issued_at else None,
+        'completedAt': timezone.localtime(certificate.completed_at).isoformat() if certificate.completed_at else None,
+        'rejectionReason': certificate.rejection_reason,
+        'createdAt': timezone.localtime(certificate.created_at).isoformat() if certificate.created_at else None,
+    }
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def simulation_request_certificate(request):
+    """Citizens request a training ticket once DRRMO training (the course) is fully completed."""
+    course_id = str(request.data.get('courseId') or '').strip()
+    course_title = str(request.data.get('courseTitle') or '').strip()
+
+    if not course_id:
+        return Response({'error': 'courseId is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    progress, _ = SimulationProgress.objects.get_or_create(user=request.user)
+    completed_courses = progress.completed_courses if isinstance(progress.completed_courses, dict) else {}
+    completed_at_raw = completed_courses.get(course_id)
+
+    if not completed_at_raw:
+        return Response(
+            {'error': 'Complete the DRRMO training course before requesting a training ticket.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        completed_at = timezone.datetime.fromisoformat(str(completed_at_raw).replace('Z', '+00:00'))
+    except ValueError:
+        completed_at = timezone.now()
+
+    certificate, created = SimulationCertificate.objects.get_or_create(
+        user=request.user,
+        course_id=course_id,
+        defaults={
+            'course_title': course_title,
+            'ticket_code': _generate_ticket_code(),
+            'completed_at': completed_at,
+        },
+    )
+
+    if not created:
+        if course_title and certificate.course_title != course_title:
+            certificate.course_title = course_title
+        if certificate.status == SimulationCertificate.STATUS_REJECTED:
+            certificate.status = SimulationCertificate.STATUS_PENDING
+            certificate.rejection_reason = ''
+        certificate.completed_at = completed_at
+        certificate.save(update_fields=['course_title', 'status', 'rejection_reason', 'completed_at', 'updated_at'])
+
+    return Response(_serialize_certificate(certificate), status=status.HTTP_200_OK)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def simulation_my_certificates(request):
+    certificates = SimulationCertificate.objects.filter(user=request.user).select_related('issued_by')
+    return Response({'certificates': [_serialize_certificate(certificate) for certificate in certificates]}, status=status.HTTP_200_OK)
+
+
+@api_view(['GET'])
+@permission_classes([HasDashboardAdminAccess])
+def simulation_admin_certificates(request):
+    status_filter = (request.query_params.get('status') or '').strip().lower()
+    queryset = SimulationCertificate.objects.select_related('user', 'issued_by').all()
+
+    if status_filter in dict(SimulationCertificate.STATUS_CHOICES):
+        queryset = queryset.filter(status=status_filter)
+
+    return Response({'certificates': [_serialize_certificate(certificate) for certificate in queryset]}, status=status.HTTP_200_OK)
+
+
+@api_view(['POST'])
+@permission_classes([HasDashboardAdminAccess])
+def simulation_admin_issue_certificate(request, certificate_id: int):
+    """DRRMO trainer/staff approves a training ticket, turning it into an official certificate."""
+    certificate = SimulationCertificate.objects.filter(id=certificate_id).select_related('user').first()
+    if not certificate:
+        return Response({'error': 'Training ticket not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+    certificate.status = SimulationCertificate.STATUS_ISSUED
+    certificate.issued_by = request.user
+    certificate.issued_at = timezone.now()
+    certificate.rejection_reason = ''
+    if not certificate.certificate_number:
+        certificate.certificate_number = f"DRRMO-{certificate.issued_at:%Y}-{certificate.id:05d}"
+    certificate.save(update_fields=['status', 'issued_by', 'issued_at', 'certificate_number', 'rejection_reason', 'updated_at'])
+
+    return Response(_serialize_certificate(certificate), status=status.HTTP_200_OK)
+
+
+@api_view(['POST'])
+@permission_classes([HasDashboardAdminAccess])
+def simulation_admin_reject_certificate(request, certificate_id: int):
+    reason = str(request.data.get('reason') or '').strip()
+    certificate = SimulationCertificate.objects.filter(id=certificate_id).first()
+    if not certificate:
+        return Response({'error': 'Training ticket not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+    certificate.status = SimulationCertificate.STATUS_REJECTED
+    certificate.rejection_reason = reason or 'Not approved by the DRRMO trainer.'
+    certificate.issued_by = None
+    certificate.issued_at = None
+    certificate.save(update_fields=['status', 'rejection_reason', 'issued_by', 'issued_at', 'updated_at'])
+
+    return Response(_serialize_certificate(certificate), status=status.HTTP_200_OK)
+
+
+@api_view(['POST'])
+@permission_classes([HasDashboardAdminAccess])
+def simulation_admin_reset_progress(request):
+    """Testing utility: clears course/quiz progress so trainees can retake modules."""
+    user_id = request.data.get('userId')
+
+    progress_qs = SimulationProgress.objects.all()
+    attempts_qs = SimulationQuizAttempt.objects.all()
+    certificates_qs = SimulationCertificate.objects.all()
+
+    if user_id:
+        progress_qs = progress_qs.filter(user_id=user_id)
+        attempts_qs = attempts_qs.filter(user_id=user_id)
+        certificates_qs = certificates_qs.filter(user_id=user_id)
+
+    reset_users = progress_qs.count()
+    progress_qs.update(course_progress={}, completed_lesson_videos={}, completed_courses={})
+    deleted_attempts, _ = attempts_qs.delete()
+    deleted_certificates, _ = certificates_qs.delete()
+
+    return Response(
+        {
+            'resetUsers': reset_users,
+            'deletedAttempts': deleted_attempts,
+            'deletedCertificates': deleted_certificates,
         },
         status=status.HTTP_200_OK,
     )

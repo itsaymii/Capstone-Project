@@ -103,6 +103,7 @@ class SimulationQuizAttempt(models.Model):
 class SimulationCourseCatalog(models.Model):
 	key = models.CharField(max_length=64, unique=True, default='default')
 	courses = models.JSONField(default=list, blank=True)
+	archived_courses = models.JSONField(default=list, blank=True)
 	updated_by = models.ForeignKey(User, on_delete=models.SET_NULL, blank=True, null=True, related_name='updated_simulation_course_catalogs')
 	created_at = models.DateTimeField(auto_now_add=True)
 	updated_at = models.DateTimeField(auto_now=True)
@@ -112,3 +113,39 @@ class SimulationCourseCatalog(models.Model):
 
 	def __str__(self):
 		return f"Simulation course catalog ({self.key})"
+
+
+class SimulationCertificate(models.Model):
+	"""Training ticket issued on course completion; becomes an official certificate once a DRRMO trainer approves it."""
+
+	STATUS_PENDING = 'pending'
+	STATUS_ISSUED = 'issued'
+	STATUS_REJECTED = 'rejected'
+	STATUS_CHOICES = [
+		(STATUS_PENDING, 'Pending Review'),
+		(STATUS_ISSUED, 'Issued'),
+		(STATUS_REJECTED, 'Rejected'),
+	]
+
+	user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='simulation_certificates')
+	course_id = models.CharField(max_length=120, db_index=True)
+	course_title = models.CharField(max_length=255, blank=True)
+	ticket_code = models.CharField(max_length=32, unique=True)
+	certificate_number = models.CharField(max_length=32, blank=True)
+	status = models.CharField(max_length=12, choices=STATUS_CHOICES, default=STATUS_PENDING, db_index=True)
+	issued_by = models.ForeignKey(User, on_delete=models.SET_NULL, blank=True, null=True, related_name='issued_simulation_certificates')
+	issued_at = models.DateTimeField(blank=True, null=True)
+	rejection_reason = models.CharField(max_length=255, blank=True)
+	completed_at = models.DateTimeField(blank=True, null=True)
+	created_at = models.DateTimeField(auto_now_add=True)
+	updated_at = models.DateTimeField(auto_now=True)
+
+	class Meta:
+		ordering = ['-created_at', '-id']
+		unique_together = ('user', 'course_id')
+		indexes = [
+			models.Index(fields=['status']),
+		]
+
+	def __str__(self):
+		return f"{self.user.username} - {self.course_id} ({self.status})"
