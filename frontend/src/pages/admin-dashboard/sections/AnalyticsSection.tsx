@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { jsPDF } from 'jspdf'
 import type { HazardIncident, HazardType, IncidentStatus } from '../../../data/adminOperations'
 import type { EarthquakeEvent } from '../../../services/earthquakes'
 import { glassPanelClass, glassPanelSoftClass } from './constants'
@@ -43,6 +44,14 @@ type TeamPerformanceItem = {
   performanceScore: number
 }
 
+type TrendPoint = {
+  label: string
+  reports: number
+  earthquakes: number
+}
+
+type FrequencyMode = 'monthly' | 'yearly' | 'daily'
+
 const hazardColors: Record<HazardType, string> = {
   EQ: '#10b981',
   FR: '#ef4444',
@@ -68,6 +77,13 @@ function getSeverityWeight(severity: HazardIncident['severity']): number {
     default:
       return 1
   }
+}
+
+function getEarthquakeSeverity(magnitude: number): HazardIncident['severity'] {
+  if (magnitude >= 5) return 'Critical'
+  if (magnitude >= 4) return 'High'
+  if (magnitude >= 3) return 'Moderate'
+  return 'Low'
 }
 
 function getRiskLabel(score: number): string {
@@ -98,6 +114,10 @@ function percent(value: number, total: number): number {
 
 function safeMax(values: number[]): number {
   return Math.max(...values, 1)
+}
+
+function sanitizeExportFilename(value: string): string {
+  return value.replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '').toLowerCase() || 'all'
 }
 
 function getLocationName(location: string): string {
@@ -440,56 +460,6 @@ function HorizontalBarChart({
   )
 }
 
-function StackedBarChart({
-  items,
-  total,
-}: {
-  items: ChartItem[]
-  total: number
-}) {
-  return (
-    <div className="rounded-[24px] border border-slate-100 bg-white/85 p-4">
-      <div className="mb-3 flex items-center justify-between">
-        <p className="text-sm font-semibold text-slate-800">Stacked Disaster Share</p>
-        <span className="rounded-full bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">
-          {total} total
-        </span>
-      </div>
-
-      <div className="flex h-8 overflow-hidden rounded-full bg-slate-100">
-        {items.map((item) => {
-          const share = percent(item.value, total)
-
-          return (
-            <div
-              className="h-full transition-all duration-700"
-              key={item.label}
-              style={{
-                backgroundColor: item.color || '#2563eb',
-                width: `${Math.max(item.value > 0 ? 5 : 0, share)}%`,
-              }}
-              title={`${item.label}: ${share}%`}
-            />
-          )
-        })}
-      </div>
-
-      <div className="mt-4 grid gap-2 sm:grid-cols-3">
-        {items.map((item) => (
-          <div className="rounded-2xl bg-slate-50 p-3" key={item.label}>
-            <div className="flex items-center gap-2">
-              <span className="h-3 w-3 rounded-full" style={{ backgroundColor: item.color || '#2563eb' }} />
-              <p className="text-xs font-semibold text-slate-700">{item.label}</p>
-            </div>
-            <p className="mt-1 text-lg font-semibold text-slate-900">{item.value}</p>
-            <p className="text-xs text-slate-500">{percent(item.value, total)}% of records</p>
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}
-
 function DonutChart({
   items,
   total,
@@ -569,6 +539,63 @@ function DonutChart({
             </div>
           </div>
         ))}
+      </div>
+    </div>
+  )
+}
+
+function TrendChart({ points }: { points: TrendPoint[] }) {
+  if (points.length === 0 || points.every((point) => point.reports === 0 && point.earthquakes === 0)) {
+    return <EmptyState message="No dated incident or earthquake activity is available yet." />
+  }
+
+  const width = 760
+  const height = 280
+  const padding = { top: 24, right: 20, bottom: 48, left: 42 }
+  const chartWidth = width - padding.left - padding.right
+  const chartHeight = height - padding.top - padding.bottom
+  const maxValue = safeMax(points.flatMap((point) => [point.reports, point.earthquakes]))
+  const xStep = points.length > 1 ? chartWidth / (points.length - 1) : chartWidth
+  const getX = (index: number) => padding.left + (points.length > 1 ? index * xStep : chartWidth / 2)
+  const getY = (value: number) => padding.top + chartHeight - (value / maxValue) * chartHeight
+  const reportPath = points.map((point, index) => `${getX(index)},${getY(point.reports)}`).join(' ')
+  const earthquakePath = points.map((point, index) => `${getX(index)},${getY(point.earthquakes)}`).join(' ')
+  const labelStep = Math.max(1, Math.ceil(points.length / 8))
+
+  return (
+    <div className="rounded-[24px] border border-slate-100 bg-white/85 p-4">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap gap-4 text-xs font-semibold text-slate-600">
+          <span className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full bg-blue-600" />Incident reports</span>
+          <span className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full bg-emerald-500" />Live earthquakes</span>
+        </div>
+        <span className="text-xs text-slate-500">Peak: {maxValue}</span>
+      </div>
+
+      <div className="overflow-x-auto">
+        <svg aria-label="Incident reports and live earthquakes over time" className="h-auto min-w-[620px] w-full" role="img" viewBox={`0 0 ${width} ${height}`}>
+          {[0, 0.5, 1].map((ratio) => {
+            const y = padding.top + chartHeight * ratio
+            const value = Math.round(maxValue * (1 - ratio))
+            return (
+              <g key={ratio}>
+                <line stroke="#e2e8f0" strokeDasharray="4 5" x1={padding.left} x2={width - padding.right} y1={y} y2={y} />
+                <text fill="#94a3b8" fontSize="11" textAnchor="end" x={padding.left - 8} y={y + 4}>{value}</text>
+              </g>
+            )
+          })}
+          <polyline fill="none" points={reportPath} stroke="#2563eb" strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" />
+          <polyline fill="none" points={earthquakePath} stroke="#10b981" strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" />
+          {points.map((point, index) => (
+            <g key={`${point.label}-${index}`}>
+              <circle cx={getX(index)} cy={getY(point.reports)} fill="#ffffff" r="4" stroke="#2563eb" strokeWidth="2" />
+              <circle cx={getX(index)} cy={getY(point.earthquakes)} fill="#ffffff" r="4" stroke="#10b981" strokeWidth="2" />
+              {index % labelStep === 0 || index === points.length - 1 ? (
+                <text fill="#64748b" fontSize="10" textAnchor="middle" x={getX(index)} y={height - 16}>{point.label}</text>
+              ) : null}
+            </g>
+          ))}
+        </svg>
       </div>
     </div>
   )
@@ -908,6 +935,10 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
 
   const [selectedYear, setSelectedYear] = useState<string | null>(null)
   const [selectedMonth, setSelectedMonth] = useState<string | null>(null)
+  const [selectedBarangay, setSelectedBarangay] = useState<string | null>(null)
+  const [selectedDisasterType, setSelectedDisasterType] = useState<string | null>(null)
+  const [selectedSeverity, setSelectedSeverity] = useState<HazardIncident['severity'] | null>(null)
+  const [frequencyMode, setFrequencyMode] = useState<FrequencyMode>('monthly')
 
   const filteredEarthquakeEvents = useMemo(() => {
     let result = earthquakeEvents
@@ -968,6 +999,16 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
       .reverse()
   }, [analyticsReports, earthquakeEvents, selectedYear])
 
+  const availableBarangays = useMemo(
+    () => Array.from(new Set(analyticsReports.map((report) => getLocationName(report.location)))).sort(),
+    [analyticsReports],
+  )
+
+  const availableDisasterTypes = useMemo(
+    () => Array.from(new Set(analyticsReports.map((report) => getAnalyticsIncidentType(report)))).sort(),
+    [analyticsReports],
+  )
+
   const filteredReports = useMemo(() => {
     let result = analyticsReports
 
@@ -985,11 +1026,69 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
       })
     }
 
+    if (selectedBarangay) {
+      result = result.filter((report) => getLocationName(report.location) === selectedBarangay)
+    }
+
+    if (selectedDisasterType) {
+      result = result.filter((report) => getAnalyticsIncidentType(report) === selectedDisasterType)
+    }
+
+    if (selectedSeverity) {
+      result = result.filter((report) => report.severity === selectedSeverity)
+    }
+
     return result
-  }, [analyticsReports, selectedYear, selectedMonth])
+  }, [analyticsReports, selectedBarangay, selectedDisasterType, selectedMonth, selectedSeverity, selectedYear])
+
+  const analysisEarthquakeEvents = useMemo(() => {
+    if (selectedBarangay || (selectedDisasterType && selectedDisasterType !== 'Earthquake')) return []
+    if (!selectedSeverity) return filteredEarthquakeEvents
+    return filteredEarthquakeEvents.filter((event) => getEarthquakeSeverity(event.magnitude) === selectedSeverity)
+  }, [filteredEarthquakeEvents, selectedBarangay, selectedDisasterType, selectedSeverity])
+
+  const incidentTrendData = useMemo<TrendPoint[]>(() => {
+    const daily = frequencyMode === 'daily' && Boolean(selectedYear && selectedMonth)
+    const yearly = frequencyMode === 'yearly'
+    const buckets = new Map<string, { date: Date; reports: number; earthquakes: number }>()
+
+    const getBucket = (date: Date) => {
+      const key = yearly
+        ? `${date.getFullYear()}`
+        : daily
+        ? `${date.getFullYear()}-${date.getMonth().toString().padStart(2, '0')}-${date.getDate().toString().padStart(2, '0')}`
+        : `${date.getFullYear()}-${date.getMonth().toString().padStart(2, '0')}`
+      const existing = buckets.get(key)
+
+      if (existing) return existing
+
+      const bucket = { date: new Date(date.getFullYear(), yearly ? 0 : date.getMonth(), daily ? date.getDate() : 1), reports: 0, earthquakes: 0 }
+      buckets.set(key, bucket)
+      return bucket
+    }
+
+    filteredReports.forEach((report) => {
+      getBucket(getReportDate(report)).reports += 1
+    })
+
+    analysisEarthquakeEvents.forEach((event) => {
+      getBucket(getEarthquakeEventDate(event)).earthquakes += 1
+    })
+
+    return Array.from(buckets.values())
+      .sort((a, b) => a.date.getTime() - b.date.getTime())
+      .map((point) => ({
+        ...point,
+        label: yearly
+          ? point.date.toLocaleDateString(undefined, { year: 'numeric' })
+          : daily
+          ? point.date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+          : point.date.toLocaleDateString(undefined, { month: 'short', year: 'numeric' }),
+      }))
+  }, [analysisEarthquakeEvents, filteredReports, frequencyMode, selectedMonth, selectedYear])
 
   const totalIncidentReports = filteredReports.length
-  const earthquakeApiCount = filteredEarthquakeEvents.length
+  const earthquakeApiCount = analysisEarthquakeEvents.length
   const totalRecords = totalIncidentReports + earthquakeApiCount
 
   const activeCount = filteredReports.filter((report) => getDisplayReportStatus(report) === 'active').length
@@ -1011,15 +1110,15 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
         totalIncidentReports
       : 0
 
-  const recentEarthquake30Days = filteredEarthquakeEvents.filter(
+  const recentEarthquake30Days = analysisEarthquakeEvents.filter(
     (event) => getEarthquakeEventDate(event).getTime() >= Date.now() - 30 * 24 * 60 * 60 * 1000,
   ).length
 
-  const significantEarthquakes = filteredEarthquakeEvents.filter((event) => event.magnitude >= 4).length
-  const maxEarthquakeMagnitude = filteredEarthquakeEvents.reduce((max, event) => Math.max(max, event.magnitude), 0)
+  const significantEarthquakes = analysisEarthquakeEvents.filter((event) => event.magnitude >= 4).length
+  const maxEarthquakeMagnitude = analysisEarthquakeEvents.reduce((max, event) => Math.max(max, event.magnitude), 0)
   const averageEarthquakeMagnitude =
-    filteredEarthquakeEvents.length > 0
-      ? filteredEarthquakeEvents.reduce((sum, event) => sum + event.magnitude, 0) / filteredEarthquakeEvents.length
+    analysisEarthquakeEvents.length > 0
+      ? analysisEarthquakeEvents.reduce((sum, event) => sum + event.magnitude, 0) / analysisEarthquakeEvents.length
       : 0
 
   const totalVictimCount = filteredReports.reduce((sum, report) => sum + getReportVictimCount(report), 0)
@@ -1060,6 +1159,26 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
       },
     ],
     [accidentCount, earthquakeTotalCount, fireCount],
+  )
+
+  const severityData = useMemo<ChartItem[]>(
+    () => (['Critical', 'High', 'Moderate', 'Low'] as const).map((severity) => {
+      const value = filteredReports.filter((report) => report.severity === severity).length
+      return {
+        label: severity,
+        value,
+        helper: `${percent(value, totalIncidentReports)}% of filtered incident reports`,
+        color:
+          severity === 'Critical'
+            ? '#dc2626'
+            : severity === 'High'
+              ? '#f97316'
+              : severity === 'Moderate'
+                ? '#f59e0b'
+                : '#10b981',
+      }
+    }),
+    [filteredReports, totalIncidentReports],
   )
 
   const teamPerformanceData = useMemo<TeamPerformanceItem[]>(() => {
@@ -1230,7 +1349,7 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
     })
 
     // Process all earthquake events without artificial limits to ensure comprehensive risk assessment
-    filteredEarthquakeEvents.forEach((event) => {
+    analysisEarthquakeEvents.forEach((event) => {
       const location = event.place || 'Near Quezon Region'
       const current = map.get(location) || {
         location,
@@ -1262,31 +1381,31 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
       }))
       .sort((a, b) => b.score - a.score)
       .slice(0, 6)
-  }, [filteredEarthquakeEvents, filteredReports])
+  }, [analysisEarthquakeEvents, filteredReports])
 
   const earthquakeAnalytics = useMemo(() => {
     const magnitudeDistribution: ChartItem[] = [
       {
         label: 'Magnitude 1.0 - 2.9',
-        value: filteredEarthquakeEvents.filter((event) => event.magnitude < 3).length,
+        value: analysisEarthquakeEvents.filter((event) => event.magnitude < 3).length,
         color: '#86efac',
         helper: 'Low intensity tremors',
       },
       {
         label: 'Magnitude 3.0 - 3.9',
-        value: filteredEarthquakeEvents.filter((event) => event.magnitude >= 3 && event.magnitude < 4).length,
+        value: analysisEarthquakeEvents.filter((event) => event.magnitude >= 3 && event.magnitude < 4).length,
         color: '#22c55e',
         helper: 'Felt but usually minor',
       },
       {
         label: 'Magnitude 4.0 - 4.9',
-        value: filteredEarthquakeEvents.filter((event) => event.magnitude >= 4 && event.magnitude < 5).length,
+        value: analysisEarthquakeEvents.filter((event) => event.magnitude >= 4 && event.magnitude < 5).length,
         color: '#f59e0b',
         helper: 'Moderate shaking watch',
       },
       {
         label: 'Magnitude 5.0+',
-        value: filteredEarthquakeEvents.filter((event) => event.magnitude >= 5).length,
+        value: analysisEarthquakeEvents.filter((event) => event.magnitude >= 5).length,
         color: '#ef4444',
         helper: 'High impact monitoring',
       },
@@ -1294,7 +1413,7 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
 
     const hotspotMap = new Map<string, number>()
 
-    filteredEarthquakeEvents.forEach((event) => {
+    analysisEarthquakeEvents.forEach((event) => {
       const location = event.place || 'Near Quezon Region'
       hotspotMap.set(location, (hotspotMap.get(location) || 0) + 1)
     })
@@ -1321,7 +1440,7 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
   }, [
     averageEarthquakeMagnitude,
     earthquakeApiCount,
-    filteredEarthquakeEvents,
+    analysisEarthquakeEvents,
     maxEarthquakeMagnitude,
     recentEarthquake30Days,
     significantEarthquakes,
@@ -1336,11 +1455,262 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
     { label: 'Earthquake', value: barangayRiskData[0]?.earthquake || 0 },
   ]
 
+  const handleExport = () => {
+    const pdf = new jsPDF({ unit: 'mm', format: 'a4' })
+    const pageWidth = pdf.internal.pageSize.getWidth()
+    const pageHeight = pdf.internal.pageSize.getHeight()
+    const margin = 14
+    const contentWidth = pageWidth - margin * 2
+    let cursorY = 18
+
+    const filterValue = (value: string | null, fallback: string) => value || fallback
+    const filters = [
+      ['Month', filterValue(selectedMonth, 'All months')],
+      ['Year', filterValue(selectedYear, 'All years')],
+      ['Barangay', filterValue(selectedBarangay, 'All barangays')],
+      ['Disaster Type', filterValue(selectedDisasterType, 'All disaster types')],
+      ['Severity Level', filterValue(selectedSeverity, 'All severity levels')],
+    ]
+
+    const ensureSpace = (height: number) => {
+      if (cursorY + height > pageHeight - 18) {
+        pdf.addPage()
+        cursorY = 18
+      }
+    }
+
+    const text = (value: string, size = 8.5, color: [number, number, number] = [51, 65, 85], bold = false) => {
+      pdf.setFont('helvetica', bold ? 'bold' : 'normal')
+      pdf.setFontSize(size)
+      pdf.setTextColor(...color)
+      const lines = pdf.splitTextToSize(value, contentWidth)
+      ensureSpace(lines.length * 4.2 + 2)
+      pdf.text(lines, margin, cursorY)
+      cursorY += lines.length * 4.2 + 2
+    }
+
+    const section = (title: string, description?: string) => {
+      ensureSpace(description ? 17 : 12)
+      pdf.setFillColor(15, 23, 42)
+      pdf.roundedRect(margin, cursorY - 4, contentWidth, 9, 2, 2, 'F')
+      pdf.setFont('helvetica', 'bold')
+      pdf.setFontSize(12)
+      pdf.setTextColor(255, 255, 255)
+      pdf.text(title, margin + 4, cursorY + 2)
+      cursorY += 11
+      if (description) text(description, 8, [71, 85, 105])
+    }
+
+    const table = (headers: string[], rows: string[][], widths: number[]) => {
+      const rowPadding = 3
+      const rowHeight = (cells: string[], size = 7.5) => {
+        pdf.setFontSize(size)
+        return Math.max(...cells.map((cell, index) => pdf.splitTextToSize(cell, widths[index] - rowPadding * 2).length), 1) * 3.8 + rowPadding * 2
+      }
+
+      const drawHeader = () => {
+        const height = 9
+        ensureSpace(height)
+        let x = margin
+        pdf.setFillColor(226, 232, 240)
+        pdf.rect(margin, cursorY, contentWidth, height, 'F')
+        pdf.setFont('helvetica', 'bold')
+        pdf.setFontSize(7.5)
+        pdf.setTextColor(30, 41, 59)
+        headers.forEach((header, index) => {
+          pdf.text(header, x + rowPadding, cursorY + 5.8)
+          x += widths[index]
+        })
+        cursorY += height
+      }
+
+      drawHeader()
+      rows.forEach((cells, rowIndex) => {
+        const height = rowHeight(cells)
+        if (cursorY + height > pageHeight - 18) {
+          pdf.addPage()
+          cursorY = 18
+          drawHeader()
+        }
+        if (rowIndex % 2 === 0) {
+          pdf.setFillColor(248, 250, 252)
+          pdf.rect(margin, cursorY, contentWidth, height, 'F')
+        }
+        let x = margin
+        pdf.setFont('helvetica', 'normal')
+        pdf.setFontSize(7.5)
+        pdf.setTextColor(51, 65, 85)
+        cells.forEach((cell, index) => {
+          const lines = pdf.splitTextToSize(cell, widths[index] - rowPadding * 2)
+          pdf.text(lines, x + rowPadding, cursorY + 4.8)
+          x += widths[index]
+        })
+        cursorY += height
+      })
+      cursorY += 5
+    }
+
+    const barChart = (items: Array<{ label: string; value: number; color?: string }>, total: number) => {
+      const chartHeight = Math.max(18, items.length * 10 + 5)
+      ensureSpace(chartHeight)
+      const labelWidth = 48
+      const barWidth = contentWidth - labelWidth - 22
+      const maxValue = safeMax(items.map((item) => item.value))
+      items.forEach((item) => {
+        const y = cursorY
+        pdf.setFont('helvetica', 'normal')
+        pdf.setFontSize(7.5)
+        pdf.setTextColor(51, 65, 85)
+        pdf.text(item.label.slice(0, 26), margin, y + 4)
+        pdf.setFillColor(226, 232, 240)
+        pdf.roundedRect(margin + labelWidth, y, barWidth, 5, 1.5, 1.5, 'F')
+        pdf.setFillColor(...(item.color === '#ef4444' ? [239, 68, 68] : item.color === '#3b82f6' ? [59, 130, 246] : [16, 185, 129]))
+        pdf.roundedRect(margin + labelWidth, y, Math.max(item.value > 0 ? 2 : 0, (item.value / maxValue) * barWidth), 5, 1.5, 1.5, 'F')
+        pdf.text(`${item.value} (${percent(item.value, total)}%)`, margin + labelWidth + barWidth + 4, y + 4)
+        cursorY += 10
+      })
+      cursorY += 3
+    }
+
+    const trendChart = () => {
+      if (incidentTrendData.length === 0) {
+        text('No frequency data is available for the selected filters.', 8, [100, 116, 139])
+        return
+      }
+      const chartTop = cursorY
+      const chartHeight = 48
+      const chartWidth = contentWidth - 12
+      const maxValue = safeMax(incidentTrendData.flatMap((point) => [point.reports, point.earthquakes]))
+      ensureSpace(chartHeight + 14)
+      pdf.setDrawColor(203, 213, 225)
+      pdf.line(margin + 6, chartTop, margin + 6, chartTop + chartHeight)
+      pdf.line(margin + 6, chartTop + chartHeight, margin + chartWidth, chartTop + chartHeight)
+      const pointX = (index: number) => margin + 6 + (incidentTrendData.length > 1 ? (index / (incidentTrendData.length - 1)) * (chartWidth - 6) : (chartWidth - 6) / 2)
+      const pointY = (value: number) => chartTop + chartHeight - (value / maxValue) * chartHeight
+      const drawSeries = (color: [number, number, number], values: number[]) => {
+        pdf.setDrawColor(...color)
+        pdf.setFillColor(...color)
+        values.forEach((value, index) => {
+          const x = pointX(index)
+          const y = pointY(value)
+          if (index > 0) pdf.line(pointX(index - 1), pointY(values[index - 1]), x, y)
+          pdf.circle(x, y, 1.2, 'F')
+        })
+      }
+      drawSeries([37, 99, 235], incidentTrendData.map((point) => point.reports))
+      drawSeries([16, 185, 129], incidentTrendData.map((point) => point.earthquakes))
+      pdf.setFontSize(7)
+      pdf.setTextColor(71, 85, 105)
+      incidentTrendData.forEach((point, index) => {
+        if (index % Math.max(1, Math.ceil(incidentTrendData.length / 7)) === 0 || index === incidentTrendData.length - 1) {
+          pdf.text(point.label, pointX(index), chartTop + chartHeight + 7, { align: 'center' })
+        }
+      })
+      cursorY = chartTop + chartHeight + 13
+      text('Blue: incident reports. Green: live earthquake events.', 7.5, [100, 116, 139])
+    }
+
+    pdf.setFillColor(15, 23, 42)
+    pdf.rect(0, 0, pageWidth, 34, 'F')
+    pdf.setFont('helvetica', 'bold')
+    pdf.setFontSize(19)
+    pdf.setTextColor(255, 255, 255)
+    pdf.text('DRRMO Analytics Report', margin, 15)
+    pdf.setFont('helvetica', 'normal')
+    pdf.setFontSize(9)
+    pdf.text('Lucena City Disaster Risk Reduction and Management Office', margin, 22)
+    pdf.text(`Generated ${new Date().toLocaleString()}`, margin, 28)
+    cursorY = 45
+
+    section('Applied Filters', 'Every section and value in this report reflects the selected filters.')
+    table(['Filter', 'Applied value'], filters, [45, contentWidth - 45])
+
+    section('1. Executive Summary', 'Headline measures for the filtered analytics scope.')
+    table(
+      ['Metric', 'Value', 'Interpretation'],
+      [
+        ['Total records', String(totalRecords), 'Incident reports plus scoped live earthquake events'],
+        ['Incident reports', String(totalIncidentReports), 'Filtered system incident records'],
+        ['Live earthquake events', String(earthquakeApiCount), 'Scoped API events'],
+        ['High priority', String(highPriorityCount), 'High and Critical incident reports'],
+        ['Total victims', String(totalVictimCount), 'Victim count available in filtered reports'],
+        ['Overall risk score', `${riskScore}%`, `${getRiskLabel(riskScore)} monitoring level`],
+      ],
+      [45, 25, contentWidth - 70],
+    )
+
+    section('2. Barangay Summary', 'Location totals and current highest-risk locations.')
+    barChart(barangayRiskData.map((item) => ({ label: item.location, value: item.incidents, color: '#3b82f6' })), totalIncidentReports)
+    table(
+      ['Location', 'Incidents', 'Risk score', 'Priority'],
+      barangayRiskData.map((item) => [item.location, String(item.incidents), String(item.score), item.level]),
+      [68, 28, 28, contentWidth - 124],
+    )
+
+    section('3. Disaster Type Summary', 'Distribution of disaster types in the filtered record set.')
+    barChart(disasterTypeData, totalRecords)
+    table(['Disaster type', 'Count', 'Share'], disasterTypeData.map((item) => [item.label, String(item.value), `${percent(item.value, totalRecords)}%`]), [75, 35, contentWidth - 110])
+
+    section('4. Severity Level Summary', 'Severity percentages use: severity count / filtered incident reports x 100.')
+    barChart(severityData, totalIncidentReports)
+    table(['Severity', 'Count', 'Percentage'], severityData.map((item) => [item.label, String(item.value), `${percent(item.value, totalIncidentReports)}%`]), [75, 35, contentWidth - 110])
+
+    section('5. Incident Frequency', `Frequency view: ${frequencyMode}. This shows how often records occur within the selected time scope.`)
+    trendChart()
+    table(['Period', 'Incident reports', 'Live earthquakes'], incidentTrendData.map((point) => [point.label, String(point.reports), String(point.earthquakes)]), [80, 50, contentWidth - 130])
+
+    section('6. Disaster Trends', 'Earthquake magnitude distribution and monitored hotspot activity from the filtered live feed.')
+    barChart(earthquakeAnalytics.magnitudeDistribution, earthquakeAnalytics.total)
+    table(['Magnitude band', 'Events', 'Meaning'], earthquakeAnalytics.magnitudeDistribution.map((item) => [item.label, String(item.value), item.helper || '']), [60, 28, contentWidth - 88])
+    table(['Earthquake hotspot', 'Events'], earthquakeAnalytics.hotspots.map((item) => [item.label, String(item.value)]), [contentWidth - 35, 35])
+
+    section('7. Predictive Analytics', 'Calculated monitoring indicators based only on the filtered incident and earthquake data.')
+    table(
+      ['Indicator', 'Value', 'Context'],
+      [
+        ['Overall risk score', `${riskScore}%`, `${getRiskLabel(riskScore)} monitoring level`],
+        ['Average incident severity', averageSeverity.toFixed(2), 'Weighted Low=1, Moderate=2, High=3, Critical=4'],
+        ['Recent incident reports', String(recentIncidentCount), 'Reports in the recent monitoring window'],
+        ['Significant earthquakes', String(significantEarthquakes), 'Magnitude 4.0 and above'],
+        ['Highest-risk location', barangayRiskData[0]?.location || 'No matching location', 'Top current composite risk score'],
+      ],
+      [55, 38, contentWidth - 93],
+    )
+
+    section('8. Emergency Response Performance', 'Team response metrics calculated from the filtered reports with available response data.')
+    table(
+      ['Team', 'Assignments', 'Resolved', 'Avg response', 'Performance'],
+      teamPerformanceData.map((item) => [item.team, String(item.assignments), `${item.resolutionRate}%`, `${item.averageResponseMinutes} min`, `${item.performanceScore}/100`]),
+      [55, 28, 28, 38, contentWidth - 149],
+    )
+    barChart(teamPerformanceChartData, 100)
+
+    section('Filtered Incident Records', 'Detailed records included in this report.')
+    table(
+      ['Date', 'Type', 'Severity', 'Barangay', 'Report'],
+      filteredReports.length > 0
+        ? filteredReports.map((report) => [getReportDate(report).toLocaleDateString(), getAnalyticsIncidentType(report), report.severity, getLocationName(report.location), report.title])
+        : [['-', '-', '-', '-', 'No incident reports match the selected filters.']],
+      [25, 30, 28, 48, contentWidth - 131],
+    )
+
+    const pageCount = pdf.getNumberOfPages()
+    for (let page = 1; page <= pageCount; page += 1) {
+      pdf.setPage(page)
+      pdf.setFont('helvetica', 'normal')
+      pdf.setFontSize(7)
+      pdf.setTextColor(100, 116, 139)
+      pdf.text(`DRRMO Analytics Report | Page ${page} of ${pageCount}`, margin, pageHeight - 8)
+    }
+
+    pdf.save(`analytics-report-${sanitizeExportFilename(selectedYear || 'all-years')}.pdf`)
+  }
+
   return (
     <section className="mx-auto w-full max-w-[1440px] px-3 py-6 sm:px-5 lg:px-6 lg:py-8">
       <div className="space-y-6">
         <div className={`${glassPanelClass} overflow-hidden p-5 sm:p-6`}>
-          <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
             <div className="max-w-3xl">
               <p className="text-[11px] font-bold uppercase tracking-[0.1em] text-blue-600">
                 Analytics Page
@@ -1356,12 +1726,21 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
               </p>
             </div>
 
-            <div className={`rounded-[24px] border px-5 py-4 ${getRiskTone(riskScore)}`}>
-              <p className="text-[10px] font-semibold uppercase tracking-[0.08em]">
-                Overall Risk Score
-              </p>
-              <p className="mt-1 text-4xl font-semibold">{riskScore}%</p>
-              <p className="text-xs font-bold">{getRiskLabel(riskScore)} monitoring level</p>
+            <div className="flex shrink-0 flex-col items-stretch gap-3 lg:items-end">
+              <button
+                type="button"
+                onClick={handleExport}
+                className="order-first rounded-2xl border border-blue-200 bg-blue-700 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+              >
+                Export Filtered Report
+              </button>
+              <div className={`rounded-[24px] border px-5 py-4 ${getRiskTone(riskScore)}`}>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.08em]">
+                  Overall Risk Score
+                </p>
+                <p className="mt-1 text-4xl font-semibold">{riskScore}%</p>
+                <p className="text-xs font-bold">{getRiskLabel(riskScore)} monitoring level</p>
+              </div>
             </div>
           </div>
 
@@ -1413,12 +1792,83 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
               </div>
             )}
 
-            {(selectedYear || selectedMonth) && (
+            <div className="flex flex-col gap-2">
+              <label htmlFor="barangay-select" className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600">
+                Filter by Barangay
+              </label>
+              <select
+                id="barangay-select"
+                value={selectedBarangay ?? ''}
+                onChange={(e) => setSelectedBarangay(e.target.value || null)}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-900 transition hover:border-slate-400"
+              >
+                <option value="">All Barangays</option>
+                {availableBarangays.map((barangay) => <option key={barangay} value={barangay}>{barangay}</option>)}
+              </select>
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <label htmlFor="disaster-type-select" className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600">
+                Filter by Disaster Type
+              </label>
+              <select
+                id="disaster-type-select"
+                value={selectedDisasterType ?? ''}
+                onChange={(e) => setSelectedDisasterType(e.target.value || null)}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-900 transition hover:border-slate-400"
+              >
+                <option value="">All Disaster Types</option>
+                {availableDisasterTypes.map((type) => <option key={type} value={type}>{type}</option>)}
+              </select>
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <label htmlFor="severity-select" className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600">
+                Filter by Severity
+              </label>
+              <select
+                id="severity-select"
+                value={selectedSeverity ?? ''}
+                onChange={(e) => setSelectedSeverity((e.target.value || null) as HazardIncident['severity'] | null)}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-900 transition hover:border-slate-400"
+              >
+                <option value="">All Severity Levels</option>
+                {(['Critical', 'High', 'Moderate', 'Low'] as const).map((severity) => (
+                  <option key={severity} value={severity}>{severity}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <label htmlFor="frequency-select" className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600">
+                Frequency View
+              </label>
+              <select
+                id="frequency-select"
+                value={frequencyMode}
+                onChange={(e) => {
+                  const nextMode = e.target.value as FrequencyMode
+                  setFrequencyMode(nextMode)
+                  if (nextMode === 'yearly') setSelectedMonth(null)
+                }}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-900 transition hover:border-slate-400"
+              >
+                <option value="monthly">Monthly</option>
+                <option value="yearly">Yearly</option>
+                {selectedYear && selectedMonth ? <option value="daily">Daily for selected month</option> : null}
+              </select>
+            </div>
+
+            {(selectedYear || selectedMonth || selectedBarangay || selectedDisasterType || selectedSeverity) && (
               <button
                 type="button"
                 onClick={() => {
                   setSelectedYear(null)
                   setSelectedMonth(null)
+                  setSelectedBarangay(null)
+                  setSelectedDisasterType(null)
+                  setSelectedSeverity(null)
+                  setFrequencyMode('monthly')
                 }}
                 className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
               >
@@ -1426,10 +1876,13 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
               </button>
             )}
 
-            {selectedYear || selectedMonth ? (
+            {selectedYear || selectedMonth || selectedBarangay || selectedDisasterType || selectedSeverity ? (
               <p className="text-sm font-medium text-slate-600">
                 Showing{selectedYear ? ` ${selectedYear}` : ''}
                 {selectedMonth ? ` - ${new Date(2026, parseInt(selectedMonth, 10) - 1).toLocaleString('default', { month: 'long' })}` : ''}
+                {selectedBarangay ? ` • ${selectedBarangay}` : ''}
+                {selectedDisasterType ? ` • ${selectedDisasterType}` : ''}
+                {selectedSeverity ? ` • ${selectedSeverity}` : ''}
               </p>
             ) : null}
           </div>
@@ -1470,15 +1923,35 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
 
         <div className={`${glassPanelClass} p-5 sm:p-6`}>
           <SectionHeader
-            badge="Donut + Stacked Bar"
-            description="Shows both percentage share and stacked comparison of Fire, Accident, and live Earthquake data."
+            badge="Composition"
+            description="Shows how the current records are distributed across Fire, Accident, and live Earthquake data."
             eyebrow="Disaster Type Analysis"
             title="Disaster Type Analysis"
           />
-          <div className="grid gap-5 xl:grid-cols-[0.95fr_1.05fr]">
-            <DonutChart items={disasterTypeData} total={totalRecords} />
-            <StackedBarChart items={disasterTypeData} total={totalRecords} />
-          </div>
+          <DonutChart items={disasterTypeData} total={totalRecords} />
+        </div>
+
+        <div className={`${glassPanelClass} p-5 sm:p-6`}>
+          <SectionHeader
+            badge="Percentage of filtered incidents"
+            description="Each percentage is calculated as that severity count divided by the total number of filtered incident reports, multiplied by 100."
+            eyebrow="Severity Level"
+            title="Incident Severity Distribution"
+          />
+          <HorizontalBarChart
+            emptyText="No incident severity data is available for the current filters."
+            items={severityData}
+          />
+        </div>
+
+        <div className={`${glassPanelClass} p-5 sm:p-6`}>
+          <SectionHeader
+            badge={frequencyMode === 'daily' && selectedYear && selectedMonth ? 'Daily' : frequencyMode === 'yearly' ? 'Yearly' : 'Monthly'}
+            description="Tracks how often incident reports and live earthquake events occur. Use monthly, yearly, or daily analysis for a selected month."
+            eyebrow="Incident Activity Over Time"
+            title="Incident and Earthquake Trend"
+          />
+          <TrendChart points={incidentTrendData} />
         </div>
 
         <div className={`${glassPanelClass} p-5 sm:p-6`}>
@@ -1548,10 +2021,24 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
         <div className={`${glassPanelClass} p-5 sm:p-6`}>
           <SectionHeader
             badge="Ranking + Radar"
-            description="Ranks barangays and earthquake locations by incident pressure and visualizes the top hotspot profile."
+            description="Compares filtered incident totals by location and ranks the highest-risk barangays using severity, status, response load, and earthquake exposure."
             eyebrow="Barangay Risk Analysis"
             title="Barangay Risk Analysis"
           />
+          <div className="mb-5 grid gap-3 sm:grid-cols-2">
+            <AnalyticsMetricCard
+              accentClass="border-t-blue-600"
+              helper="Total incident reports assigned to the current barangay and other filters."
+              label="Incidents by Barangay"
+              value={filteredReports.length}
+            />
+            <AnalyticsMetricCard
+              accentClass="border-t-red-600"
+              helper="Highest composite location risk in the current filtered dataset."
+              label="Highest-Risk Barangay"
+              value={barangayRiskData[0]?.location || 'N/A'}
+            />
+          </div>
           <div className="grid gap-5 xl:grid-cols-[1.05fr_0.95fr]">
             <HorizontalBarChart
               emptyText="No barangay risk records available yet."

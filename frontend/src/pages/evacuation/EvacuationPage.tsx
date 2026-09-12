@@ -6,6 +6,7 @@ import { getEvacuationCenters } from '../../services/api'
 import type { EvacuationCenter } from '../../types/api'
 import { NavigationBar } from '../../components/NavigationBar'
 import { Link } from 'react-router-dom'
+import { AUTH_CHANGED_EVENT, isAuthenticated } from '../../services/auth'
 
 const lucenaCenter: [number, number] = [13.94, 121.62]
 const lucenaBounds: [[number, number], [number, number]] = [
@@ -50,8 +51,11 @@ export function EvacuationPage() {
   const [error, setError] = useState<string | null>(null)
   const [locationMessage, setLocationMessage] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [authenticated, setAuthenticated] = useState(() => isAuthenticated())
 
   const locateNearestCenter = () => {
+    if (!isAuthenticated()) return
+
     if (!navigator.geolocation) {
       setLocationMessage('Location is not available in this browser. You can still browse all centers below.')
       return
@@ -60,10 +64,14 @@ export function EvacuationPage() {
     setLocationMessage('Finding evacuation centers near you...')
     navigator.geolocation.getCurrentPosition(
       ({ coords }) => {
+        if (!isAuthenticated()) return
         setUserLocation({ latitude: coords.latitude, longitude: coords.longitude })
         setLocationMessage(null)
       },
-      () => setLocationMessage('Location access was not granted. You can still browse all centers below.'),
+      () => {
+        if (!isAuthenticated()) return
+        setLocationMessage('Location access was not granted. You can still browse all centers below.')
+      },
       { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 },
     )
   }
@@ -91,8 +99,32 @@ export function EvacuationPage() {
   }, [])
 
   useEffect(() => {
-    locateNearestCenter()
+    const syncAuthentication = () => {
+      const nextAuthenticated = isAuthenticated()
+      setAuthenticated(nextAuthenticated)
+
+      if (!nextAuthenticated) {
+        setUserLocation(null)
+        setLocationMessage(null)
+      }
+    }
+
+    window.addEventListener(AUTH_CHANGED_EVENT, syncAuthentication)
+    window.addEventListener('storage', syncAuthentication)
+
+    return () => {
+      window.removeEventListener(AUTH_CHANGED_EVENT, syncAuthentication)
+      window.removeEventListener('storage', syncAuthentication)
+    }
   }, [])
+
+  useEffect(() => {
+    if (!authenticated) return
+
+    const locationRequestId = window.setTimeout(locateNearestCenter, 0)
+
+    return () => window.clearTimeout(locationRequestId)
+  }, [authenticated])
 
   const centerCount = centers.length
   const summaryText = useMemo(() => {
@@ -103,7 +135,7 @@ export function EvacuationPage() {
   }, [centerCount, error, loading])
 
   const recommendedCenters = useMemo(() => {
-    if (!userLocation || centers.length === 0) return []
+    if (!authenticated || !userLocation || centers.length === 0) return []
 
     return centers
       .map((center) => ({
@@ -112,7 +144,7 @@ export function EvacuationPage() {
       }))
       .sort((a, b) => a.distanceKm - b.distanceKm)
       .slice(0, MAX_RECOMMENDATIONS)
-  }, [centers, userLocation])
+  }, [authenticated, centers, userLocation])
 
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(59,130,246,0.12)_0%,_rgba(248,250,252,1)_45%)] text-slate-900">
@@ -212,7 +244,7 @@ export function EvacuationPage() {
                   </div>
 
                   <div className="flex-1 overflow-y-auto px-5 py-4 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                    {recommendedCenters.length > 0 ? (
+                    {authenticated && recommendedCenters.length > 0 ? (
                       <ul className="space-y-3">
                         {recommendedCenters.map(({ center, distanceKm: distance }, index) => (
                           <li
@@ -237,17 +269,18 @@ export function EvacuationPage() {
                           </li>
                         ))}
                       </ul>
-                    ) : (
+                    ) : authenticated ? (
                       <div className="flex h-full flex-col items-center justify-center gap-2 px-2 text-center">
                         <p className="text-sm text-slate-700">Allow approximate location access to see the evacuation centers around you.</p>
                       </div>
-                    )}
+                    ) : null}
                   </div>
 
                   <div className="shrink-0 border-t border-blue-100 bg-blue-50 px-5 py-4">
                     <button
                       type="button"
                       onClick={locateNearestCenter}
+                      disabled={!authenticated}
                       className="w-full rounded-xl bg-blue-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-800"
                     >
                       Use my approximate location
