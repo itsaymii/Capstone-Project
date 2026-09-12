@@ -32,7 +32,8 @@ class EvacuationCenterSerializer(serializers.ModelSerializer):
         model = EvacuationCenter
         fields = [
             'id', 'name', 'latitude', 'longitude', 'coordinates',
-            'address', 'barangay', 'barangay_id',
+            'address', 'barangay', 'barangay_id', 'capacity',
+            'current_occupancy', 'status',
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']

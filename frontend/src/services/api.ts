@@ -19,6 +19,8 @@ import type {
   SimulationLearnerQuizDetailResponse,
   SimulationProgressPayload,
   SimulationProgressResponse,
+  SimulationCertificate,
+  SimulationCertificatesResponse,
   AuthApiResponse,
   LoginApiPayload,
   PasswordResetConfirmPayload,
@@ -29,6 +31,8 @@ import type {
   UserProfileUpdatePayload,
   CreateEvacuationCenterPayload,
   EvacuationCenter,
+  EvacuationCenterStatus,
+  NearestEvacuationCenter,
 } from '../types/api'
 
 function getApiErrorMessage(error: unknown, fallback: string): string {
@@ -226,14 +230,24 @@ export async function createDashboardAccount(payload: DashboardCreateAccountPayl
   return data
 }
 
-export async function createEvacuationCenter(payload: CreateEvacuationCenterPayload): Promise<void> {
+export async function createEvacuationCenter(payload: CreateEvacuationCenterPayload): Promise<EvacuationCenter> {
   await ensureCsrfCookie()
-  await api.post('/api/resources/evacuation-centers/', payload)
+  const { data } = await api.post<EvacuationCenter>('/api/resources/evacuation-centers/', payload)
+  return data
 }
 
 export async function createEvacuationCenters(payload: CreateEvacuationCenterPayload[]): Promise<void> {
   await ensureCsrfCookie()
-  await Promise.all(payload.map((item) => api.post('/api/resources/evacuation-centers/', item)))
+  const existingCenters = await getEvacuationCenters()
+  const existingByName = new Map(existingCenters.map((center) => [center.name.trim().toLowerCase(), center]))
+
+  await Promise.all(payload.map((item) => {
+    const existing = existingByName.get(item.name.trim().toLowerCase())
+    if (existing) {
+      return api.patch(`/api/resources/evacuation-centers/${existing.id}/`, item)
+    }
+    return api.post('/api/resources/evacuation-centers/', item)
+  }))
 }
 
 interface PaginatedResponse<T> {
@@ -257,6 +271,27 @@ export async function getEvacuationCenters(): Promise<EvacuationCenter[]> {
   }
 
   return []
+}
+
+export async function getNearestEvacuationCenter(latitude: number, longitude: number): Promise<NearestEvacuationCenter> {
+  const { data } = await api.get<NearestEvacuationCenter>('/api/resources/evacuation-centers/nearest/', {
+    params: { latitude, longitude },
+  })
+  return data
+}
+
+export async function deleteEvacuationCenter(id: string): Promise<void> {
+  await ensureCsrfCookie()
+  await api.delete(`/api/resources/evacuation-centers/${id}/`)
+}
+
+export async function updateEvacuationCenterStatus(
+  id: string,
+  status: EvacuationCenterStatus,
+): Promise<EvacuationCenter> {
+  await ensureCsrfCookie()
+  const { data } = await api.patch<EvacuationCenter>(`/api/resources/evacuation-centers/${id}/`, { status })
+  return data
 }
 
 export async function getDashboardAccounts(): Promise<DashboardAccountsResponse> {
@@ -498,4 +533,74 @@ export async function submitSimulationQuizAttempt(
     answers,
   })
   return data
+}
+
+export async function requestSimulationCertificate(courseId: string, courseTitle: string): Promise<SimulationCertificate> {
+  await ensureCsrfCookie()
+  try {
+    const { data } = await api.post<SimulationCertificate>('/dashboard/simulation/certificates/request/', {
+      courseId,
+      courseTitle,
+    })
+    return data
+  } catch (error) {
+    throw new Error(getApiErrorMessage(error, 'Unable to request a training ticket for this course.'))
+  }
+}
+
+export async function getMySimulationCertificates(): Promise<SimulationCertificatesResponse> {
+  const { data } = await api.get<SimulationCertificatesResponse>('/dashboard/simulation/certificates/mine/')
+  return data
+}
+
+export async function getAdminSimulationCertificates(statusFilter?: string): Promise<SimulationCertificatesResponse> {
+  const params = statusFilter ? { status: statusFilter } : undefined
+  const { data } = await api.get<SimulationCertificatesResponse>('/dashboard/admin/simulation/certificates/', { params })
+  return data
+}
+
+export async function issueAdminSimulationCertificate(certificateId: number): Promise<SimulationCertificate> {
+  await ensureCsrfCookie()
+  try {
+    const { data } = await api.post<SimulationCertificate>(`/dashboard/admin/simulation/certificates/${certificateId}/issue/`)
+    return data
+  } catch (error) {
+    throw new Error(getApiErrorMessage(error, 'Unable to issue this certificate.'))
+  }
+}
+
+export async function rejectAdminSimulationCertificate(certificateId: number, reason?: string): Promise<SimulationCertificate> {
+  await ensureCsrfCookie()
+  try {
+    const { data } = await api.post<SimulationCertificate>(`/dashboard/admin/simulation/certificates/${certificateId}/reject/`, {
+      reason,
+    })
+    return data
+  } catch (error) {
+    throw new Error(getApiErrorMessage(error, 'Unable to reject this training ticket.'))
+  }
+}
+
+export async function getArchivedSimulationCourses(): Promise<SimulationCourseCatalogResponse> {
+  const { data } = await api.get<SimulationCourseCatalogResponse>('/dashboard/admin/simulation/courses/archived/')
+  return data
+}
+
+export async function restoreArchivedSimulationCourse(courseId: string): Promise<void> {
+  await ensureCsrfCookie()
+  try {
+    await api.post('/dashboard/admin/simulation/courses/restore/', { courseId })
+  } catch (error) {
+    throw new Error(getApiErrorMessage(error, 'Unable to restore this course.'))
+  }
+}
+
+export async function resetSimulationProgressForTesting(userId?: number): Promise<{ resetUsers: number; deletedAttempts: number; deletedCertificates: number }> {
+  await ensureCsrfCookie()
+  try {
+    const { data } = await api.post('/dashboard/admin/simulation/progress/reset/', userId ? { userId } : {})
+    return data
+  } catch (error) {
+    throw new Error(getApiErrorMessage(error, 'Unable to reset simulation progress.'))
+  }
 }

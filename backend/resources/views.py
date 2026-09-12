@@ -17,6 +17,7 @@ from accounts.permissions import IsStaffOrReadOnly
 from io import TextIOWrapper
 from decimal import Decimal, InvalidOperation
 import csv
+from math import asin, cos, radians, sin, sqrt
 
 
 class SupplyCategoryViewSet(viewsets.ModelViewSet):
@@ -53,7 +54,7 @@ class EvacuationCenterViewSet(viewsets.ModelViewSet):
     queryset = EvacuationCenter.objects.select_related('barangay').all()
     serializer_class = EvacuationCenterSerializer
     authentication_classes = [SessionAuthentication, TokenAuthentication]
-    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    permission_classes = [IsStaffOrReadOnly]
     search_fields = ['name', 'address']
 
     @action(
@@ -88,6 +89,48 @@ class EvacuationCenterViewSet(viewsets.ModelViewSet):
             "type": "FeatureCollection",
             "features": features,
         })
+
+    @action(
+        detail=False,
+        methods=['get'],
+        permission_classes=[permissions.AllowAny],
+        authentication_classes=[],
+    )
+    def nearest(self, request):
+        """Return the closest center to an approximate user location."""
+        try:
+            latitude = float(request.query_params['latitude'])
+            longitude = float(request.query_params['longitude'])
+        except (KeyError, TypeError, ValueError):
+            return Response(
+                {"error": "latitude and longitude must be valid numbers."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not -90 <= latitude <= 90 or not -180 <= longitude <= 180:
+            return Response(
+                {"error": "latitude or longitude is outside its valid range."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        def distance_km(center):
+            earth_radius_km = 6371
+            lat_delta = radians(float(center.latitude) - latitude)
+            lng_delta = radians(float(center.longitude) - longitude)
+            origin_lat = radians(latitude)
+            center_lat = radians(float(center.latitude))
+            haversine = sin(lat_delta / 2) ** 2 + cos(origin_lat) * cos(center_lat) * sin(lng_delta / 2) ** 2
+            return earth_radius_km * 2 * asin(sqrt(haversine))
+
+        centers = list(self.get_queryset())
+        if not centers:
+            return Response({"detail": "No evacuation centers are available."}, status=status.HTTP_404_NOT_FOUND)
+
+        nearest_center = min(centers, key=distance_km)
+        response_data = EvacuationCenterSerializer(nearest_center).data
+        response_data['distance_km'] = round(distance_km(nearest_center), 2)
+        response_data['user_location'] = {"latitude": latitude, "longitude": longitude}
+        return Response(response_data)
 
 
 class EquipmentViewSet(viewsets.ModelViewSet):

@@ -229,7 +229,12 @@ export interface CreateEvacuationCenterPayload {
   longitude: number
   address: string
   barangay_id?: string
+  capacity: number
+  current_occupancy: number
+  status: EvacuationCenterStatus
 }
+
+export type EvacuationCenterStatus = 'available' | 'full' | 'closed' | 'maintenance'
 
 export interface EvacuationCenter {
   id: string
@@ -237,10 +242,21 @@ export interface EvacuationCenter {
   latitude: number
   longitude: number
   address: string
+  capacity: number
+  current_occupancy: number
+  status: EvacuationCenterStatus
   barangay?: {
     id: string
     name: string
   } | null
+}
+
+export interface NearestEvacuationCenter extends EvacuationCenter {
+  distance_km: number
+  user_location: {
+    latitude: number
+    longitude: number
+  }
 }
 
 export interface SimulationProgressPayload {
@@ -390,3 +406,26 @@ export interface SimulationQuizSubmitResponse {
     explanation: string
   }>
 }
+
+export type SimulationCertificateStatus = 'pending' | 'issued' | 'rejected'
+
+export interface SimulationCertificate {
+  id: number
+  courseId: string
+  courseTitle: string
+  ticketCode: string
+  certificateNumber: string
+  status: SimulationCertificateStatus
+  traineeName: string
+  traineeEmail?: string
+  issuedBy: string | null
+  issuedAt: string | null
+  completedAt: string | null
+  rejectionReason: string
+  createdAt: string | null
+}
+
+export interface SimulationCertificatesResponse {
+  certificates: SimulationCertificate[]
+}
+

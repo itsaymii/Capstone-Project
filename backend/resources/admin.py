@@ -35,8 +35,8 @@ class SupplyAdmin(admin.ModelAdmin):
 
 @admin.register(EvacuationCenter)
 class EvacuationCenterAdmin(admin.ModelAdmin):
-    list_display = ['name', 'barangay', 'address']
-    list_filter = ['barangay']
+    list_display = ['name', 'barangay', 'capacity', 'current_occupancy', 'status']
+    list_filter = ['barangay', 'status']
     search_fields = ['name', 'address']
     ordering = ['name']
 

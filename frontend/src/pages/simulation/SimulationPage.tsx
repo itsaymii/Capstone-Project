@@ -6,6 +6,8 @@ import { AUTH_CHANGED_EVENT, getCurrentUserProfile, isAuthenticated } from '../.
 import {
   getSimulationModuleQuiz,
   getSimulationProgress,
+  getMySimulationCertificates,
+  requestSimulationCertificate,
   saveSimulationProgress,
   submitSimulationQuizAttempt,
 } from '../../services/api'
@@ -17,7 +19,7 @@ import {
   normalizeVideoUrl,
   type SimulationCourse,
 } from '../../services/simulationCourses'
-import type { SimulationLearnerQuiz, SimulationQuizSubmitResponse } from '../../types/api'
+import type { SimulationCertificate, SimulationLearnerQuiz, SimulationQuizSubmitResponse } from '../../types/api'
 
 type CourseStatus = 'Not Started' | 'In Progress' | 'Completed'
 
@@ -207,6 +209,39 @@ export function SimulationPage() {
   const [hasLoadedProgress, setHasLoadedProgress] = useState(false)
   const [completedCourseTitle, setCompletedCourseTitle] = useState<string | null>(null)
   const [certificateCourseId, setCertificateCourseId] = useState<string | null>(null)
+  const [myCertificates, setMyCertificates] = useState<SimulationCertificate[]>([])
+  const [isRequestingTicket, setIsRequestingTicket] = useState(false)
+  const [certificateActionError, setCertificateActionError] = useState('')
+
+  useEffect(() => {
+    let isActive = true
+
+    async function loadMyCertificates(): Promise<void> {
+      if (!isAuthenticated()) {
+        if (isActive) setMyCertificates([])
+        return
+      }
+
+      try {
+        const response = await getMySimulationCertificates()
+        if (isActive) {
+          setMyCertificates(response.certificates)
+        }
+      } catch {
+        if (isActive) {
+          setMyCertificates([])
+        }
+      }
+    }
+
+    void loadMyCertificates()
+
+    window.addEventListener(AUTH_CHANGED_EVENT, loadMyCertificates)
+    return () => {
+      isActive = false
+      window.removeEventListener(AUTH_CHANGED_EVENT, loadMyCertificates)
+    }
+  }, [])
 
   useEffect(() => {
     let isActive = true
@@ -337,6 +372,7 @@ export function SimulationPage() {
   const activeCourse = activeCourseId ? courses.find((course) => course.id === activeCourseId) ?? null : null
   const activeLesson = activeCourse ? activeCourse.lessonOutline[activeLessonIndex] ?? null : null
   const certificateCourse = certificateCourseId ? courses.find((course) => course.id === certificateCourseId) ?? null : null
+  const certificateRecord = certificateCourseId ? myCertificates.find((certificate) => certificate.courseId === certificateCourseId) ?? null : null
   const currentUserName = getCurrentUserProfile()?.fullName?.trim() || 'Citizen Learner'
   const currentLessonProgressKey = activeCourse && activeLesson ? getLessonProgressKey(activeCourse.id, activeLesson.id, activeLessonIndex) : null
   const legacyLessonProgressKey = activeCourse ? `${activeCourse.id}:${activeLessonIndex}` : null
@@ -563,6 +599,7 @@ export function SimulationPage() {
     }
 
     if (getCourseStatus(courseId) === 'Completed') {
+      setCertificateActionError('')
       setCertificateCourseId(courseId)
       return
     }
@@ -624,7 +661,7 @@ export function SimulationPage() {
     setExamAttemptResult(null)
   }
 
-  function handleDownloadCertificatePdf(course: SimulationCourse) {
+  function handleDownloadCertificatePdf(course: SimulationCourse, certificate: SimulationCertificate) {
     const completionDate = getCompletedCourseDateLabel(course.id) || 'Completed'
     const learnerName = currentUserName
     const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
@@ -642,46 +679,63 @@ export function SimulationPage() {
     doc.setFont('helvetica', 'bold')
     doc.setFontSize(12)
     doc.setTextColor(11, 42, 87)
-    doc.text('DISASTER READINESS SIMULATION ACADEMY', pageWidth / 2, 30, { align: 'center' })
+    doc.text('LUCENA CITY DRRMO - DISASTER READINESS SIMULATION ACADEMY', pageWidth / 2, 28, { align: 'center' })
 
     doc.setFontSize(32)
-    doc.text('Certificate of Completion', pageWidth / 2, 48, { align: 'center' })
+    doc.text('Official Certificate of Completion', pageWidth / 2, 46, { align: 'center' })
 
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(14)
     doc.setTextColor(71, 85, 105)
-    doc.text('This certifies that', pageWidth / 2, 64, { align: 'center' })
+    doc.text('This certifies that', pageWidth / 2, 62, { align: 'center' })
 
     doc.setFont('helvetica', 'bold')
     doc.setFontSize(28)
     doc.setTextColor(15, 23, 42)
-    doc.text(learnerName, pageWidth / 2, 80, { align: 'center' })
+    doc.text(learnerName, pageWidth / 2, 78, { align: 'center' })
 
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(14)
     doc.setTextColor(71, 85, 105)
-    doc.text('has successfully completed the course', pageWidth / 2, 94, { align: 'center' })
+    doc.text('has successfully completed DRRMO training for the course', pageWidth / 2, 92, { align: 'center' })
 
     doc.setFont('helvetica', 'bold')
     doc.setFontSize(20)
     doc.setTextColor(11, 42, 87)
-    doc.text(course.title, pageWidth / 2, 108, { align: 'center', maxWidth: pageWidth - 48 })
+    doc.text(course.title, pageWidth / 2, 106, { align: 'center', maxWidth: pageWidth - 48 })
 
     doc.setFont('helvetica', 'normal')
-    doc.setFontSize(13)
+    doc.setFontSize(12)
     doc.setTextColor(51, 65, 85)
-    doc.text(`Completion Date: ${completionDate}`, pageWidth / 2, 124, { align: 'center' })
+    doc.text(`Completion Date: ${completionDate}`, pageWidth / 2, 120, { align: 'center' })
+    doc.text(`Certificate No.: ${certificate.certificateNumber || certificate.ticketCode}`, pageWidth / 2, 128, { align: 'center' })
 
-    doc.line(36, 155, 110, 155)
-    doc.line(pageWidth - 110, 155, pageWidth - 36, 155)
+    doc.line(36, 150, 110, 150)
+    doc.line(pageWidth - 110, 150, pageWidth - 36, 150)
 
     doc.setFontSize(11)
-    doc.text('Course Coordinator', 73, 162, { align: 'center' })
-    doc.text('Authorized Signature', pageWidth - 73, 162, { align: 'center' })
+    doc.text('DRRMO Trainer', 73, 157, { align: 'center' })
+    doc.text(certificate.issuedBy || 'Authorized Signature', pageWidth - 73, 157, { align: 'center' })
 
     const fileName = `certificate-${course.id}-${new Date().toISOString().slice(0, 10)}.pdf`
     doc.save(fileName)
   }
+
+  async function handleRequestTrainingTicket(course: SimulationCourse): Promise<void> {
+    setIsRequestingTicket(true)
+    setCertificateActionError('')
+
+    try {
+      const certificate = await requestSimulationCertificate(course.id, course.title)
+      setMyCertificates((previous) => [certificate, ...previous.filter((entry) => entry.courseId !== course.id)])
+    } catch (error) {
+      setCertificateActionError(error instanceof Error ? error.message : 'Unable to request a training ticket.')
+    } finally {
+      setIsRequestingTicket(false)
+    }
+  }
+
+
 
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_10%_0%,#d5e7ff_0%,#f6f7fb_42%,#fff8ef_100%)] text-slate-800">
@@ -1254,25 +1308,60 @@ export function SimulationPage() {
         <div className="fixed inset-0 z-[1510] flex items-center justify-center bg-[#031022]/60 p-4 backdrop-blur-[2px] sm:p-8" onClick={() => setCertificateCourseId(null)}>
           <section className="w-full max-w-2xl overflow-hidden rounded-3xl border border-[#0b2a57]/20 bg-white shadow-[0_30px_54px_rgba(2,6,23,0.5)]" onClick={(event) => event.stopPropagation()}>
             <div className="bg-[linear-gradient(135deg,#0b2a57,#1a4a8c)] px-6 py-5 text-white sm:px-8">
-              <p className="text-xs font-extrabold uppercase tracking-[0.2em] text-white/80">Certificate of Completion</p>
+              <p className="text-xs font-extrabold uppercase tracking-[0.2em] text-white/80">DRRMO Training Ticket</p>
               <h3 className="mt-2 text-2xl font-black">Disaster Readiness Simulation Academy</h3>
             </div>
             <div className="space-y-4 px-6 py-7 text-center sm:px-8">
               <p className="text-sm uppercase tracking-[0.16em] text-slate-500">This certifies that</p>
               <p className="text-3xl font-black text-slate-900 sm:text-4xl">{currentUserName}</p>
-              <p className="text-sm uppercase tracking-[0.16em] text-slate-500">has successfully completed</p>
+              <p className="text-sm uppercase tracking-[0.16em] text-slate-500">has completed DRRMO training for</p>
               <p className="text-xl font-extrabold text-[#0b2a57] sm:text-2xl">{certificateCourse.title}</p>
               <p className="text-sm text-slate-600">
                 Completion Date: <span className="font-bold text-slate-800">{getCompletedCourseDateLabel(certificateCourse.id) || 'Completed'}</span>
               </p>
+
+              {!certificateRecord || certificateRecord.status === 'rejected' ? (
+                <div className="space-y-3 rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-left">
+                  <p className="text-sm font-semibold text-amber-900">
+                    {certificateRecord?.status === 'rejected'
+                      ? 'Your previous training ticket was not approved. You may request a new one.'
+                      : 'Request a training ticket to have a DRRMO trainer review and issue your official certificate.'}
+                  </p>
+                  {certificateRecord?.status === 'rejected' && certificateRecord.rejectionReason ? (
+                    <p className="text-xs text-amber-800">Reason: {certificateRecord.rejectionReason}</p>
+                  ) : null}
+                  {certificateActionError ? <p className="text-xs font-semibold text-rose-700">{certificateActionError}</p> : null}
+                  <button
+                    className="rounded-xl bg-[linear-gradient(135deg,#0b2a57,#1a4a8c)] px-4 py-2 text-sm font-bold uppercase tracking-[0.08em] text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                    disabled={isRequestingTicket}
+                    onClick={() => void handleRequestTrainingTicket(certificateCourse)}
+                    type="button"
+                  >
+                    {isRequestingTicket ? 'Requesting...' : 'Request Training Ticket'}
+                  </button>
+                </div>
+              ) : certificateRecord.status === 'pending' ? (
+                <div className="space-y-2 rounded-2xl border border-blue-200 bg-blue-50 px-5 py-4 text-left">
+                  <p className="text-sm font-semibold text-blue-900">Training ticket submitted. Awaiting DRRMO trainer approval.</p>
+                  <p className="text-xs text-blue-800">Ticket code: <span className="font-mono font-bold">{certificateRecord.ticketCode}</span></p>
+                </div>
+              ) : (
+                <div className="space-y-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-left">
+                  <p className="text-sm font-semibold text-emerald-900">Official certificate issued by {certificateRecord.issuedBy}.</p>
+                  <p className="text-xs text-emerald-800">Certificate No.: <span className="font-mono font-bold">{certificateRecord.certificateNumber}</span></p>
+                </div>
+              )}
+
               <div className="flex items-center justify-center gap-2 pt-2">
-                <button
-                  className="rounded-xl bg-[linear-gradient(135deg,#0b2a57,#1a4a8c)] px-4 py-2 text-sm font-bold uppercase tracking-[0.08em] text-white transition hover:brightness-110"
-                  onClick={() => handleDownloadCertificatePdf(certificateCourse)}
-                  type="button"
-                >
-                  Download PDF
-                </button>
+                {certificateRecord?.status === 'issued' ? (
+                  <button
+                    className="rounded-xl bg-[linear-gradient(135deg,#0b2a57,#1a4a8c)] px-4 py-2 text-sm font-bold uppercase tracking-[0.08em] text-white transition hover:brightness-110"
+                    onClick={() => handleDownloadCertificatePdf(certificateCourse, certificateRecord)}
+                    type="button"
+                  >
+                    Download Certificate
+                  </button>
+                ) : null}
                 <button
                   className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold uppercase tracking-[0.08em] text-slate-700 transition hover:bg-slate-100"
                   onClick={() => setCertificateCourseId(null)}
