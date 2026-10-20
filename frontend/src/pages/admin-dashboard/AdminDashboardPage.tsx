@@ -1379,6 +1379,8 @@ export function AdminDashboardPage() {
         title: `${readableType} Report - ${report.reportCode || report.report_code || report.incidentCode || report.incident_code || report.incident_reference_code_readonly || reportId}`,
         code,
         status,
+        // Keep the original backend status (e.g. "Submitted", "Approved") for the Reports table.
+        reportStatus: getRecordValue(report, 'status', 'status_update'),
         severity,
         location: getDashboardLocation(report),
         time: getRecordDate(report).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }),
