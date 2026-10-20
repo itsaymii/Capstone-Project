@@ -235,7 +235,7 @@ export function ReportsSection({
 
       return {
         reportId,
-        reportType: incidentType || hazardTypeLabels[incident.code],
+        reportType: incidentType || pickText(record, 'hazardTypeName') || hazardTypeLabels[incident.code],
         location: incident.location || '-',
         dateTime: formatReportDateTime(dateValue),
         responseTeam: incident.responseTeam || '-',

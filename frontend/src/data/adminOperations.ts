@@ -16,6 +16,8 @@ export type HazardIncident = {
   referenceCode?: string
   /** Real ISO date/time the incident happened or was reported, when available. */
   reportedAt?: string
+  /** Real hazard type name from the backend (e.g. "Crime", "Drowning"), when available. */
+  hazardTypeName?: string
 }
 
 export const hazardIncidents: HazardIncident[] = []
@@ -57,21 +59,23 @@ export function mapBackendIncidentToHazardIncident(
 ): HazardIncident {
   const hazardName = incident.hazard_type?.name?.toLowerCase() || ''
 
-  const code: HazardType =
-    hazardName.includes('fire')
-      ? 'FR'
-      : hazardName.includes('vehicular') ||
-          hazardName.includes('accident') ||
-          hazardName.includes('rca')
-        ? 'AC'
-        : 'EQ'
+  // Only real earthquakes get 'EQ'. Crime, drowning, medical and other hazards used to
+  // fall through to 'EQ' and showed up as earthquakes; they are grouped under 'AC'
+  // (accident / other) and keep their real name in `hazardTypeName`.
+  const code: HazardType = hazardName.includes('fire')
+    ? 'FR'
+    : hazardName.includes('earthquake')
+      ? 'EQ'
+      : 'AC'
 
   const status: IncidentStatus =
-    incident.status === 'resolved' || incident.status === 'contained'
+    incident.status === 'resolved' || incident.status === 'contained' || incident.status === 'false_alarm'
       ? 'resolved'
-      : incident.status === 'reported' || incident.status === 'verified'
-        ? 'pending'
-        : 'active'
+      : incident.status === 'verified'
+        ? 'approved'
+        : incident.status === 'reported'
+          ? 'pending'
+          : 'active'
 
   const severityMap: Record<string, HazardIncident['severity']> = {
     low: 'Low',
@@ -102,6 +106,7 @@ export function mapBackendIncidentToHazardIncident(
       Number(incident.longitude) || 121.6236,
     ],
     referenceCode: incident.reference_code || undefined,
+    hazardTypeName: incident.hazard_type?.name || undefined,
     reportedAt: Number.isNaN(parsedDate.getTime()) ? undefined : parsedDate.toISOString(),
   }
 }

@@ -344,6 +344,21 @@ function getDashboardIncidentStatus(record: any): 'pending' | 'approved' | 'reso
 }
 
 function getDashboardIncidentType(record: any): string {
+  // The backend hazard type name is the most reliable source, so use it first.
+  const hazardTypeName = getRecordValue(record, 'hazardTypeName') || getRecordValue(record?.hazard_type, 'name')
+  if (hazardTypeName) {
+    const lowerHazard = hazardTypeName.toLowerCase()
+    if (lowerHazard.includes('fire')) return 'Fire'
+    if (lowerHazard.includes('earthquake')) return 'Earthquake'
+    if (lowerHazard.includes('medical')) return 'Medical'
+    if (lowerHazard.includes('crime')) return 'Crime'
+    if (lowerHazard.includes('drowning')) return 'Drowning'
+    if (lowerHazard.includes('vehicular') || lowerHazard.includes('accident') || lowerHazard.includes('rca')) {
+      return 'Accident'
+    }
+    return toTitleCase(hazardTypeName)
+  }
+
   const explicitType = getRecordValue(
     record,
     'incidentType',
@@ -1241,24 +1256,32 @@ export function AdminDashboardPage() {
   const isMountedRef = useRef(true)
 
   const loadBackendData = useCallback(async () => {
-    try {
-      const [backendIncidents, backendIncidentReports] = await Promise.all([
-        getIncidents(),
-        getIncidentReports(),
-      ])
+    // Load both sources independently: if one request fails, the other still shows
+    // (Promise.all used to blank the whole dashboard when either call failed).
+    const [incidentsResult, incidentReportsResult] = await Promise.allSettled([
+      getIncidents(),
+      getIncidentReports(),
+    ])
 
-      const mappedIncidents = backendIncidents.map(mapBackendIncidentToHazardIncident)
+    if (!isMountedRef.current) return
 
-      if (!isMountedRef.current) return
-
+    if (incidentsResult.status === 'fulfilled') {
+      // Keep the raw backend fields (incident_datetime, barangay, hazard_type, reference_code...)
+      // next to the mapped ones, so dates, barangays and types on the dashboard are real.
+      const mappedIncidents = incidentsResult.value.map((incident) => ({
+        ...incident,
+        ...mapBackendIncidentToHazardIncident(incident),
+      })) as HazardIncident[]
       setReports(mappedIncidents)
-      setResponderReports(backendIncidentReports)
-    } catch (error) {
-      console.error('[AdminDashboard] Failed to load backend data:', error)
-
-      if (!isMountedRef.current) return
-
+    } else {
+      console.error('[AdminDashboard] Failed to load incidents:', incidentsResult.reason)
       setReports([])
+    }
+
+    if (incidentReportsResult.status === 'fulfilled') {
+      setResponderReports(incidentReportsResult.value)
+    } else {
+      console.error('[AdminDashboard] Failed to load incident reports:', incidentReportsResult.reason)
       setResponderReports([])
     }
   }, [])
@@ -1575,7 +1598,7 @@ export function AdminDashboardPage() {
           ? 'Live seismic API unavailable'
           : normalizedDashboardSearchQuery
             ? 'Search results in the live seismic feed'
-            : 'USGS live data for Quezon region',
+            : 'USGS live data, Philippines, last 2 years',
       delta:
         eqCardStatus === 'loading'
           ? 'Updating from live seismic feed'
