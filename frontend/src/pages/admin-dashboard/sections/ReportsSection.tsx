@@ -102,9 +102,62 @@ function getAlertLevelFromSeverity(severity: HazardIncident['severity']): string
 function getEarthquakeStatus(event: EarthquakeEvent): string {
   const hoursSinceEvent = (Date.now() - event.rawTimestamp) / (1000 * 60 * 60)
 
-  if (event.magnitude >= 4.5 || hoursSinceEvent <= 24) return 'Active monitoring'
-  if (event.magnitude >= 3.5 || hoursSinceEvent <= 72) return 'Field review'
+  // Recency always matters: an old earthquake is no longer under active monitoring,
+  // even if it was strong. Stronger events just stay in each stage a bit longer.
+  if (hoursSinceEvent <= 24 || (event.magnitude >= 4.5 && hoursSinceEvent <= 72)) return 'Active monitoring'
+  if (hoursSinceEvent <= 72 || (event.magnitude >= 3.5 && hoursSinceEvent <= 168)) return 'Field review'
   return 'Logged'
+}
+
+const hazardTypeLabels: Record<'FR' | 'EQ' | 'AC', string> = {
+  FR: 'Fire',
+  EQ: 'Earthquake',
+  AC: 'Accident',
+}
+
+// Same rules as map_incident_type_to_severity() in backend/incidents/serializers.py,
+// so responder reports get the same severity the backend gives them.
+function getResponderReportSeverity(incidentType: string, victimCount: number): HazardIncident['severity'] {
+  const lower = incidentType.toLowerCase()
+
+  if (victimCount >= 5) return 'Critical'
+  if (victimCount >= 3) return 'High'
+  if (lower.includes('fire') || lower.includes('drowning') || lower.includes('crime')) return 'Moderate'
+  if (victimCount > 0) return 'Moderate'
+  return 'Low'
+}
+
+function getSentViaLabel(createdByRole: string): string {
+  switch (createdByRole.toLowerCase()) {
+    case 'admin':
+      return 'Admin'
+    case 'staff':
+      return 'Staff'
+    case 'anonymous':
+      return 'Public'
+    default:
+      return 'Responder'
+  }
+}
+
+function toTitleCase(value: string): string {
+  return value
+    .replace(/[_-]+/g, ' ')
+    .trim()
+    .toLowerCase()
+    .replace(/\b\w/g, (letter) => letter.toUpperCase())
+}
+
+function pickText(record: Record<string, unknown>, ...keys: string[]): string {
+  for (const key of keys) {
+    const value = record[key]
+    if (value !== undefined && value !== null && String(value).trim() !== '') return String(value).trim()
+  }
+  return ''
+}
+
+function isValidDate(value: string): boolean {
+  return value !== '' && !Number.isNaN(new Date(value).getTime())
 }
 
 function escapeHtmlCell(value: string): string {
@@ -116,30 +169,10 @@ function escapeHtmlCell(value: string): string {
     .replace(/'/g, '&#39;')
 }
 
-function parseClockTimeLabel(label: string): { hours: number; minutes: number } {
-  const match = label.trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i)
-  if (!match) return { hours: 8, minutes: 0 }
-
-  let hours = Number(match[1])
-  const minutes = Number(match[2])
-  const meridiem = match[3].toUpperCase()
-
-  if (meridiem === 'PM' && hours !== 12) hours += 12
-  if (meridiem === 'AM' && hours === 12) hours = 0
-
-  return { hours, minutes }
-}
-
-function buildIncidentDateValue(timeLabel: string, dayOffset: number): string {
-  const { hours, minutes } = parseClockTimeLabel(timeLabel)
-  const year = new Date().getFullYear()
-  const date = new Date(year, 2, 17 - dayOffset, hours, minutes, 0, 0)
-  return date.toISOString()
-}
-
 function formatReportDateTime(value: string): string {
+  if (!value) return '-'
   const parsedDate = new Date(value)
-  if (Number.isNaN(parsedDate.getTime())) return value || '-'
+  if (Number.isNaN(parsedDate.getTime())) return value
 
   return parsedDate.toLocaleString(undefined, {
     year: 'numeric',
@@ -181,26 +214,40 @@ export function ReportsSection({
   const normalizedDashboardSearchQuery = searchQuery.trim().toLowerCase()
   const normalizedReportLocationFilter = reportLocationFilter.trim().toLowerCase()
 
-  const localHazardReportRows = useMemo<UnifiedHazardReportRow[]>(() => {
-    return reports.filter((incident) => incident.code !== 'EQ').map((incident, index) => {
-      const hazardCode: 'FR' | 'EQ' | 'AC' = incident.code
-      const dateValue = buildIncidentDateValue(incident.time, index)
+  // `reports` is already the single, de-duplicated source from the dashboard:
+  // responder-submitted IncidentReports when there are any, otherwise admin Incidents.
+  // Do NOT also add `responderReports` here, or every responder report shows up twice.
+  const incidentReportRows = useMemo<UnifiedHazardReportRow[]>(() => {
+    return reports.map((incident) => {
+      const record = incident as HazardIncident & Record<string, unknown>
+      const isResponderReport = pickText(record, 'reportCode', 'incidentType') !== ''
+
+      const reportId =
+        pickText(record, 'reportCode', 'incidentCode', 'referenceCode', 'reference_code') || incident.id
+      const dateValue = pickText(record, 'createdAt', 'reportedAt', 'created_at')
+
+      const incidentType = pickText(record, 'incidentType')
+      const severity = isResponderReport
+        ? getResponderReportSeverity(incidentType, Number(pickText(record, 'victimCount')) || 0)
+        : incident.severity
+
+      const rawStatus = pickText(record, 'reportStatus') || incident.status
 
       return {
-        reportId: `RPT-${String(index + 1).padStart(3, '0')}`,
-        reportType: incident.code === 'FR' ? 'Fire' : 'Accident',
-        location: incident.location,
+        reportId,
+        reportType: incidentType || hazardTypeLabels[incident.code],
+        location: incident.location || '-',
         dateTime: formatReportDateTime(dateValue),
-        responseTeam: incident.responseTeam,
+        responseTeam: incident.responseTeam || '-',
         magnitude: '-',
-        cause: incident.description || 'Under investigation',
-        impactLevel: getImpactLevelFromSeverity(incident.severity),
-        riskLevel: getRiskLevelFromSeverity(incident.severity),
-        alertLevel: getAlertLevelFromSeverity(incident.severity),
-        sentVia: 'Admin',
-        status: incident.status,
-        hazardCode,
-        locationKey: incident.location,
+        cause: (incident.description && incident.description !== '-' ? incident.description : '') || 'Under investigation',
+        impactLevel: getImpactLevelFromSeverity(severity),
+        riskLevel: getRiskLevelFromSeverity(severity),
+        alertLevel: getAlertLevelFromSeverity(severity),
+        sentVia: isResponderReport ? getSentViaLabel(pickText(record, 'createdByRole')) : 'Admin',
+        status: toTitleCase(rawStatus) || '-',
+        hazardCode: incident.code,
+        locationKey: incident.location || '',
         dateValue,
       }
     })
@@ -209,12 +256,13 @@ export function ReportsSection({
   const earthquakeReportRows = useMemo<UnifiedHazardReportRow[]>(() => {
     return [...earthquakeEvents]
       .sort((left, right) => right.rawTimestamp - left.rawTimestamp)
-      .map((event, index) => {
+      .map((event) => {
         const severity = getEarthquakeSeverity(event.magnitude)
         const dateValue = new Date(event.rawTimestamp).toISOString()
 
         return {
-          reportId: `EQ-${String(index + 1).padStart(3, '0')}`,
+          // USGS event ID: stays the same across reloads, so it can be traced back to the source.
+          reportId: `EQ-${event.id}`,
           reportType: 'Earthquake',
           location: event.place,
           dateTime: formatReportDateTime(dateValue),
@@ -233,44 +281,24 @@ export function ReportsSection({
       })
   }, [earthquakeEvents])
 
-  const responderReportRows = useMemo<UnifiedHazardReportRow[]>(() => {
-    return responderReports.map((report) => {
-      const type = (report.incidentType || '').toLowerCase()
-
-      let hazardCode: 'FR' | 'EQ' | 'AC' = 'AC'
-      if (type.includes('fire')) hazardCode = 'FR'
-      if (type.includes('earthquake')) hazardCode = 'EQ'
-
-      return {
-        reportId: report.reportCode || report.incidentCode || report.id,
-        reportType: report.incidentType || 'Responder Report',
-        location: report.location || '-',
-        dateTime: formatReportDateTime(report.createdAt || ''),
-        responseTeam: report.responderTeam || '-',
-        magnitude: '-',
-        cause: report.actionTaken || '-',
-        impactLevel: 'Responder',
-        riskLevel: 'Responder',
-        alertLevel: 'Responder',
-        sentVia: 'Responder',
-        status: report.status || 'Submitted',
-        hazardCode,
-        locationKey: report.location || '',
-        dateValue: report.createdAt || '',
-      }
-    })
-  }, [responderReports])
-
+  // Newest first across all sources; rows without a valid date go last.
   const unifiedHazardReportRows = useMemo(
-    () => [...earthquakeReportRows, ...localHazardReportRows, ...responderReportRows],
-    [earthquakeReportRows, localHazardReportRows, responderReportRows],
+    () =>
+      [...earthquakeReportRows, ...incidentReportRows].sort((left, right) => {
+        const leftTime = isValidDate(left.dateValue) ? new Date(left.dateValue).getTime() : -Infinity
+        const rightTime = isValidDate(right.dateValue) ? new Date(right.dateValue).getTime() : -Infinity
+        return rightTime - leftTime
+      }),
+    [earthquakeReportRows, incidentReportRows],
   )
 
   function matchesReportDateRange(dateValue?: string): boolean {
-    if (!dateValue) return true
+    if (!reportStartDate && !reportEndDate) return true
+
+    // When a date range is set, rows with no real date cannot be shown as "within" it.
+    if (!dateValue || !isValidDate(dateValue)) return false
 
     const parsedDate = new Date(dateValue)
-    if (Number.isNaN(parsedDate.getTime())) return true
 
     if (reportStartDate) {
       const startDate = new Date(`${reportStartDate}T00:00:00`)
@@ -347,7 +375,7 @@ export function ReportsSection({
     rows: T[],
   ): void {
     const escapeCsvValue = (value: string) => {
-      if (/[",\n]/.test(value)) return `"${value.replace(/"/g, '""')}"`
+      if (/[",\r\n]/.test(value)) return `"${value.replace(/"/g, '""')}"`
       return value
     }
 
@@ -356,7 +384,8 @@ export function ReportsSection({
       columns.map((column) => escapeCsvValue(String(row[column.key] ?? ''))).join(','),
     )
 
-    const csvContent = [headerRow, ...bodyRows].join('\n')
+    // The BOM (﻿) makes Excel read the file as UTF-8, so letters like "ñ" are not garbled.
+    const csvContent = '﻿' + [headerRow, ...bodyRows].join('\r\n')
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
     const downloadUrl = URL.createObjectURL(blob)
     const link = document.createElement('a')
@@ -807,7 +836,7 @@ export function ReportsSection({
           rows: filteredUnifiedHazardReportRows,
           emptyMessage: 'No hazard report rows match the current filters.',
           exportFileName: 'hazard-incident-master-report',
-          rowKey: (row) => row.reportId,
+          rowKey: (row, index) => `${row.reportId}-${index}`,
         })}
       </div>
     </section>

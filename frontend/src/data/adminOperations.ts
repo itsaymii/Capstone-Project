@@ -12,6 +12,10 @@ export type HazardIncident = {
   responseTeam: string
   description: string
   coordinates: [number, number]
+  /** Real reference code from the backend (e.g. INC-2026-00001), when available. */
+  referenceCode?: string
+  /** Real ISO date/time the incident happened or was reported, when available. */
+  reportedAt?: string
 }
 
 export const hazardIncidents: HazardIncident[] = []
@@ -97,5 +101,7 @@ export function mapBackendIncidentToHazardIncident(
       Number(incident.latitude) || 13.9414,
       Number(incident.longitude) || 121.6236,
     ],
+    referenceCode: incident.reference_code || undefined,
+    reportedAt: Number.isNaN(parsedDate.getTime()) ? undefined : parsedDate.toISOString(),
   }
 }
