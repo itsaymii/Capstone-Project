@@ -4,6 +4,8 @@ from django.dispatch import receiver
 from django.utils import timezone
 from datetime import datetime
 from decimal import Decimal
+from sms.utils import send_critical_alert
+from accounts.models import ResidencyVerification
 
 from .models import (
     IncidentReport,
@@ -125,3 +127,48 @@ def create_incident_on_approval(sender, instance: IncidentReport, created, **kwa
     except Exception:
         # Avoid raising during DB hooks; log could be added later
         return
+
+@receiver(post_save, sender=Incident)
+def notify_affected_barangay_residents(sender, instance: Incident, created, **kwargs):
+    """
+    Sends SMS alerts ONLY to verified residents of the affected barangay 
+    when a Critical incident is verified. (Advisory B.2)
+    """
+    # 1. Only trigger for Critical incidents that have an assigned barangay
+    if instance.severity_level != 'critical' or not instance.barangay:
+        return
+
+    barangay_name = instance.barangay.name
+    
+    # 2. Find all citizens with VERIFIED residency in this specific barangay
+    verified_residents = ResidencyVerification.objects.filter(
+        status=ResidencyVerification.STATUS_VERIFIED,
+        barangay_name__iexact=barangay_name
+    ).select_related('user__account_profile')
+    
+    if not verified_residents.exists():
+        return
+        
+    # 3. Format the alert message (Advisary B.2.1 & B.2.4: Detailed info + Evacuation awareness)
+    location_detail = instance.address if instance.address else "See dashboard map for exact coordinates."
+    
+    message = (
+        f"CRITICAL ALERT: A verified {instance.hazard_type.name} incident has occurred in {barangay_name}. "
+        f"Location: {location_detail}. "
+        f"Please take immediate precautions. If unsafe, proceed to the nearest evacuation center."
+    )
+    
+    # 4. Loop through and send SMS to those with a valid phone number
+    for residency in verified_residents:
+        user = residency.user
+        try:
+            # Fetch phone number from the linked AccountProfile
+            phone_number = user.account_profile.phone_number
+            
+            if phone_number:
+                # The sms/utils.py rate-limiter (10/day) protects against spam if this signal fires twice
+                send_critical_alert(phone_number, message, incident=instance)
+                
+        except Exception:
+            # Skip users with missing profiles to prevent crashing the signal
+            continue
