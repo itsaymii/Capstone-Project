@@ -9,6 +9,7 @@ from rest_framework import status
 
 from incidents.models import Incident
 from .aggregators import get_barangay_profile, get_hazard_citywide_stats, get_incident_trend_comparison
+from .performance import get_response_performance_metrics
 from .scoring import calculate_risk_score
 from .prediction import predict_top_hazard
 from .insights import generate_hazard_insight
@@ -291,3 +292,9 @@ def hazard_insights_view(request):
         'raw_stats': stats,
         'ai_insight': insight_text
     })
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def response_performance_view(request):
+    data = get_response_performance_metrics()
+    return Response(data)
