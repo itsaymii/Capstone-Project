@@ -1,5 +1,6 @@
 from django.db.models.signals import post_save
 from .utils import get_nearest_barangay
+from .incident_types import detail_table_values, fit_detail_values
 from django.dispatch import receiver
 from django.utils import timezone
 from datetime import datetime
@@ -23,6 +24,22 @@ def _get_coords_for_report(report):
 
     # Fallback coordinates if none provided
     return 13.9414, 121.6236
+
+
+def _fallback_detail_table(report):
+    """Detail table for report types not listed in incident_types.py (same behaviour as before)."""
+    lower = (report.incident_type or '').lower()
+    if 'fire' in lower:
+        return 'fire', {'cause': 'Created from approved report', 'injuries': report.victim_count}
+    if 'rca' in lower or 'vehicular' in lower or 'accident' in lower:
+        return 'vehicular', {'vehicles_involved': 1, 'injuries': report.victim_count}
+    if 'crime' in lower:
+        return 'crime', {'crime_type': report.incident_type, 'victims': report.victim_count}
+    if 'medical' in lower or 'ambulance' in lower or 'stand-by' in lower:
+        return 'medical', {'patient_count': max(report.victim_count, 1)}
+    if 'drowning' in lower:
+        return 'drowning', {'victims': max(report.victim_count, 1)}
+    return None, {}
 
 
 def _map_severity(incident_type, victim_count):
@@ -92,35 +109,24 @@ def create_incident_on_approval(sender, instance: IncidentReport, created, **kwa
                 description=instance.description or '',
             )
 
-            lower = (instance.incident_type or '').lower()
-            if 'fire' in lower:
-                FireDetails.objects.create(
-                    incident=incident,
-                    cause='Created from approved report',
-                    injuries=instance.victim_count,
-                )
-            elif 'rca' in lower or 'vehicular' in lower or 'accident' in lower:
-                VehicularAccident.objects.create(
-                    incident=incident,
-                    vehicles_involved=1,
-                    injuries=instance.victim_count,
-                )
-            elif 'crime' in lower:
-                CrimeReport.objects.create(
-                    incident=incident,
-                    crime_type=instance.incident_type,
-                    victims=instance.victim_count,
-                )
-            elif 'medical' in lower or 'ambulance' in lower or 'stand-by' in lower:
-                MedicalEmergency.objects.create(
-                    incident=incident,
-                    patient_count=max(instance.victim_count, 1),
-                )
-            elif 'drowning' in lower:
-                DrowningIncident.objects.create(
-                    incident=incident,
-                    victims=max(instance.victim_count, 1),
-                )
+            # Copy the report's type-specific details into the matching detail table.
+            table, values = detail_table_values(
+                instance.incident_type,
+                getattr(instance, 'details', None) or {},
+                instance.victim_count,
+            )
+            if table is None:
+                table, values = _fallback_detail_table(instance)
+
+            detail_models = {
+                'fire': FireDetails,
+                'vehicular': VehicularAccident,
+                'crime': CrimeReport,
+                'medical': MedicalEmergency,
+                'drowning': DrowningIncident,
+            }
+            if table in detail_models:
+                detail_models[table].objects.create(incident=incident, **fit_detail_values(table, values))
 
     except Exception:
         # Avoid raising during DB hooks; log could be added later

@@ -22,6 +22,7 @@ from .models import (
 )
 
 from locations.serializers import BarangaySerializer
+from .incident_types import validate_report_details
 import re
 
 
@@ -393,9 +394,12 @@ class IncidentSerializer(serializers.ModelSerializer):
 
 
 class VictimDetailSerializer(serializers.ModelSerializer):
+    # Per-victim fields for the report's incident type (checked in IncidentReportSerializer.validate).
+    details = serializers.JSONField(required=False)
+
     class Meta:
         model = VictimDetail
-        fields = ['id', 'name', 'age', 'gender', 'address', 'condition']
+        fields = ['id', 'name', 'age', 'gender', 'address', 'condition', 'details']
         read_only_fields = ['id']
 
 
@@ -413,6 +417,8 @@ class IncidentReportSerializer(serializers.ModelSerializer):
     longitude = serializers.DecimalField(max_digits=9, decimal_places=6, required=True)
     coordinates = serializers.SerializerMethodField()
     createdAt = serializers.DateTimeField(source='created_at', read_only=True)
+    # Fields that only this incident type has (see incidents/incident_types.py).
+    details = serializers.JSONField(required=False)
 
     # Include creator info to help the frontend decide selection eligibility
     createdBy = serializers.CharField(source='created_by.username', read_only=True)
@@ -436,6 +442,7 @@ class IncidentReportSerializer(serializers.ModelSerializer):
             'victims',
             'actionTaken',
             'status',
+            'details',
             'createdAt',
             'createdBy',
             'createdByRole',
@@ -452,6 +459,30 @@ class IncidentReportSerializer(serializers.ModelSerializer):
         latitude = attrs.get('latitude')
         longitude = attrs.get('longitude')
         validate_lucena_coordinates(latitude, longitude)
+
+        # Type-specific fields are always checked on new reports. On updates they are only checked
+        # when the details, incident type, or victims change, so approving an older report (which
+        # only sends the status) keeps working.
+        is_new = self.instance is None
+        if is_new or any(key in attrs for key in ('details', 'incident_type', 'victims')):
+            incident_type = attrs.get('incident_type', getattr(self.instance, 'incident_type', ''))
+            details = attrs.get('details', {} if is_new else self.instance.details)
+
+            victims = attrs.get('victims')
+            if victims is None and not is_new:
+                victims_to_check = [{'details': victim.details} for victim in self.instance.victims.all()]
+            else:
+                victims_to_check = victims or []
+
+            cleaned, victim_details, errors = validate_report_details(incident_type, details, victims_to_check)
+            if errors:
+                raise serializers.ValidationError(errors)
+
+            attrs['details'] = cleaned
+            if victims is not None:
+                for victim, victim_extra in zip(victims, victim_details):
+                    victim['details'] = victim_extra
+
         return attrs
 
     def create(self, validated_data):

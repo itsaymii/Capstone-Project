@@ -1,6 +1,7 @@
 // services/incidents.ts
 import axios from 'axios'
 import { ensureCsrfCookie } from './api'
+import type { DetailValues } from '../data/incidentTypeFields'
 
 function getDefaultApiBaseUrl(): string {
   if (typeof window === 'undefined') return 'http://localhost:8000'
@@ -132,6 +133,8 @@ export interface IncidentReportVictim {
   gender: 'M' | 'F' | ''
   address: string
   condition: string
+  /** Per-victim fields for the report's incident type (see data/incidentTypeFields.ts). */
+  details?: DetailValues
 }
 
 export interface IncidentReport {
@@ -168,6 +171,30 @@ export interface IncidentReport {
   }
   createdAt?: string
   created_at?: string
+  /** Fields that only this incident type has (see data/incidentTypeFields.ts). */
+  details?: DetailValues
+}
+
+export interface CreateIncidentReportPayload {
+  timeOccurred: string
+  incidentType: string
+  responderTeam: string
+  description: string
+  location: string
+  latitude: number
+  longitude: number
+  victimCount: number
+  victims: IncidentReportVictim[]
+  actionTaken: string
+  details: DetailValues
+  status: 'Pending'
+}
+
+/** Submit a new responder report. The backend checks the type-specific details again. */
+export async function createIncidentReport(payload: CreateIncidentReportPayload): Promise<IncidentReport> {
+  await ensureCsrfCookie()
+  const response = await api.post<IncidentReport>('/api/incidents/incident-reports/', payload)
+  return response.data
 }
 
 export async function getIncidents(filters?: {

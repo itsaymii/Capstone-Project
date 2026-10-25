@@ -283,6 +283,8 @@ class IncidentReport(models.Model):
     victim_count = models.PositiveIntegerField(default=0)
     action_taken = models.TextField()
     status = models.CharField(max_length=30, default='Submitted')
+    # Fields that only this incident type has (see incidents/incident_types.py).
+    details = models.JSONField(default=dict, blank=True)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -333,6 +335,8 @@ class VictimDetail(models.Model):
     gender = models.CharField(max_length=10)
     address = models.TextField()
     condition = models.TextField()
+    # Per-victim fields for the report's incident type, e.g. driver/passenger for RCA, vital signs for medical.
+    details = models.JSONField(default=dict, blank=True)
 
     class Meta:
         db_table = 'victim_details'

@@ -1,9 +1,20 @@
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { FC, FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
+import axios from "axios";
 import { MobileNavBar } from "../../components/MobileNavBar";
 import { addNotification } from "../../services/notifications";
 import { getCurrentUserDisplayName } from "../../services/auth";
+import { createIncidentReport } from "../../services/incidents";
+import {
+  cleanDetailValues,
+  getIncidentTypeConfig,
+  validateDetailValues,
+  type DetailFieldSpec,
+  type DetailValue,
+  type DetailValues,
+  type IncidentTypeConfig,
+} from "../../data/incidentTypeFields";
 
 interface VictimDetails {
   name: string;
@@ -11,6 +22,8 @@ interface VictimDetails {
   gender: "M" | "F" | "";
   address: string;
   condition: string;
+  /** Extra fields for this incident type, e.g. driver/passenger for RCA or vital signs for medical. */
+  details: DetailValues;
 }
 
 interface IncidentReportForm {
@@ -28,31 +41,75 @@ interface IncidentReportForm {
 
 type CoordinateSource = "none" | "gps" | "manual";
 
-// The report is filled in one page at a time, in this order.
-const REPORT_STEPS = [
-  {
-    title: "Incident Overview",
-    description: "When, what, and where it happened",
-    accent: "bg-blue-50 text-blue-600 border-blue-100",
-    icon: "M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z",
-  },
-  {
-    title: "Victim Profiling",
-    description: "Every casualty and their condition",
-    accent: "bg-indigo-50 text-indigo-600 border-indigo-100",
-    icon: "M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z",
-  },
-  {
+type StepId = "overview" | "details" | "victims" | "operation";
+
+type ReportStep = {
+  id: StepId;
+  title: string;
+  description: string;
+  accent: string;
+  icon: string;
+};
+
+const STEP_ICONS: Record<StepId, string> = {
+  overview: "M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z",
+  details: "M4 6h16M4 12h16M4 18h7",
+  victims: "M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z",
+  operation: "M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4",
+};
+
+// The pages of the report, in order. Page 2 and 3 change with the incident type:
+// each type has its own Details page, and some types (Stand-by Medical Team) have no victim page.
+function buildReportSteps(config: IncidentTypeConfig | null): ReportStep[] {
+  const steps: ReportStep[] = [
+    {
+      id: "overview",
+      title: "Incident Overview",
+      description: "When, what, and where it happened",
+      accent: "bg-blue-50 text-blue-600 border-blue-100",
+      icon: STEP_ICONS.overview,
+    },
+    {
+      id: "details",
+      title: config ? `${config.key === "rca" ? "Road Crash" : config.label} Details` : "Incident Details",
+      description: "Information only this incident type has",
+      accent: "bg-amber-50 text-amber-600 border-amber-100",
+      icon: STEP_ICONS.details,
+    },
+  ];
+
+  if (!config || config.victims.allowed) {
+    steps.push({
+      id: "victims",
+      title: config?.victims.label ?? "Victim Profiling",
+      description: "Every person involved and their condition",
+      accent: "bg-indigo-50 text-indigo-600 border-indigo-100",
+      icon: STEP_ICONS.victims,
+    });
+  }
+
+  steps.push({
+    id: "operation",
     title: "Operation Log",
     description: "What your team did on site",
     accent: "bg-emerald-50 text-emerald-600 border-emerald-100",
-    icon: "M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4",
-  },
-] as const;
+    icon: STEP_ICONS.operation,
+  });
 
-const LAST_STEP = REPORT_STEPS.length - 1;
+  return steps;
+}
 
-const VICTIM_FIELD_LABELS: Record<keyof VictimDetails, string> = {
+/** "Patients" -> "Patient", "Persons involved" -> "Person", used for "Patient #1". */
+function singularVictimLabel(label: string | null | undefined): string {
+  const first = (label ?? "Victims").split(" ")[0];
+  if (first === "Casualties") return "Casualty";
+  if (first === "Persons") return "Person";
+  return first.endsWith("s") ? first.slice(0, -1) : first;
+}
+
+const EMPTY_VICTIM: VictimDetails = { name: "", age: "", gender: "", address: "", condition: "", details: {} };
+
+const VICTIM_FIELD_LABELS: Record<Exclude<keyof VictimDetails, "details">, string> = {
   name: "Full name",
   age: "Age",
   gender: "Biological sex",
@@ -119,7 +176,38 @@ export const CreateReport: FC = () => {
   const [gpsAccuracy, setGpsAccuracy] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [currentStep, setCurrentStep] = useState(0);
+  // Details are kept per incident type, so switching type and back does not lose what was typed.
+  const [detailsByType, setDetailsByType] = useState<Record<string, DetailValues>>({});
   const formTopRef = useRef<HTMLDivElement>(null);
+
+  const typeConfig = useMemo(() => getIncidentTypeConfig(formData.incidentType), [formData.incidentType]);
+  const steps = useMemo(() => buildReportSteps(typeConfig), [typeConfig]);
+  const lastStep = steps.length - 1;
+  const currentStepId = steps[Math.min(currentStep, lastStep)].id;
+  const details = detailsByType[formData.incidentType] ?? {};
+  const victimRules = typeConfig?.victims ?? { allowed: true, label: "Victims", min: 0, max: null };
+  const victimSingular = singularVictimLabel(victimRules.label);
+  const atVictimLimit = victimRules.max !== null && formData.victims.length >= victimRules.max;
+
+  const setDetail = (name: string, value: DetailValue | undefined) => {
+    setDetailsByType((prev) => {
+      const next = { ...(prev[formData.incidentType] ?? {}) };
+      if (value === undefined) delete next[name];
+      else next[name] = value;
+      return { ...prev, [formData.incidentType]: next };
+    });
+  };
+
+  const setVictimDetail = (index: number, name: string, value: DetailValue | undefined) => {
+    setFormData((prev) => {
+      const victims = [...prev.victims];
+      const nextDetails = { ...victims[index].details };
+      if (value === undefined) delete nextDetails[name];
+      else nextDetails[name] = value;
+      victims[index] = { ...victims[index], details: nextDetails };
+      return { ...prev, victims };
+    });
+  };
 
   const handleInputChange = (
     e: React.ChangeEvent<
@@ -220,7 +308,8 @@ export const CreateReport: FC = () => {
     });
   };
 
-  const syncVictimCount = (count: number) => {
+  const syncVictimCount = (requestedCount: number) => {
+    const count = victimRules.max !== null ? Math.min(requestedCount, victimRules.max) : requestedCount;
     setFormData((prev) => {
       let currentVictims = [...prev.victims];
 
@@ -228,13 +317,7 @@ export const CreateReport: FC = () => {
         const diff = count - currentVictims.length;
 
         for (let i = 0; i < diff; i++) {
-          currentVictims.push({
-            name: "",
-            age: "",
-            gender: "",
-            address: "",
-            condition: "",
-          });
+          currentVictims.push({ ...EMPTY_VICTIM, details: {} });
         }
       } else if (count < currentVictims.length) {
         currentVictims = currentVictims.slice(0, count);
@@ -249,13 +332,11 @@ export const CreateReport: FC = () => {
   };
 
   const addVictimRow = () => {
+    if (atVictimLimit) return;
     setFormData((prev) => ({
       ...prev,
-      victimCount: prev.victimCount + 1,
-      victims: [
-        ...prev.victims,
-        { name: "", age: "", gender: "", address: "", condition: "" },
-      ],
+      victimCount: prev.victims.length + 1,
+      victims: [...prev.victims, { ...EMPTY_VICTIM, details: {} }],
     }));
   };
 
@@ -302,12 +383,30 @@ export const CreateReport: FC = () => {
     return null;
   };
 
+  const validateIncidentDetails = (): string | null => {
+    if (!typeConfig) return null;
+    return validateDetailValues(typeConfig.fields, details);
+  };
+
   const validateVictimProfiling = (): string | null => {
+    if (!victimRules.allowed) return null;
+
+    if (formData.victims.length < victimRules.min) {
+      return `Add at least ${victimRules.min} ${victimSingular.toLowerCase()}.`;
+    }
+    if (victimRules.max !== null && formData.victims.length > victimRules.max) {
+      return `Only ${victimRules.max} ${victimSingular.toLowerCase()} allowed for this incident type.`;
+    }
+
     for (const [index, victim] of formData.victims.entries()) {
-      for (const field of Object.keys(VICTIM_FIELD_LABELS) as (keyof VictimDetails)[]) {
+      for (const field of Object.keys(VICTIM_FIELD_LABELS) as (keyof typeof VICTIM_FIELD_LABELS)[]) {
         if (!String(victim[field]).trim()) {
-          return `Case patient #${index + 1}: ${VICTIM_FIELD_LABELS[field]} is required.`;
+          return `${victimSingular} #${index + 1}: ${VICTIM_FIELD_LABELS[field]} is required.`;
         }
+      }
+      if (typeConfig) {
+        const victimError = validateDetailValues(typeConfig.victimFields, victim.details, `${victimSingular} #${index + 1}: `);
+        if (victimError) return victimError;
       }
     }
 
@@ -319,11 +418,12 @@ export const CreateReport: FC = () => {
     return null;
   };
 
-  const stepValidators = [
-    validateIncidentOverview,
-    validateVictimProfiling,
-    validateOperationLog,
-  ];
+  const stepValidators: Record<StepId, () => string | null> = {
+    overview: validateIncidentOverview,
+    details: validateIncidentDetails,
+    victims: validateVictimProfiling,
+    operation: validateOperationLog,
+  };
 
   const showError = (message: string) => {
     setError(message);
@@ -333,15 +433,51 @@ export const CreateReport: FC = () => {
   const goToStep = (step: number) => {
     setError(null);
     setCurrentStep(step);
+
+    // Types that need at least one patient start with an empty patient card ready to fill in.
+    if (steps[step]?.id === "victims" && formData.victims.length < victimRules.min) {
+      syncVictimCount(victimRules.min);
+    }
+
     formTopRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  const showStepError = (stepId: StepId, message: string) => {
+    const index = steps.findIndex((step) => step.id === stepId);
+    if (index >= 0) setCurrentStep(index);
+    showError(message);
+    formTopRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  // Turn a 400 response from the backend into a message, and open the page it belongs to.
+  const showServerError = (err: unknown) => {
+    const data = (axios.isAxiosError(err) ? err.response?.data : undefined) as Record<string, unknown> | undefined;
+    const firstMessage = (value: unknown): string | null => {
+      if (typeof value === "string") return value;
+      if (Array.isArray(value)) return value.length ? firstMessage(value[0]) : null;
+      if (value && typeof value === "object") {
+        for (const item of Object.values(value)) {
+          const message = firstMessage(item);
+          if (message) return message;
+        }
+      }
+      return null;
+    };
+
+    if (data?.details) return showStepError("details", firstMessage(data.details) ?? "Check the incident details.");
+    if (data?.victims) return showStepError("victims", firstMessage(data.victims) ?? "Check the victim list.");
+    if (data?.coordinates || data?.latitude || data?.longitude) {
+      return showStepError("overview", firstMessage(data.coordinates ?? data.latitude ?? data.longitude) ?? "Check the coordinates.");
+    }
+    showError(firstMessage(data) ?? "Failed to save report. Please check your connection and try again.");
   };
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
 
     // Before the last page, "Next" (or pressing Enter) only checks the current page and moves on.
-    if (currentStep < LAST_STEP) {
-      const stepError = stepValidators[currentStep]();
+    if (currentStep < lastStep) {
+      const stepError = stepValidators[currentStepId]();
       if (stepError) {
         showError(stepError);
         return;
@@ -352,12 +488,10 @@ export const CreateReport: FC = () => {
     }
 
     // On the last page, check every page again before sending, and jump back to any page with a problem.
-    for (const [step, validate] of stepValidators.entries()) {
-      const stepError = validate();
+    for (const step of steps) {
+      const stepError = stepValidators[step.id]();
       if (stepError) {
-        setCurrentStep(step);
-        showError(stepError);
-        formTopRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+        showStepError(step.id, stepError);
         return;
       }
     }
@@ -369,37 +503,28 @@ export const CreateReport: FC = () => {
       setIsLoading(true);
       setError(null);
 
-      const response = await fetch(
-        "http://127.0.0.1:8000/api/incidents/incident-reports/",
-        {
-          method: "POST",
-          credentials: 'include',
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            timeOccurred: formData.timeOccurred,
-            incidentType: formData.incidentType,
-            responderTeam: formData.responderTeam,
-            description: formData.description,
-            barangay: formData.barangay,
-            barangayName: formData.barangay,
-            location: `${formData.barangay}, Lucena City`,
-            address: `${formData.barangay}, Lucena City`,
-            latitude,
-            longitude,
-            victimCount: formData.victimCount,
-            victims: formData.victims,
-            actionTaken: formData.actionTaken,
-            status: "Pending",
-          }),
-        },
-      );
+      // Only send this type's fields; victims are left out for types without a victim list.
+      const victims = victimRules.allowed
+        ? formData.victims.map((victim) => ({
+            ...victim,
+            details: typeConfig ? cleanDetailValues(typeConfig.victimFields, victim.details) : {},
+          }))
+        : [];
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(JSON.stringify(errorData));
-      }
+      await createIncidentReport({
+        timeOccurred: formData.timeOccurred,
+        incidentType: formData.incidentType,
+        responderTeam: formData.responderTeam,
+        description: formData.description,
+        location: `${formData.barangay}, Lucena City`,
+        latitude,
+        longitude,
+        victimCount: victims.length,
+        victims,
+        actionTaken: formData.actionTaken,
+        details: typeConfig ? cleanDetailValues(typeConfig.fields, details) : {},
+        status: "Pending",
+      });
 
       addNotification("Report submitted successfully!");
 
@@ -411,15 +536,15 @@ export const CreateReport: FC = () => {
       });
     } catch (err) {
       console.error("[CreateReport] Error saving report:", err);
-      setError("Failed to save report. Please try again.");
-      addNotification("Failed to save report.");
+      showServerError(err);
     } finally {
       setIsLoading(false);
     }
   };
 
-  const renderSectionHeader = (step: number) => {
-    const info = REPORT_STEPS[step];
+  const renderSectionHeader = (stepId: StepId) => {
+    const step = steps.findIndex((item) => item.id === stepId);
+    const info = steps[step];
 
     return (
       <div className="flex items-start gap-3">
@@ -433,7 +558,7 @@ export const CreateReport: FC = () => {
 
         <div className="min-w-0">
           <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
-            Step {step + 1} of {REPORT_STEPS.length}
+            Step {step + 1} of {steps.length}
           </p>
           <h2 className="text-lg font-black tracking-tight text-slate-900 leading-tight">
             {info.title}
@@ -442,6 +567,135 @@ export const CreateReport: FC = () => {
             {info.description}
           </p>
         </div>
+      </div>
+    );
+  };
+
+  const inputClass =
+    "w-full text-sm border border-slate-200 rounded-xl px-3.5 py-2.5 bg-slate-50/50 focus:bg-white focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 transition-all outline-none font-medium placeholder-slate-400";
+
+  // One input for a type-specific field. The control depends on the kind of field.
+  const renderDetailField = (
+    spec: DetailFieldSpec,
+    value: DetailValue | undefined,
+    onChange: (value: DetailValue | undefined) => void,
+    idPrefix: string,
+  ) => {
+    const id = `${idPrefix}-${spec.name}`;
+    const label = (
+      <label htmlFor={id} className="block text-xs font-semibold text-slate-600 mb-1.5">
+        {spec.label}
+        {spec.required ? <span className="text-red-500"> *</span> : null}
+      </label>
+    );
+    const wide = spec.kind === "multi_choice" || spec.kind === "bool" ? "sm:col-span-2" : "";
+
+    if (spec.kind === "choice") {
+      return (
+        <div key={spec.name} className={wide}>
+          {label}
+          <select
+            id={id}
+            className={inputClass}
+            value={typeof value === "string" ? value : ""}
+            onChange={(e) => onChange(e.target.value || undefined)}
+          >
+            <option value="">Select {spec.label.toLowerCase()}</option>
+            {spec.choices.map((choice) => (
+              <option key={choice.value} value={choice.value}>
+                {choice.label}
+              </option>
+            ))}
+          </select>
+        </div>
+      );
+    }
+
+    if (spec.kind === "multi_choice") {
+      const selected = Array.isArray(value) ? value : [];
+      return (
+        <fieldset key={spec.name} className={wide}>
+          <legend className="block text-xs font-semibold text-slate-600 mb-1.5">
+            {spec.label}
+            {spec.required ? <span className="text-red-500"> *</span> : null}
+            <span className="ml-1 font-normal text-slate-400">(choose all that apply)</span>
+          </legend>
+          <div className="flex flex-wrap gap-2">
+            {spec.choices.map((choice) => {
+              const isOn = selected.includes(choice.value);
+              return (
+                <button
+                  key={choice.value}
+                  type="button"
+                  aria-pressed={isOn}
+                  onClick={() => {
+                    const next = isOn ? selected.filter((item) => item !== choice.value) : [...selected, choice.value];
+                    onChange(next.length ? next : undefined);
+                  }}
+                  className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition-all active:scale-95 ${
+                    isOn
+                      ? "border-blue-600 bg-blue-600 text-white shadow-sm"
+                      : "border-slate-200 bg-white text-slate-600 hover:border-blue-300"
+                  }`}
+                >
+                  {choice.label}
+                </button>
+              );
+            })}
+          </div>
+        </fieldset>
+      );
+    }
+
+    if (spec.kind === "bool") {
+      return (
+        <fieldset key={spec.name} className={`${wide} flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50/50 px-3.5 py-2.5`}>
+          <legend className="sr-only">{spec.label}</legend>
+          <span className="text-xs font-semibold text-slate-600">
+            {spec.label}
+            {spec.required ? <span className="text-red-500"> *</span> : null}
+          </span>
+          <div className="flex gap-1.5">
+            {[
+              { label: "Yes", value: true },
+              { label: "No", value: false },
+            ].map((option) => {
+              const isOn = value === option.value;
+              return (
+                <button
+                  key={option.label}
+                  type="button"
+                  aria-pressed={isOn}
+                  aria-label={`${spec.label}: ${option.label}`}
+                  onClick={() => onChange(isOn ? undefined : option.value)}
+                  className={`rounded-lg px-3.5 py-1.5 text-xs font-bold transition-all ${
+                    isOn ? "bg-blue-600 text-white shadow-sm" : "bg-white text-slate-500 border border-slate-200 hover:border-blue-300"
+                  }`}
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
+        </fieldset>
+      );
+    }
+
+    const inputType = spec.kind === "time" ? "time" : spec.kind === "int" || spec.kind === "decimal" ? "number" : "text";
+    return (
+      <div key={spec.name} className={wide}>
+        {label}
+        <input
+          id={id}
+          type={inputType}
+          inputMode={spec.kind === "int" ? "numeric" : spec.kind === "decimal" ? "decimal" : undefined}
+          min={inputType === "number" ? spec.min : undefined}
+          max={inputType === "number" && spec.max !== null ? spec.max : undefined}
+          step={spec.kind === "decimal" ? "any" : spec.kind === "int" ? 1 : undefined}
+          className={inputClass}
+          value={value === undefined ? "" : String(value)}
+          onChange={(e) => onChange(e.target.value === "" ? undefined : e.target.value)}
+        />
       </div>
     );
   };
@@ -510,22 +764,22 @@ export const CreateReport: FC = () => {
           <div className="relative z-10 mt-6">
             <div className="flex items-center justify-between gap-3 text-xs font-semibold">
               <span className="text-blue-300">
-                Step {currentStep + 1} of {REPORT_STEPS.length}
+                Step {currentStep + 1} of {steps.length}
               </span>
               <span className="truncate text-slate-400">
-                {REPORT_STEPS[currentStep].title}
+                {steps[currentStep].title}
               </span>
             </div>
             <div
               className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10"
               role="progressbar"
               aria-valuemin={1}
-              aria-valuemax={REPORT_STEPS.length}
+              aria-valuemax={steps.length}
               aria-valuenow={currentStep + 1}
             >
               <div
                 className="h-full rounded-full bg-gradient-to-r from-blue-500 to-indigo-400 transition-all duration-500"
-                style={{ width: `${((currentStep + 1) / REPORT_STEPS.length) * 100}%` }}
+                style={{ width: `${((currentStep + 1) / steps.length) * 100}%` }}
               />
             </div>
           </div>
@@ -537,13 +791,13 @@ export const CreateReport: FC = () => {
           className="scroll-mt-6 rounded-2xl border border-slate-200 bg-white px-2 py-4 sm:px-4 shadow-sm"
         >
           <ol className="flex">
-            {REPORT_STEPS.map((step, index) => {
+            {steps.map((step, index) => {
               const isDone = index < currentStep;
               const isCurrent = index === currentStep;
 
               return (
-                <li key={step.title} className="relative flex-1">
-                  {index < LAST_STEP && (
+                <li key={step.id} className="relative flex-1">
+                  {index < lastStep && (
                     <span
                       aria-hidden="true"
                       className={`absolute top-5 left-1/2 h-0.5 w-full transition-colors ${
@@ -627,11 +881,11 @@ export const CreateReport: FC = () => {
             </div>
           )}
 
-          {currentStep === 0 && (
+          {currentStepId === "overview" && (
           <div
             className={`p-6 space-y-5 transition-all ${getAccentColor(formData.incidentType)}`}
           >
-            {renderSectionHeader(0)}
+            {renderSectionHeader("overview")}
 
             <div className="flex flex-col gap-4">
               <div>
@@ -820,13 +1074,35 @@ export const CreateReport: FC = () => {
           </div>
           )}
 
-          {currentStep === 1 && (
+          {currentStepId === "details" && (
+          <div className="p-6 space-y-5 border-l-4 border-l-amber-500">
+            {renderSectionHeader("details")}
+
+            {typeConfig ? (
+              <>
+                <p className="rounded-xl border border-amber-100 bg-amber-50/60 px-3.5 py-2.5 text-xs font-medium text-amber-800">
+                  These fields are only for <strong>{typeConfig.label}</strong> reports. Fields marked{" "}
+                  <span className="text-red-500">*</span> are required.
+                </p>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  {typeConfig.fields.map((spec) =>
+                    renderDetailField(spec, details[spec.name], (value) => setDetail(spec.name, value), "detail"),
+                  )}
+                </div>
+              </>
+            ) : (
+              <p className="text-sm text-slate-500">This incident type has no extra fields. Continue to the next step.</p>
+            )}
+          </div>
+          )}
+
+          {currentStepId === "victims" && (
           <div className="p-6 space-y-5 border-l-4 border-l-indigo-500">
-            {renderSectionHeader(1)}
+            {renderSectionHeader("victims")}
 
             <div className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-2 pl-4">
               <label className="flex items-center gap-2 text-xs font-bold text-slate-500">
-                Total victims
+                Total {(victimRules.label ?? "victims").toLowerCase()}
                 <input
                   type="number"
                   value={formData.victimCount}
@@ -835,7 +1111,8 @@ export const CreateReport: FC = () => {
                       Math.max(0, parseInt(e.target.value) || 0),
                     )
                   }
-                  min="0"
+                  min={victimRules.min}
+                  max={victimRules.max ?? undefined}
                   className="w-14 rounded-lg border border-slate-200 bg-white py-1.5 text-center text-sm font-bold text-blue-600 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10"
                 />
               </label>
@@ -843,12 +1120,13 @@ export const CreateReport: FC = () => {
               <button
                 type="button"
                 onClick={addVictimRow}
-                className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-xl border border-blue-100 bg-blue-50 px-3.5 py-2 text-xs font-bold text-blue-600 shadow-sm transition-all hover:bg-blue-100/70 active:scale-95"
+                disabled={atVictimLimit}
+                className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-xl border border-blue-100 bg-blue-50 px-3.5 py-2 text-xs font-bold text-blue-600 shadow-sm transition-all hover:bg-blue-100/70 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
                 </svg>
-                Add Victim
+                Add {victimSingular}
               </button>
             </div>
 
@@ -859,7 +1137,7 @@ export const CreateReport: FC = () => {
                   className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4"
                 >
                   <div className="text-xs font-bold text-slate-400 border-b border-slate-100 pb-2 flex justify-between items-center">
-                    <span>CASE PATIENT #{idx + 1}</span>
+                    <span className="uppercase">{victimSingular} #{idx + 1}</span>
 
                     <button
                       type="button"
@@ -962,23 +1240,36 @@ export const CreateReport: FC = () => {
                       required
                     />
                   </div>
+
+                  {typeConfig && typeConfig.victimFields.length > 0 ? (
+                    <div className="grid grid-cols-1 gap-4 border-t border-slate-100 pt-4 sm:grid-cols-2">
+                      {typeConfig.victimFields.map((spec) =>
+                        renderDetailField(
+                          spec,
+                          victim.details[spec.name],
+                          (value) => setVictimDetail(idx, spec.name, value),
+                          `victim-${idx}`,
+                        ),
+                      )}
+                    </div>
+                  ) : null}
                 </div>
               ))}
             </div>
 
-            {formData.victimCount === 0 && (
+            {formData.victims.length === 0 && (
               <div className="text-center py-8 border-2 border-dashed border-slate-200 rounded-2xl bg-white text-sm text-slate-400 font-medium">
-                No casualties or victim profiles logged for this response
-                operation. Tap "Add Victim" if there are any, or continue to
-                the next step.
+                {victimRules.min > 0
+                  ? `Add at least ${victimRules.min} ${victimSingular.toLowerCase()} before continuing.`
+                  : `No ${(victimRules.label ?? "victims").toLowerCase()} logged for this response. Tap "Add ${victimSingular}" if there are any, or continue to the next step.`}
               </div>
             )}
           </div>
           )}
 
-          {currentStep === 2 && (
+          {currentStepId === "operation" && (
           <div className="p-6 space-y-5 border-l-4 border-l-emerald-500">
-            {renderSectionHeader(2)}
+            {renderSectionHeader("operation")}
 
             <div>
               <label className="block text-xs font-semibold text-slate-600 mb-1.5">
@@ -1000,11 +1291,11 @@ export const CreateReport: FC = () => {
 
           <div className="flex flex-col gap-3 border-t border-slate-200 bg-slate-50/80 p-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
             <p className="text-xs font-medium text-slate-500">
-              {currentStep < LAST_STEP ? (
+              {currentStep < lastStep ? (
                 <>
                   Up next:{" "}
                   <span className="font-bold text-slate-700">
-                    {REPORT_STEPS[currentStep + 1].title}
+                    {steps[currentStep + 1].title}
                   </span>
                 </>
               ) : (
@@ -1036,7 +1327,7 @@ export const CreateReport: FC = () => {
                 disabled={isLoading}
                 className="group inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-xl bg-blue-600 px-4 sm:px-6 py-3 text-sm font-bold text-white shadow-md shadow-blue-500/20 transition-all hover:bg-blue-700 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-blue-600"
               >
-                {currentStep < LAST_STEP ? (
+                {currentStep < lastStep ? (
                   <>
                     Next
                     <svg className="h-4 w-4 shrink-0 transition-transform group-hover:translate-x-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
