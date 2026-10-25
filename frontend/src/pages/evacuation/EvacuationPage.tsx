@@ -1,9 +1,17 @@
 import { useEffect, useMemo, useState } from 'react'
-import { MapContainer, Marker, Popup, TileLayer } from 'react-leaflet'
+import { CircleMarker, MapContainer, Marker, Popup, TileLayer, useMap } from 'react-leaflet'
 import { icon } from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import { getEvacuationCenters } from '../../services/api'
-import type { EvacuationCenter } from '../../types/api'
+import { getEvacuationCenters, getNearbyEvacuationCenters } from '../../services/api'
+import type { EvacuationCenter, EvacuationCenterStatus, EvacuationCenterWithDistance } from '../../types/api'
+import {
+  EVACUATION_STATUS_BADGE_CLASSES,
+  EVACUATION_STATUS_LABELS,
+  NEARBY_CENTER_COUNT,
+  describeOccupancy,
+  isAcceptingEvacuees,
+  rankNearbyCenters,
+} from '../../data/evacuation'
 import { NavigationBar } from '../../components/NavigationBar'
 import { Link } from 'react-router-dom'
 import { AUTH_CHANGED_EVENT, isAuthenticated } from '../../services/auth'
@@ -14,90 +22,115 @@ const lucenaBounds: [[number, number], [number, number]] = [
   [14.0, 121.7],
 ]
 
-const MAX_RECOMMENDATIONS = 5
+const createHouseIcon = (color: string) =>
+  icon({
+    iconUrl: `data:image/svg+xml,${encodeURIComponent(
+      `<svg width="34" height="34" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12 3.5 4 9.5v10.5h5v-6h6v6h5V9.5L12 3.5Z" fill="${color}"/><path d="M8 14.5h8v5H8v-5Z" fill="#ffffff" opacity="0.9"/><path d="M9.5 13.5h5v-3h-5v3Z" fill="#ffffff" opacity="0.8"/><path d="M12 7l4 3.3H8L12 7Z" fill="#ffffff" opacity="0.6"/></svg>`,
+    )}`,
+    iconSize: [34, 34],
+    iconAnchor: [17, 34],
+    popupAnchor: [0, -30],
+  })
 
-function distanceKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const earthRadiusKm = 6371
-  const dLat = ((lat2 - lat1) * Math.PI) / 180
-  const dLon = ((lon2 - lon1) * Math.PI) / 180
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLon / 2) ** 2
-  return earthRadiusKm * 2 * Math.asin(Math.sqrt(a))
+// Marker colour follows the status so residents can spot centers that are not accepting people.
+const statusMarkerIcons: Record<EvacuationCenterStatus, ReturnType<typeof icon>> = {
+  available: createHouseIcon('#1d4ed8'),
+  full: createHouseIcon('#d97706'),
+  maintenance: createHouseIcon('#ea580c'),
+  closed: createHouseIcon('#e11d48'),
 }
 
-const evacuationIcon = icon({
-  iconUrl: `data:image/svg+xml,${encodeURIComponent(
-    `<svg width="34" height="34" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12 3.5 4 9.5v10.5h5v-6h6v6h5V9.5L12 3.5Z" fill="#1d4ed8"/><path d="M8 14.5h8v5H8v-5Z" fill="#ffffff" opacity="0.9"/><path d="M9.5 13.5h5v-3h-5v3Z" fill="#ffffff" opacity="0.8"/><path d="M12 7l4 3.3H8L12 7Z" fill="#ffffff" opacity="0.6"/></svg>`,
-  )}`,
-  iconSize: [34, 34],
-  iconAnchor: [17, 34],
-  popupAnchor: [0, -30],
-})
+type LocationState = 'idle' | 'locating' | 'ready' | 'denied' | 'unsupported'
 
-const statusBadgeClass = (status: EvacuationCenter['status']): string => {
-  if (status === 'available') return 'bg-emerald-100 text-emerald-800'
-  if (status === 'full') return 'bg-amber-100 text-amber-800'
-  if (status === 'maintenance') return 'bg-orange-100 text-orange-800'
-  return 'bg-rose-100 text-rose-800'
+type NearbyState = {
+  results: EvacuationCenterWithDistance[]
+  notAcceptingNearby: EvacuationCenterWithDistance[]
 }
 
-const statusLabel = (status: EvacuationCenter['status']): string =>
-  status === 'maintenance' ? 'Under Maintenance' : status.charAt(0).toUpperCase() + status.slice(1)
+function directionsUrl(center: EvacuationCenter): string {
+  return `https://www.google.com/maps/dir/?api=1&destination=${center.latitude},${center.longitude}`
+}
+
+/** Moves the map to the selected center. */
+function FlyToCenter({ target }: { target: [number, number] | null }) {
+  const map = useMap()
+
+  useEffect(() => {
+    if (target) map.flyTo(target, Math.max(map.getZoom(), 15), { duration: 0.6 })
+  }, [map, target])
+
+  return null
+}
+
+function OccupancyDetails({ center }: { center: EvacuationCenter }) {
+  const occupancy = describeOccupancy(center)
+
+  return (
+    <div>
+      <div className="flex items-center justify-between gap-2 text-xs">
+        <span className="font-semibold text-slate-700">{occupancy.label}</span>
+        {occupancy.slotsLabel ? <span className="font-medium text-slate-500">{occupancy.slotsLabel}</span> : null}
+      </div>
+      {occupancy.percent !== null ? (
+        <div
+          className="mt-1 h-1.5 overflow-hidden rounded-full bg-slate-200"
+          role="progressbar"
+          aria-label={`${center.name} occupancy`}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={occupancy.percent}
+        >
+          <div className={`h-full rounded-full ${occupancy.barClass}`} style={{ width: `${occupancy.percent}%` }} />
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function StatusBadge({ status }: { status: EvacuationCenterStatus }) {
+  return (
+    <span
+      className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.1em] ${EVACUATION_STATUS_BADGE_CLASSES[status]}`}
+    >
+      {EVACUATION_STATUS_LABELS[status]}
+    </span>
+  )
+}
 
 export function EvacuationPage() {
   const [centers, setCenters] = useState<EvacuationCenter[]>([])
   const [userLocation, setUserLocation] = useState<{ latitude: number; longitude: number } | null>(null)
+  const [locationState, setLocationState] = useState<LocationState>('idle')
+  const [nearby, setNearby] = useState<NearbyState | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [locationMessage, setLocationMessage] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [flyTarget, setFlyTarget] = useState<[number, number] | null>(null)
   const [authenticated, setAuthenticated] = useState(() => isAuthenticated())
 
-  const locateNearestCenter = () => {
+  // Recommendations are only for logged-in users. Logged-out visitors see the map only.
+  const locateNearestCenters = () => {
     if (!isAuthenticated()) return
 
     if (!navigator.geolocation) {
-      setLocationMessage('Location is not available in this browser. You can still browse all centers below.')
+      setLocationState('unsupported')
       return
     }
 
-    setLocationMessage('Finding evacuation centers near you...')
+    setLocationState('locating')
     navigator.geolocation.getCurrentPosition(
       ({ coords }) => {
         if (!isAuthenticated()) return
         setUserLocation({ latitude: coords.latitude, longitude: coords.longitude })
-        setLocationMessage(null)
+        setLocationState('ready')
       },
       () => {
-        if (!isAuthenticated()) return
-        setLocationMessage('Location access was not granted. You can still browse all centers below.')
+        if (isAuthenticated()) setLocationState('denied')
       },
       { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 },
     )
   }
 
-  useEffect(() => {
-    let active = true
-
-    void getEvacuationCenters()
-      .then((data) => {
-        if (!active) return
-        setCenters(Array.isArray(data) ? data : [])
-      })
-      .catch(() => {
-        if (!active) return
-        setError('Unable to load evacuation centers at this time. Please try again later.')
-      })
-      .finally(() => {
-        if (!active) return
-        setLoading(false)
-      })
-
-    return () => {
-      active = false
-    }
-  }, [])
-
+  // Follow log in / log out (also from another tab) and clear everything on log out.
   useEffect(() => {
     const syncAuthentication = () => {
       const nextAuthenticated = isAuthenticated()
@@ -105,7 +138,9 @@ export function EvacuationPage() {
 
       if (!nextAuthenticated) {
         setUserLocation(null)
-        setLocationMessage(null)
+        setNearby(null)
+        setLocationState('idle')
+        setFlyTarget(null)
       }
     }
 
@@ -118,33 +153,72 @@ export function EvacuationPage() {
     }
   }, [])
 
+  // Ask for the location only once the user is logged in.
   useEffect(() => {
     if (!authenticated) return
-
-    const locationRequestId = window.setTimeout(locateNearestCenter, 0)
-
+    const locationRequestId = window.setTimeout(locateNearestCenters, 0)
     return () => window.clearTimeout(locationRequestId)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authenticated])
 
+  useEffect(() => {
+    let active = true
+
+    void getEvacuationCenters()
+      .then((data) => {
+        if (active) setCenters(data)
+      })
+      .catch(() => {
+        if (active) setError('Unable to load evacuation centers at this time. Please try again later.')
+      })
+      .finally(() => {
+        if (active) setLoading(false)
+      })
+
+    return () => {
+      active = false
+    }
+  }, [])
+
+  // Ask the backend for the nearest centers; if it cannot be reached, work it out in the browser.
+  useEffect(() => {
+    if (!authenticated || !userLocation) return
+    let active = true
+
+    void getNearbyEvacuationCenters(userLocation.latitude, userLocation.longitude, NEARBY_CENTER_COUNT)
+      .then((data) => {
+        if (active) setNearby({ results: data.results, notAcceptingNearby: data.not_accepting_nearby })
+      })
+      .catch(() => {
+        if (!active || centers.length === 0) return
+        const fallback = rankNearbyCenters(centers, userLocation.latitude, userLocation.longitude, NEARBY_CENTER_COUNT)
+        setNearby({ results: fallback.results, notAcceptingNearby: fallback.notAcceptingNearby })
+      })
+
+    return () => {
+      active = false
+    }
+  }, [authenticated, userLocation, centers])
+
   const centerCount = centers.length
+  const acceptingCount = useMemo(() => centers.filter((center) => isAcceptingEvacuees(center)).length, [centers])
+
   const summaryText = useMemo(() => {
     if (loading) return 'Loading evacuation locations...'
     if (error) return error
     if (centerCount === 0) return 'No evacuation centers are available yet. Check back later or explore the disaster map for alerts.'
-    return `Showing ${centerCount} evacuation center${centerCount === 1 ? '' : 's'} across Lucena City.`
-  }, [centerCount, error, loading])
+    return `Showing ${centerCount} evacuation center${centerCount === 1 ? '' : 's'} across Lucena City. ${acceptingCount} currently accepting evacuees.`
+  }, [acceptingCount, centerCount, error, loading])
 
-  const recommendedCenters = useMemo(() => {
-    if (!authenticated || !userLocation || centers.length === 0) return []
+  const locationMessage: Record<LocationState, string | null> = {
+    idle: null,
+    locating: 'Finding evacuation centers near you...',
+    ready: null,
+    denied: 'Location access was not allowed. Tap the button below and allow location to see the centers nearest you.',
+    unsupported: 'This browser cannot share your location. You can still browse all centers on the map.',
+  }
 
-    return centers
-      .map((center) => ({
-        center,
-        distanceKm: distanceKm(userLocation.latitude, userLocation.longitude, center.latitude, center.longitude),
-      }))
-      .sort((a, b) => a.distanceKm - b.distanceKm)
-      .slice(0, MAX_RECOMMENDATIONS)
-  }, [authenticated, centers, userLocation])
+  const showCenterOnMap = (center: EvacuationCenter) => setFlyTarget([center.latitude, center.longitude])
 
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(59,130,246,0.12)_0%,_rgba(248,250,252,1)_45%)] text-slate-900">
@@ -173,7 +247,9 @@ export function EvacuationPage() {
                 <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">Evacuation</p>
                 <h1 className="mt-3 text-3xl font-black tracking-tight text-slate-900 sm:text-4xl">Lucena City Evacuation Centers</h1>
                 <p className="mt-3 max-w-2xl text-sm leading-relaxed text-slate-600 sm:text-base">
-                  Browse evacuation routes and safe shelter points across the city. Tap any marker for details and directions.
+                  {authenticated
+                    ? `See the ${NEARBY_CENTER_COUNT} evacuation centers nearest you, how full they are, and whether they are accepting evacuees. Tap any marker for details and directions.`
+                    : 'Browse evacuation centers across Lucena City. Tap any marker for details and directions.'}
                 </p>
               </div>
             </div>
@@ -184,110 +260,181 @@ export function EvacuationPage() {
               </div>
             </div>
 
-            <div className="grid gap-4 px-6 pb-6 sm:px-8 sm:pb-8 lg:grid-cols-[1fr_360px] lg:items-start">
-              <div>
-                <div className="overflow-hidden rounded-[2rem] border border-slate-200 bg-white shadow-sm">
-                  <MapContainer
-                    center={lucenaCenter}
-                    zoom={13}
-                    scrollWheelZoom
-                    maxBounds={lucenaBounds}
-                    maxBoundsViscosity={1.0}
-                    minZoom={12}
-                    className="h-[680px] w-full"
-                  >
-                    <TileLayer
-                      attribution='&copy; <a href="https://osm.org/copyright">OpenStreetMap</a> contributors'
-                      url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                    />
+            <div
+              className={`grid gap-4 px-6 pb-6 sm:px-8 sm:pb-8 ${authenticated ? 'lg:grid-cols-[1fr_380px] lg:items-start' : ''}`}
+            >
+              <div className="overflow-hidden rounded-[2rem] border border-slate-200 bg-white shadow-sm">
+                <MapContainer
+                  center={lucenaCenter}
+                  zoom={13}
+                  scrollWheelZoom
+                  maxBounds={lucenaBounds}
+                  maxBoundsViscosity={1.0}
+                  minZoom={12}
+                  className="h-[420px] w-full sm:h-[680px]"
+                >
+                  <TileLayer
+                    attribution='&copy; <a href="https://osm.org/copyright">OpenStreetMap</a> contributors'
+                    url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                  />
+                  <FlyToCenter target={flyTarget} />
 
-                    {centers.map((center) => (
-                      <Marker
-                        key={center.id}
-                        position={[center.latitude, center.longitude]}
-                        icon={evacuationIcon}
-                      >
-                        <Popup>
-                          <div className="space-y-2 text-sm text-slate-800">
-                            <p className="text-base font-semibold text-slate-900">{center.name}</p>
-                            <p>{center.address}</p>
-                            <p className="font-medium">{center.current_occupancy} / {center.capacity} occupied</p>
-                            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-blue-700">
-                              {statusLabel(center.status)}
-                            </p>
-                            {center.barangay?.name ? (
-                              <p className="text-xs uppercase tracking-[0.2em] text-slate-500">{center.barangay.name}</p>
-                            ) : null}
+                  {authenticated && userLocation ? (
+                    <CircleMarker
+                      center={[userLocation.latitude, userLocation.longitude]}
+                      radius={9}
+                      pathOptions={{ color: '#ffffff', weight: 3, fillColor: '#2563eb', fillOpacity: 1 }}
+                    >
+                      <Popup>Your approximate location</Popup>
+                    </CircleMarker>
+                  ) : null}
+
+                  {centers.map((center) => (
+                    <Marker key={center.id} position={[center.latitude, center.longitude]} icon={statusMarkerIcons[center.status]}>
+                      <Popup minWidth={220}>
+                        <div className="min-w-[200px] space-y-2 text-sm text-slate-800">
+                          <div className="flex items-start justify-between gap-2">
+                            <p className="text-base font-semibold leading-snug text-slate-900">{center.name}</p>
+                            <StatusBadge status={center.status} />
                           </div>
-                        </Popup>
-                      </Marker>
-                    ))}
-                  </MapContainer>
-                </div>
+                          <p className="text-xs">{center.address}</p>
+                          <OccupancyDetails center={center} />
+                          {center.barangay?.name ? (
+                            <p className="text-xs uppercase tracking-[0.2em] text-slate-500">{center.barangay.name}</p>
+                          ) : null}
+                          <a className="text-xs font-semibold text-blue-700" href={directionsUrl(center)} rel="noreferrer" target="_blank">
+                            Get directions
+                          </a>
+                        </div>
+                      </Popup>
+                    </Marker>
+                  ))}
+                </MapContainer>
               </div>
 
-              <aside className="lg:sticky lg:top-6">
-                <div className="flex h-[680px] flex-col overflow-hidden rounded-[2rem] border border-blue-200 bg-white shadow-sm">
+              {authenticated ? (
+              <aside className="lg:sticky lg:top-6" aria-label="Recommended evacuation centers">
+                <div className="flex flex-col overflow-hidden rounded-[2rem] border border-blue-200 bg-white shadow-sm lg:h-[680px]">
                   <div className="shrink-0 border-b border-blue-100 bg-blue-50 px-5 py-4">
                     <div className="flex items-start justify-between gap-2">
                       <div>
                         <p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-700">Recommended near you</p>
-                        <p className="mt-1 text-xs text-slate-600">Closest centers based on your current location</p>
+                        <p className="mt-1 text-xs text-slate-600">
+                          The {NEARBY_CENTER_COUNT} closest centers accepting evacuees, based on your approximate location
+                        </p>
                       </div>
-                      {recommendedCenters.length > 0 ? (
+                      {nearby && nearby.results.length > 0 ? (
                         <span className="shrink-0 rounded-full bg-blue-700 px-2.5 py-1 text-xs font-bold text-white">
-                          {recommendedCenters.length}
+                          {nearby.results.length}
                         </span>
                       ) : null}
                     </div>
-                    {locationMessage ? <p className="mt-2 text-xs text-slate-500">{locationMessage}</p> : null}
+                    {locationMessage[locationState] ? (
+                      <p className="mt-2 text-xs text-slate-500" role="status">{locationMessage[locationState]}</p>
+                    ) : null}
                   </div>
 
-                  <div className="flex-1 overflow-y-auto px-5 py-4 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                    {authenticated && recommendedCenters.length > 0 ? (
-                      <ul className="space-y-3">
-                        {recommendedCenters.map(({ center, distanceKm: distance }, index) => (
-                          <li
-                            key={center.id}
-                            className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 transition hover:border-blue-300 hover:bg-blue-50/70"
-                          >
-                            <div className="flex items-start justify-between gap-2">
-                              <div className="flex items-start gap-2">
-                                <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-blue-700 text-[10px] font-bold text-white">
-                                  {index + 1}
-                                </span>
-                                <h2 className="text-sm font-bold leading-snug text-slate-900">{center.name}</h2>
-                              </div>
-                              <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.1em] ${statusBadgeClass(center.status)}`}>
-                                {statusLabel(center.status)}
-                              </span>
-                            </div>
-                            <p className="mt-1 pl-7 text-xs text-slate-600">{center.address}</p>
-                            <p className="mt-2 pl-7 text-xs font-semibold text-blue-800">
-                              {distance.toFixed(2)} km away · {center.current_occupancy} of {center.capacity} occupied
+                  <div className="flex-1 overflow-y-auto px-5 py-4">
+                    {nearby && nearby.results.length > 0 ? (
+                      <>
+                        <ol className="space-y-3" aria-label="Nearest evacuation centers">
+                          {nearby.results.map((center, index) => {
+                            const accepting = isAcceptingEvacuees(center)
+
+                            return (
+                              <li
+                                key={center.id}
+                                className={`rounded-2xl border px-4 py-3 transition ${
+                                  accepting
+                                    ? 'border-slate-200 bg-slate-50 hover:border-blue-300 hover:bg-blue-50/70'
+                                    : 'border-slate-200 bg-slate-100/70 opacity-80'
+                                }`}
+                              >
+                                <div className="flex items-start justify-between gap-2">
+                                  <div className="flex items-start gap-2">
+                                    <span
+                                      className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-white ${
+                                        accepting ? 'bg-blue-700' : 'bg-slate-400'
+                                      }`}
+                                    >
+                                      {index + 1}
+                                    </span>
+                                    <h2 className="text-sm font-bold leading-snug text-slate-900">{center.name}</h2>
+                                  </div>
+                                  <StatusBadge status={center.status} />
+                                </div>
+                                <p className="mt-1 pl-7 text-xs text-slate-600">{center.address}</p>
+                                <p className="mt-1 pl-7 text-xs font-semibold text-blue-800">{center.distance_km.toFixed(2)} km away</p>
+                                <div className="mt-2 pl-7">
+                                  <OccupancyDetails center={center} />
+                                </div>
+                                {center.status === 'full' ? (
+                                  <p className="mt-2 pl-7 text-[11px] font-semibold text-rose-700">Full: not accepting evacuees right now.</p>
+                                ) : null}
+                                <div className="mt-2 flex gap-3 pl-7 text-xs font-semibold">
+                                  <button type="button" className="text-blue-700 hover:text-blue-900" onClick={() => showCenterOnMap(center)}>
+                                    Show on map
+                                  </button>
+                                  <a className="text-blue-700 hover:text-blue-900" href={directionsUrl(center)} rel="noreferrer" target="_blank">
+                                    Get directions
+                                  </a>
+                                </div>
+                              </li>
+                            )
+                          })}
+                        </ol>
+
+                        {nearby.notAcceptingNearby.length > 0 ? (
+                          <div className="mt-5">
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                              Closer, but not accepting evacuees
                             </p>
-                          </li>
-                        ))}
-                      </ul>
-                    ) : authenticated ? (
-                      <div className="flex h-full flex-col items-center justify-center gap-2 px-2 text-center">
-                        <p className="text-sm text-slate-700">Allow approximate location access to see the evacuation centers around you.</p>
+                            <ul className="mt-2 space-y-2" aria-label="Nearby centers not accepting evacuees">
+                              {nearby.notAcceptingNearby.map((center) => (
+                                <li key={center.id} className="flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                                  <div className="min-w-0">
+                                    <p className="truncate text-xs font-semibold text-slate-700">{center.name}</p>
+                                    <p className="text-[11px] text-slate-500">
+                                      {center.distance_km.toFixed(2)} km · {describeOccupancy(center).label}
+                                    </p>
+                                  </div>
+                                  <StatusBadge status={center.status} />
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        ) : null}
+                      </>
+                    ) : locationState === 'ready' && !loading && centerCount === 0 ? (
+                      <p className="py-8 text-center text-sm text-slate-600">No evacuation centers have been added yet.</p>
+                    ) : (
+                      <div className="flex h-full flex-col items-center justify-center gap-2 px-2 py-8 text-center">
+                        <p className="text-sm text-slate-700">
+                          {locationState === 'locating'
+                            ? 'Looking for centers near you...'
+                            : 'Allow approximate location access to see the evacuation centers nearest you.'}
+                        </p>
                       </div>
-                    ) : null}
+                    )}
                   </div>
 
                   <div className="shrink-0 border-t border-blue-100 bg-blue-50 px-5 py-4">
                     <button
                       type="button"
-                      onClick={locateNearestCenter}
-                      disabled={!authenticated}
-                      className="w-full rounded-xl bg-blue-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-800"
+                      onClick={locateNearestCenters}
+                      disabled={locationState === 'locating'}
+                      className="w-full rounded-xl bg-blue-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-60"
                     >
-                      Use my approximate location
+                      {locationState === 'locating'
+                        ? 'Finding your location...'
+                        : userLocation
+                          ? 'Update my location'
+                          : 'Use my approximate location'}
                     </button>
                   </div>
                 </div>
               </aside>
+              ) : null}
             </div>
           </section>
         </div>
@@ -295,4 +442,3 @@ export function EvacuationPage() {
     </div>
   )
 }
-

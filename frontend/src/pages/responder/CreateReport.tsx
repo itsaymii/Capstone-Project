@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { FC, FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { MobileNavBar } from "../../components/MobileNavBar";
@@ -27,6 +27,38 @@ interface IncidentReportForm {
 }
 
 type CoordinateSource = "none" | "gps" | "manual";
+
+// The report is filled in one page at a time, in this order.
+const REPORT_STEPS = [
+  {
+    title: "Incident Overview",
+    description: "When, what, and where it happened",
+    accent: "bg-blue-50 text-blue-600 border-blue-100",
+    icon: "M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z",
+  },
+  {
+    title: "Victim Profiling",
+    description: "Every casualty and their condition",
+    accent: "bg-indigo-50 text-indigo-600 border-indigo-100",
+    icon: "M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z",
+  },
+  {
+    title: "Operation Log",
+    description: "What your team did on site",
+    accent: "bg-emerald-50 text-emerald-600 border-emerald-100",
+    icon: "M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4",
+  },
+] as const;
+
+const LAST_STEP = REPORT_STEPS.length - 1;
+
+const VICTIM_FIELD_LABELS: Record<keyof VictimDetails, string> = {
+  name: "Full name",
+  age: "Age",
+  gender: "Biological sex",
+  address: "Address",
+  condition: "Physical condition",
+};
 
 const LUCENA_BARANGAYS = [
   "Barangay 1",
@@ -86,6 +118,8 @@ export const CreateReport: FC = () => {
     useState<CoordinateSource>("none");
   const [gpsAccuracy, setGpsAccuracy] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [currentStep, setCurrentStep] = useState(0);
+  const formTopRef = useRef<HTMLDivElement>(null);
 
   const handleInputChange = (
     e: React.ChangeEvent<
@@ -237,46 +271,23 @@ export const CreateReport: FC = () => {
     });
   };
 
-  const handleSubmit = async (e: FormEvent) => {
-    e.preventDefault();
-
-    if (!formData.incidentType.trim()) {
-      setError("Incident type is required.");
-      addNotification("Incident type is required.");
-      return;
-    }
-
-    if (!formData.responderTeam.trim()) {
-      setError("Responding team is required.");
-      addNotification("Responding team is required.");
-      return;
-    }
-
-    if (!formData.description.trim()) {
-      setError("Incident description is required.");
-      addNotification("Incident description is required.");
-      return;
-    }
-
-    if (!formData.barangay.trim()) {
-      setError("Barangay is required.");
-      addNotification("Barangay is required.");
-      return;
-    }
+  // Each validator checks one page and returns the first problem, or null if the page is complete.
+  const validateIncidentOverview = (): string | null => {
+    if (!formData.timeOccurred.trim()) return "Time occurred is required.";
+    if (!formData.incidentType.trim()) return "Incident type is required.";
+    if (!formData.responderTeam.trim()) return "Responding team is required.";
+    if (!formData.description.trim()) return "Incident description is required.";
+    if (!formData.barangay.trim()) return "Barangay is required.";
 
     const latitude = Number(formData.latitude);
     const longitude = Number(formData.longitude);
 
-    if (!Number.isFinite(latitude)) {
-      setError("Valid latitude is required.");
-      addNotification("Valid latitude is required.");
-      return;
+    if (!formData.latitude.trim() || !Number.isFinite(latitude)) {
+      return "Valid latitude is required.";
     }
 
-    if (!Number.isFinite(longitude)) {
-      setError("Valid longitude is required.");
-      addNotification("Valid longitude is required.");
-      return;
+    if (!formData.longitude.trim() || !Number.isFinite(longitude)) {
+      return "Valid longitude is required.";
     }
 
     if (
@@ -285,16 +296,74 @@ export const CreateReport: FC = () => {
       longitude < 121.57 ||
       longitude > 121.69
     ) {
-      setError("Coordinates must be within Lucena City area.");
-      addNotification("Coordinates must be within Lucena City area.");
+      return "Coordinates must be within Lucena City area.";
+    }
+
+    return null;
+  };
+
+  const validateVictimProfiling = (): string | null => {
+    for (const [index, victim] of formData.victims.entries()) {
+      for (const field of Object.keys(VICTIM_FIELD_LABELS) as (keyof VictimDetails)[]) {
+        if (!String(victim[field]).trim()) {
+          return `Case patient #${index + 1}: ${VICTIM_FIELD_LABELS[field]} is required.`;
+        }
+      }
+    }
+
+    return null;
+  };
+
+  const validateOperationLog = (): string | null => {
+    if (!formData.actionTaken.trim()) return "Action taken details are required.";
+    return null;
+  };
+
+  const stepValidators = [
+    validateIncidentOverview,
+    validateVictimProfiling,
+    validateOperationLog,
+  ];
+
+  const showError = (message: string) => {
+    setError(message);
+    addNotification(message);
+  };
+
+  const goToStep = (step: number) => {
+    setError(null);
+    setCurrentStep(step);
+    formTopRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  const handleSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+
+    // Before the last page, "Next" (or pressing Enter) only checks the current page and moves on.
+    if (currentStep < LAST_STEP) {
+      const stepError = stepValidators[currentStep]();
+      if (stepError) {
+        showError(stepError);
+        return;
+      }
+
+      goToStep(currentStep + 1);
       return;
     }
 
-    if (!formData.actionTaken.trim()) {
-      setError("Action taken details are required.");
-      addNotification("Action taken details are required.");
-      return;
+    // On the last page, check every page again before sending, and jump back to any page with a problem.
+    for (const [step, validate] of stepValidators.entries()) {
+      const stepError = validate();
+      if (stepError) {
+        setCurrentStep(step);
+        showError(stepError);
+        formTopRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+        return;
+      }
     }
+
+    const latitude = Number(formData.latitude);
+    const longitude = Number(formData.longitude);
 
     try {
       setIsLoading(true);
@@ -349,6 +418,34 @@ export const CreateReport: FC = () => {
     }
   };
 
+  const renderSectionHeader = (step: number) => {
+    const info = REPORT_STEPS[step];
+
+    return (
+      <div className="flex items-start gap-3">
+        <span
+          className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border shadow-sm ${info.accent}`}
+        >
+          <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d={info.icon} />
+          </svg>
+        </span>
+
+        <div className="min-w-0">
+          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+            Step {step + 1} of {REPORT_STEPS.length}
+          </p>
+          <h2 className="text-lg font-black tracking-tight text-slate-900 leading-tight">
+            {info.title}
+          </h2>
+          <p className="mt-0.5 text-xs font-medium text-slate-500">
+            {info.description}
+          </p>
+        </div>
+      </div>
+    );
+  };
+
   const getAccentColor = (type: string) => {
     switch (type) {
       case "Fire Incident":
@@ -365,15 +462,16 @@ export const CreateReport: FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 pb-28 sm:pb-12 pt-6 antialiased text-slate-800">
-      <main className="max-w-3xl mx-auto p-4 sm:p-6 space-y-6">
-        <div className="bg-white p-5 sm:p-7 rounded-2xl border border-slate-200/80 shadow-sm space-y-5 overflow-hidden relative">
-          <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-500" />
+    <div className="min-h-screen bg-slate-100 pb-28 sm:pb-12 pt-6 antialiased text-slate-800">
+      <main className="max-w-3xl mx-auto p-4 sm:p-6 space-y-5">
+        <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-slate-900 via-blue-950 to-slate-900 p-5 sm:p-7 text-white shadow-md">
+          <div className="absolute inset-0 bg-gradient-to-r from-blue-600/10 to-indigo-600/10 opacity-60 pointer-events-none" />
 
-          <div className="flex items-center gap-4">
+          <div className="relative z-10 flex items-start gap-4">
             <button
+              type="button"
               onClick={() => navigate("/responder-dashboard")}
-              className="group flex items-center justify-center w-10 h-10 bg-slate-50 text-slate-500 hover:bg-blue-50 hover:text-blue-600 rounded-2xl transition-all border border-slate-100 shadow-sm active:scale-90"
+              className="group flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/10 text-white transition-all hover:bg-white/20 active:scale-90"
               title="Back to Dashboard"
             >
               <svg
@@ -381,43 +479,127 @@ export const CreateReport: FC = () => {
                 fill="none"
                 viewBox="0 0 24 24"
                 stroke="currentColor"
-                strokeWidth={3}
+                strokeWidth={2.5}
               >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M15 19l-7-7 7-7"
-                />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
               </svg>
             </button>
 
-            <div>
-              <span className="text-[10px] font-black uppercase tracking-[0.2em] text-blue-600 opacity-60 block mb-0.5 leading-none">
+            <div className="min-w-0 flex-1">
+              <span className="inline-flex text-[10px] font-bold uppercase tracking-widest text-blue-400 bg-blue-500/10 border border-blue-500/20 px-2.5 py-0.5 rounded-md">
                 Response Protocol
               </span>
-              <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-slate-900 leading-tight">
+              <h1 className="mt-2 text-2xl sm:text-3xl font-black tracking-tight leading-tight">
                 New Incident Report
               </h1>
+              <p className="mt-1 text-sm text-slate-400 font-medium leading-relaxed">
+                Document emergency response operations and victim assessments
+                for synchronization with central command.
+              </p>
             </div>
-          </div>
-
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-t border-slate-100 pt-5">
-            <p className="text-sm text-slate-500 font-medium leading-relaxed max-w-lg">
-              Document emergency response operations and victim assessments for
-              synchronization with central command.
-            </p>
 
             <button
+              type="button"
               onClick={() => navigate("/responder-dashboard")}
-              className="hidden sm:inline-flex text-xs font-bold text-slate-400 hover:text-red-500 transition-colors uppercase tracking-widest"
+              className="hidden sm:inline-flex shrink-0 text-xs font-bold text-slate-400 hover:text-red-400 transition-colors uppercase tracking-widest"
             >
-              Discard Report
+              Discard
             </button>
+          </div>
+
+          <div className="relative z-10 mt-6">
+            <div className="flex items-center justify-between gap-3 text-xs font-semibold">
+              <span className="text-blue-300">
+                Step {currentStep + 1} of {REPORT_STEPS.length}
+              </span>
+              <span className="truncate text-slate-400">
+                {REPORT_STEPS[currentStep].title}
+              </span>
+            </div>
+            <div
+              className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10"
+              role="progressbar"
+              aria-valuemin={1}
+              aria-valuemax={REPORT_STEPS.length}
+              aria-valuenow={currentStep + 1}
+            >
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-blue-500 to-indigo-400 transition-all duration-500"
+                style={{ width: `${((currentStep + 1) / REPORT_STEPS.length) * 100}%` }}
+              />
+            </div>
           </div>
         </div>
 
+        <nav
+          ref={formTopRef}
+          aria-label="Report steps"
+          className="scroll-mt-6 rounded-2xl border border-slate-200 bg-white px-2 py-4 sm:px-4 shadow-sm"
+        >
+          <ol className="flex">
+            {REPORT_STEPS.map((step, index) => {
+              const isDone = index < currentStep;
+              const isCurrent = index === currentStep;
+
+              return (
+                <li key={step.title} className="relative flex-1">
+                  {index < LAST_STEP && (
+                    <span
+                      aria-hidden="true"
+                      className={`absolute top-5 left-1/2 h-0.5 w-full transition-colors ${
+                        isDone ? "bg-emerald-400" : "bg-slate-200"
+                      }`}
+                    />
+                  )}
+
+                  <button
+                    type="button"
+                    // Only pages already finished can be reopened; moving forward always goes through "Next".
+                    onClick={() => isDone && goToStep(index)}
+                    disabled={!isDone || isLoading}
+                    aria-current={isCurrent ? "step" : undefined}
+                    className={`relative z-10 flex w-full flex-col items-center gap-2 px-1 text-center ${
+                      isDone ? "cursor-pointer group" : "cursor-default"
+                    }`}
+                  >
+                    <span
+                      className={`flex h-10 w-10 items-center justify-center rounded-full border-2 transition-all ${
+                        isCurrent
+                          ? "border-blue-600 bg-blue-600 text-white ring-4 ring-blue-100"
+                          : isDone
+                            ? "border-emerald-500 bg-emerald-500 text-white group-hover:ring-4 group-hover:ring-emerald-100"
+                            : "border-slate-200 bg-white text-slate-400"
+                      }`}
+                    >
+                      <svg className="h-[18px] w-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={isDone ? 3 : 2}>
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          d={isDone ? "M5 13l4 4L19 7" : step.icon}
+                        />
+                      </svg>
+                    </span>
+
+                    <span
+                      className={`text-[11px] sm:text-xs font-bold leading-tight ${
+                        isCurrent ? "text-blue-700" : isDone ? "text-slate-700" : "text-slate-400"
+                      }`}
+                    >
+                      {step.title}
+                    </span>
+                    <span className="hidden sm:block text-[11px] font-medium leading-snug text-slate-400">
+                      {step.description}
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ol>
+        </nav>
+
         <form
           onSubmit={handleSubmit}
+          noValidate
           className="bg-white rounded-2xl shadow-sm border border-slate-200/80 overflow-hidden divide-y divide-slate-100"
         >
           {error && (
@@ -445,18 +627,11 @@ export const CreateReport: FC = () => {
             </div>
           )}
 
+          {currentStep === 0 && (
           <div
             className={`p-6 space-y-5 transition-all ${getAccentColor(formData.incidentType)}`}
           >
-            <div className="flex items-center justify-between">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-blue-600 bg-blue-50 px-2.5 py-1 rounded-md">
-                0. Incident Overview
-              </h3>
-
-              <span className="text-[11px] font-semibold text-slate-400 uppercase bg-slate-100 px-2 py-0.5 rounded">
-                Required Form
-              </span>
-            </div>
+            {renderSectionHeader(0)}
 
             <div className="flex flex-col gap-4">
               <div>
@@ -643,40 +818,38 @@ export const CreateReport: FC = () => {
               </div>
             </div>
           </div>
+          )}
 
-          <div className="p-6 space-y-4 bg-slate-50/50 border-l-4 border-l-slate-400">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 bg-slate-200/80 inline-block px-2.5 py-1 rounded-md">
-                2. Victim Profiling
-              </h3>
+          {currentStep === 1 && (
+          <div className="p-6 space-y-5 border-l-4 border-l-indigo-500">
+            {renderSectionHeader(1)}
 
-              <div className="flex items-center gap-3">
-                <div className="flex items-center bg-white border border-slate-200 rounded-xl p-1 shadow-inner">
-                  <span className="text-xs text-slate-500 font-bold px-2">
-                    Total Count:
-                  </span>
+            <div className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-2 pl-4">
+              <label className="flex items-center gap-2 text-xs font-bold text-slate-500">
+                Total victims
+                <input
+                  type="number"
+                  value={formData.victimCount}
+                  onChange={(e) =>
+                    syncVictimCount(
+                      Math.max(0, parseInt(e.target.value) || 0),
+                    )
+                  }
+                  min="0"
+                  className="w-14 rounded-lg border border-slate-200 bg-white py-1.5 text-center text-sm font-bold text-blue-600 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10"
+                />
+              </label>
 
-                  <input
-                    type="number"
-                    value={formData.victimCount}
-                    onChange={(e) =>
-                      syncVictimCount(
-                        Math.max(0, parseInt(e.target.value) || 0),
-                      )
-                    }
-                    min="0"
-                    className="w-12 text-center text-sm font-bold bg-slate-50 rounded-lg py-1 text-blue-600 outline-none border border-transparent focus:border-slate-200"
-                  />
-                </div>
-
-                <button
-                  type="button"
-                  onClick={addVictimRow}
-                  className="px-3 py-1.5 bg-white border border-slate-200 hover:border-blue-500 hover:text-blue-600 text-slate-600 font-semibold text-xs rounded-xl shadow-sm transition-all"
-                >
-                  Add Victim
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={addVictimRow}
+                className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-xl border border-blue-100 bg-blue-50 px-3.5 py-2 text-xs font-bold text-blue-600 shadow-sm transition-all hover:bg-blue-100/70 active:scale-95"
+              >
+                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                </svg>
+                Add Victim
+              </button>
             </div>
 
             <div className="space-y-4">
@@ -796,15 +969,16 @@ export const CreateReport: FC = () => {
             {formData.victimCount === 0 && (
               <div className="text-center py-8 border-2 border-dashed border-slate-200 rounded-2xl bg-white text-sm text-slate-400 font-medium">
                 No casualties or victim profiles logged for this response
-                operation.
+                operation. Tap "Add Victim" if there are any, or continue to
+                the next step.
               </div>
             )}
           </div>
+          )}
 
-          <div className="p-6 space-y-4 border-l-4 border-l-emerald-500">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-emerald-700 bg-emerald-50 inline-block px-2.5 py-1 rounded-md">
-              3. Operation Log
-            </h3>
+          {currentStep === 2 && (
+          <div className="p-6 space-y-5 border-l-4 border-l-emerald-500">
+            {renderSectionHeader(2)}
 
             <div>
               <label className="block text-xs font-semibold text-slate-600 mb-1.5">
@@ -822,24 +996,65 @@ export const CreateReport: FC = () => {
               />
             </div>
           </div>
+          )}
 
-          <div className="p-4 bg-slate-50/80 flex items-center justify-end gap-3 border-t border-slate-200">
-            <button
-              type="button"
-              onClick={() => navigate("/responder-dashboard")}
-              disabled={isLoading}
-              className="px-5 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-200/60 rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Cancel
-            </button>
+          <div className="flex flex-col gap-3 border-t border-slate-200 bg-slate-50/80 p-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+            <p className="text-xs font-medium text-slate-500">
+              {currentStep < LAST_STEP ? (
+                <>
+                  Up next:{" "}
+                  <span className="font-bold text-slate-700">
+                    {REPORT_STEPS[currentStep + 1].title}
+                  </span>
+                </>
+              ) : (
+                "Last step. Review your entries, then submit."
+              )}
+            </p>
 
-            <button
-              type="submit"
-              disabled={isLoading}
-              className="px-6 py-2.5 text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 active:scale-95 rounded-xl shadow-md shadow-blue-500/10 transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-blue-600"
-            >
-              {isLoading ? "Submitting..." : "Submit Report"}
-            </button>
+            <div className="grid grid-cols-2 gap-3 sm:flex sm:items-center">
+              <button
+                type="button"
+                onClick={() =>
+                  currentStep === 0
+                    ? navigate("/responder-dashboard")
+                    : goToStep(currentStep - 1)
+                }
+                disabled={isLoading}
+                className="inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-600 shadow-sm transition-all hover:bg-slate-100 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {currentStep > 0 && (
+                  <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+                  </svg>
+                )}
+                {currentStep === 0 ? "Cancel" : "Back"}
+              </button>
+
+              <button
+                type="submit"
+                disabled={isLoading}
+                className="group inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-xl bg-blue-600 px-4 sm:px-6 py-3 text-sm font-bold text-white shadow-md shadow-blue-500/20 transition-all hover:bg-blue-700 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-blue-600"
+              >
+                {currentStep < LAST_STEP ? (
+                  <>
+                    Next
+                    <svg className="h-4 w-4 shrink-0 transition-transform group-hover:translate-x-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
+                    </svg>
+                  </>
+                ) : isLoading ? (
+                  "Submitting..."
+                ) : (
+                  <>
+                    Submit Report
+                    <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                    </svg>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </form>
       </main>

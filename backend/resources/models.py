@@ -2,6 +2,13 @@ import uuid
 from django.db import models
 from django.conf import settings
 
+from .evacuation import (
+    available_slots,
+    is_accepting_evacuees,
+    occupancy_rate,
+    resolve_status,
+)
+
 
 class SupplyCategory(models.Model):
     """Categories for organizing supplies"""
@@ -107,6 +114,24 @@ class EvacuationCenter(models.Model):
 
     def __str__(self):
         return self.name
+
+    def save(self, *args, **kwargs):
+        # Keep "available"/"full" in line with the numbers on every save
+        # (API, CSV import, Django admin). Closed / Under Maintenance stay as set.
+        self.status = resolve_status(self.capacity, self.current_occupancy, self.status)
+        super().save(*args, **kwargs)
+
+    @property
+    def available_slots(self):
+        return available_slots(self.capacity, self.current_occupancy)
+
+    @property
+    def occupancy_rate(self):
+        return occupancy_rate(self.capacity, self.current_occupancy)
+
+    @property
+    def is_accepting_evacuees(self):
+        return is_accepting_evacuees(self.status)
 
     def get_coordinates(self):
         """Return coordinates as dict for frontend"""

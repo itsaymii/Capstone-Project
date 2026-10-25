@@ -17,7 +17,14 @@ from accounts.permissions import IsStaffOrReadOnly
 from io import TextIOWrapper
 from decimal import Decimal, InvalidOperation
 import csv
-from math import asin, cos, radians, sin, sqrt
+
+from .evacuation import (
+    DEFAULT_NEARBY_LIMIT,
+    MAX_NEARBY_LIMIT,
+    distance_km,
+    normalize_status,
+    pick_nearby,
+)
 
 
 class SupplyCategoryViewSet(viewsets.ModelViewSet):
@@ -75,6 +82,11 @@ class EvacuationCenterViewSet(viewsets.ModelViewSet):
                     "name": center.name,
                     "address": center.address,
                     "barangay": center.barangay.name if center.barangay else None,
+                    "capacity": center.capacity,
+                    "current_occupancy": center.current_occupancy,
+                    "available_slots": center.available_slots,
+                    "status": center.status,
+                    "is_accepting_evacuees": center.is_accepting_evacuees,
                 },
                 "geometry": {
                     "type": "Point",
@@ -90,6 +102,83 @@ class EvacuationCenterViewSet(viewsets.ModelViewSet):
             "features": features,
         })
 
+    def _parse_user_location(self, request):
+        """Read ?latitude=&longitude= from the query string. Returns (lat, lng, error_response)."""
+        try:
+            latitude = float(request.query_params['latitude'])
+            longitude = float(request.query_params['longitude'])
+        except (KeyError, TypeError, ValueError):
+            return None, None, Response(
+                {"error": "latitude and longitude must be valid numbers."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not -90 <= latitude <= 90 or not -180 <= longitude <= 180:
+            return None, None, Response(
+                {"error": "latitude or longitude is outside its valid range."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return latitude, longitude, None
+
+    def _rank_by_distance(self, latitude, longitude):
+        """All centers as (center, distance_km, accepting) tuples, closest first."""
+        ranked = [
+            (
+                center,
+                distance_km(latitude, longitude, float(center.latitude), float(center.longitude)),
+                center.is_accepting_evacuees,
+            )
+            for center in self.get_queryset()
+        ]
+        ranked.sort(key=lambda item: item[1])
+        return ranked
+
+    @staticmethod
+    def _with_distance(item):
+        center, distance, _accepting = item
+        data = EvacuationCenterSerializer(center).data
+        data['distance_km'] = round(distance, 2)
+        return data
+
+    @action(
+        detail=False,
+        methods=['get'],
+        permission_classes=[permissions.AllowAny],
+        authentication_classes=[],
+    )
+    def nearby(self, request):
+        """
+        Recommend evacuation centers near an approximate user location.
+
+        GET /api/resources/evacuation-centers/nearby/?latitude=13.94&longitude=121.62&limit=5
+
+        - results: the `limit` (default 5) closest centers that still accept evacuees
+          (status Available). If not enough are available, the closest others fill the list.
+        - not_accepting_nearby: closer centers that are Full / Closed / Under Maintenance.
+        """
+        latitude, longitude, error = self._parse_user_location(request)
+        if error:
+            return error
+
+        try:
+            limit = int(request.query_params.get('limit', DEFAULT_NEARBY_LIMIT))
+        except (TypeError, ValueError):
+            limit = DEFAULT_NEARBY_LIMIT
+        limit = max(1, min(limit, MAX_NEARBY_LIMIT))
+
+        ranked = self._rank_by_distance(latitude, longitude)
+        recommended, not_accepting = pick_nearby(ranked, limit)
+
+        return Response({
+            'user_location': {'latitude': latitude, 'longitude': longitude},
+            'limit': limit,
+            'total_centers': len(ranked),
+            'accepting_count': sum(1 for item in ranked if item[2]),
+            'results': [self._with_distance(item) for item in recommended],
+            'not_accepting_nearby': [self._with_distance(item) for item in not_accepting],
+        })
+
     @action(
         detail=False,
         methods=['get'],
@@ -97,38 +186,17 @@ class EvacuationCenterViewSet(viewsets.ModelViewSet):
         authentication_classes=[],
     )
     def nearest(self, request):
-        """Return the closest center to an approximate user location."""
-        try:
-            latitude = float(request.query_params['latitude'])
-            longitude = float(request.query_params['longitude'])
-        except (KeyError, TypeError, ValueError):
-            return Response(
-                {"error": "latitude and longitude must be valid numbers."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        """Return the single closest center, preferring centers that still accept evacuees."""
+        latitude, longitude, error = self._parse_user_location(request)
+        if error:
+            return error
 
-        if not -90 <= latitude <= 90 or not -180 <= longitude <= 180:
-            return Response(
-                {"error": "latitude or longitude is outside its valid range."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        def distance_km(center):
-            earth_radius_km = 6371
-            lat_delta = radians(float(center.latitude) - latitude)
-            lng_delta = radians(float(center.longitude) - longitude)
-            origin_lat = radians(latitude)
-            center_lat = radians(float(center.latitude))
-            haversine = sin(lat_delta / 2) ** 2 + cos(origin_lat) * cos(center_lat) * sin(lng_delta / 2) ** 2
-            return earth_radius_km * 2 * asin(sqrt(haversine))
-
-        centers = list(self.get_queryset())
-        if not centers:
+        ranked = self._rank_by_distance(latitude, longitude)
+        if not ranked:
             return Response({"detail": "No evacuation centers are available."}, status=status.HTTP_404_NOT_FOUND)
 
-        nearest_center = min(centers, key=distance_km)
-        response_data = EvacuationCenterSerializer(nearest_center).data
-        response_data['distance_km'] = round(distance_km(nearest_center), 2)
+        recommended, _ = pick_nearby(ranked, 1)
+        response_data = self._with_distance(recommended[0])
         response_data['user_location'] = {"latitude": latitude, "longitude": longitude}
         return Response(response_data)
 
@@ -262,15 +330,44 @@ def import_evacuation_centers_csv(request):
                             errors.append(f"Row {i}: Barangay '{brgy_name}' not found. Center saved without link.")
                             # Non-fatal: continues import but logs warning
 
-                    # Create or update center
+                    defaults = {
+                        'latitude': lat,
+                        'longitude': lng,
+                        'address': (row.get('address') or '').strip(),
+                        'barangay': barangay,
+                    }
+
+                    # Optional columns. Only overwrite what the CSV actually provides,
+                    # so re-uploading a file without them keeps the saved numbers.
+                    for column in ('capacity', 'current_occupancy'):
+                        raw_value = (row.get(column) or '').strip()
+                        if raw_value:
+                            number = int(float(raw_value))
+                            if number < 0:
+                                raise ValueError(f"{column} cannot be negative")
+                            defaults[column] = number
+
+                    raw_status = (row.get('status') or '').strip()
+                    if raw_status:
+                        normalized = normalize_status(raw_status)
+                        if not normalized:
+                            raise ValueError(
+                                f"Unknown status '{raw_status}'. Use Available, Full, Closed, or Under Maintenance."
+                            )
+                        defaults['status'] = normalized
+
+                    existing = EvacuationCenter.objects.filter(name=name).first()
+                    capacity = defaults.get('capacity', existing.capacity if existing else 0)
+                    occupancy = defaults.get('current_occupancy', existing.current_occupancy if existing else 0)
+                    if capacity > 0 and occupancy > capacity:
+                        raise ValueError(
+                            f"current_occupancy ({occupancy}) cannot be higher than capacity ({capacity})"
+                        )
+
+                    # Create or update center (save() keeps the status in line with the numbers)
                     obj, is_created = EvacuationCenter.objects.update_or_create(
                         name=name,
-                        defaults={
-                            'latitude': lat,
-                            'longitude': lng,
-                            'address': row.get('address', '').strip(),
-                            'barangay': barangay
-                        }
+                        defaults=defaults,
                     )
 
                     if is_created:
