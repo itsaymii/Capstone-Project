@@ -1,16 +1,13 @@
-# System Diagrams
+# Documentation
 
-This folder contains the essential system diagrams rendered directly by GitHub.
+| Document | What it covers |
+|---|---|
+| [System Documentation](SYSTEM-DOCUMENTATION.md) | Users, modules, main rules, and API endpoints |
+| [System Architecture](architecture.md) | How the frontend, backend, database, and outside services connect |
+| [Authentication Flow](authentication-flow.md) | Registration, residency verification, login with OTP, password reset |
+| [Incident and Evacuation Flows](system-flow.md) | How a report becomes an incident, and how nearest evacuation centers are picked |
+| [Database ERD](erd.md) | Main tables and how they relate |
 
-## Diagram Index
+Setup and run instructions are in the main [README](../README.md).
 
-1. [System Architecture](architecture.md)
-2. [Authentication Flow](authentication-flow.md)
-3. [Incident Reporting Flow](system-flow.md)
-4. [Database ERD](erd.md)
-5. [Deployment Architecture](deployment.md)
-
-## Notes
-
-- Diagrams use Mermaid syntax so they can be viewed directly on GitHub.
-- Keep each file focused on one diagram for easier maintenance.
+Diagrams use Mermaid, so GitHub shows them as pictures automatically.
