@@ -2,11 +2,7 @@
 def predict_top_hazard(barangay_id, days=90, start_date=None, end_date=None):
     """
     Predicts the most probable hazard to reoccur in the next 30 days.
-    
-    Logic:
-    1. Uses combined_score (frequency × severity_weight) from aggregators
-    2. Ranks hazards by score
-    3. Calculates confidence based on margin between #1 and #2 hazards
+    Returns an actual probability percentage based on historical dominance.
     """
     from .aggregators import get_barangay_profile
     
@@ -22,7 +18,7 @@ def predict_top_hazard(barangay_id, days=90, start_date=None, end_date=None):
         return {
             'hazard': None,
             'hazard_id': None,
-            'confidence': 'Low',
+            'probability': 0.0, # ✅ Changed from 'confidence': 'Low'
             'reason': 'No recent incidents to base prediction on.',
             'driver': 'N/A',
             'prediction_window_days': 30
@@ -37,20 +33,19 @@ def predict_top_hazard(barangay_id, days=90, start_date=None, end_date=None):
     
     top_hazard_name, top_data = sorted_hazards[0]
     
-    # Calculate confidence margin
-    if len(sorted_hazards) > 1:
-        second_data = sorted_hazards[1][1]
-        margin = top_data['combined_score'] - second_data['combined_score']
-        
-        # If top hazard dominates by >50% margin, confidence is High
-        confidence = 'High' if margin > (top_data['combined_score'] * 0.5) else 'Medium'
+    # ✅ NEW: Calculate actual probability percentage
+    # The probability is the top hazard's share of the total risk score
+    total_score = sum(hazard_data['combined_score'] for _, hazard_data in profile['hazards'].items())
+    
+    if total_score > 0:
+        probability = round((top_data['combined_score'] / total_score) * 100, 1)
     else:
-        confidence = 'High'  # Only one hazard type present
+        probability = 0.0
     
     return {
         'hazard': top_hazard_name,
         'hazard_id': top_data.get('id'),
-        'confidence': confidence,
+        'probability': probability, # ✅ Returns a float like 75.5 instead of 'High'
         'driver': f"{top_data['frequency']} incidents (avg severity: {top_data['severity_weight']})",
         'prediction_window_days': 30
     }

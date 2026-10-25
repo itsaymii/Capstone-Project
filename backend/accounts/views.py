@@ -17,6 +17,7 @@ from rest_framework import status
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+from sms.utils import send_otp_sms 
 
 from .models import (
 	user_bypasses_login_otp, get_user_role, AccountProfile, OneTimePassword, ResidencyVerification,
@@ -372,12 +373,34 @@ def register_user(request):
 		},
 	)
 
-	try:
-		_send_otp_email(email=email, code=otp_code, purpose=OneTimePassword.PURPOSE_REGISTER)
-	except RuntimeError as exc:
-		return Response({'error': str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+	# Check preferred OTP method (default to 'email' for backward compatibility)
+	otp_method = (request.data.get('otpMethod') or 'email').strip().lower()
 
-	return Response({'message': 'OTP sent to your email for registration verification.'}, status=status.HTTP_200_OK)
+	if otp_method == 'sms':
+		if not phone_number or len(phone_number) < 10:
+			return Response({'error': 'A valid phone number is required for SMS OTP.'}, status=status.HTTP_400_BAD_REQUEST)
+		
+		sms_sent = send_otp_sms(phone_number, otp_code, 'registration')
+		if not sms_sent:
+			return Response({'error': 'Failed to send SMS OTP. Please try Email OTP or contact support.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+			
+		return Response({
+			'message': 'OTP sent to your phone for registration verification.',
+			'otpPhone': phone_number,
+			'otpMethod': 'sms'
+		}, status=status.HTTP_200_OK)
+	else:
+		# Fallback to Email OTP
+		try:
+			_send_otp_email(email=email, code=otp_code, purpose=OneTimePassword.PURPOSE_REGISTER)
+		except RuntimeError as exc:
+			return Response({'error': str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+		return Response({
+			'message': 'OTP sent to your email for registration verification.',
+			'otpEmail': email,
+			'otpMethod': 'email'
+		}, status=status.HTTP_200_OK)
 
 
 @api_view(['POST'])
@@ -595,19 +618,38 @@ def login_user(request):
 		purpose=OneTimePassword.PURPOSE_LOGIN,
 		payload={'userId': user.id},
 	)
+	# Check preferred OTP method (default to 'email' for backward compatibility)
+	otp_method = (request.data.get('otpMethod') or 'email').strip().lower()
 
-	try:
-		_send_otp_email(email=account.email, code=otp_code, purpose=OneTimePassword.PURPOSE_LOGIN)
-	except RuntimeError as exc:
-		return Response({'error': str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+	if otp_method == 'sms':
+		# Fetch the user's phone number from their profile
+		user_phone = getattr(user.account_profile, 'phone_number', None)
+		if not user_phone or len(user_phone) < 10:
+			return Response({
+				'error': 'No valid phone number linked to this account. Please use Email OTP or update your profile.'
+			}, status=status.HTTP_400_BAD_REQUEST)
+		
+		sms_sent = send_otp_sms(user_phone, otp_code, 'login')
+		if not sms_sent:
+			return Response({'error': 'Failed to send SMS OTP. Please try Email OTP.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+			
+		return Response({
+			'message': 'OTP sent to your phone for login verification.',
+			'otpPhone': user_phone,
+			'otpMethod': 'sms'
+		}, status=status.HTTP_200_OK)
+	else:
+		# Fallback to Email OTP
+		try:
+			_send_otp_email(email=account.email, code=otp_code, purpose=OneTimePassword.PURPOSE_LOGIN)
+		except RuntimeError as exc:
+			return Response({'error': str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-	return Response(
-		{
+		return Response({
 			'message': 'OTP sent to your email for login verification.',
 			'otpEmail': account.email,
-		},
-		status=status.HTTP_200_OK,
-	)
+			'otpMethod': 'email'
+		}, status=status.HTTP_200_OK)
 
 
 @api_view(['POST'])
