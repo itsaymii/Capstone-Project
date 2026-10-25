@@ -1,8 +1,17 @@
 import { useMemo, useState } from 'react'
 import { jsPDF } from 'jspdf'
-import type { HazardIncident, HazardType, IncidentStatus } from '../../../data/adminOperations'
+import type { HazardIncident, IncidentStatus } from '../../../data/adminOperations'
 import type { EarthquakeEvent } from '../../../services/earthquakes'
 import { glassPanelClass, glassPanelSoftClass } from './constants'
+import {
+  ANALYTICS_TYPES,
+  buildAllTypeInsights,
+  countByTimeOfDay,
+  countByWeekday,
+  getAnalyticsTypeLabel,
+  getAnalyticsTypeMeta,
+  getIncidentToReportMinutes,
+} from '../../../data/incidentCategories'
 
 type AnalyticsSectionProps = {
   reports: HazardIncident[]
@@ -22,9 +31,10 @@ type RiskLocation = {
   score: number
   level: string
   responseLoad: number
-  fire: number
-  accident: number
+  /** Incident count per analytics type label (Fire, Road Crash (RCA), ...). */
+  typeCounts: Record<string, number>
   earthquake: number
+  victims: number
   severityPressure: number
 }
 
@@ -52,16 +62,15 @@ type TrendPoint = {
 
 type FrequencyMode = 'monthly' | 'yearly' | 'daily'
 
-const hazardColors: Record<HazardType, string> = {
-  EQ: '#10b981',
-  FR: '#ef4444',
-  AC: '#3b82f6',
+function emptyRiskLocation(location: string): RiskLocation {
+  return { location, incidents: 0, score: 0, level: 'Low', responseLoad: 0, typeCounts: {}, earthquake: 0, victims: 0, severityPressure: 0 }
 }
 
-const hazardLabels: Record<HazardType, string> = {
-  EQ: 'Earthquake',
-  FR: 'Fire',
-  AC: 'Accident',
+function hexToRgb(hex: string | undefined): [number, number, number] {
+  const match = /^#?([0-9a-f]{6})$/i.exec(hex || '')
+  if (!match) return [37, 99, 235]
+  const value = parseInt(match[1], 16)
+  return [(value >> 16) & 255, (value >> 8) & 255, value & 255]
 }
 
 function getSeverityWeight(severity: HazardIncident['severity']): number {
@@ -274,10 +283,14 @@ function getResponseMinutes(report: HazardIncident): number | null {
 
   const start = getReportStartDateTime(report)
   const end = getReportEndDateTime(report)
-  if (!start || !end) return null
+  if (start && end) {
+    const minutes = Math.round((end.getTime() - start.getTime()) / (1000 * 60))
+    if (minutes >= 0) return minutes
+  }
 
-  const minutes = Math.round((end.getTime() - start.getTime()) / (1000 * 60))
-  return minutes >= 0 ? minutes : null
+  // Responder reports have no completion timestamp; use the time from when the
+  // incident happened to when the responder filed the report.
+  return getIncidentToReportMinutes(report)
 }
 
 function normalizeAnalyticsStatus(status: unknown): IncidentStatus {
@@ -295,6 +308,14 @@ function getReportStatus(report: HazardIncident): IncidentStatus {
 }
 
 function getDisplayReportStatus(report: HazardIncident): 'active' | 'pending' | 'resolved' {
+  // Approved responder reports carry the status of the incident they created.
+  const linked = String((report as any).linkedIncidentStatus || '').toLowerCase()
+  if (linked) {
+    if (['resolved', 'contained', 'false_alarm'].includes(linked)) return 'resolved'
+    if (linked === 'reported') return 'pending'
+    return 'active'
+  }
+
   const status = getReportStatus(report)
 
   // UI rule for analytics: backend Approved reports are already completed/validated,
@@ -718,7 +739,7 @@ function HeatRiskMapGrid({ locations }: { locations: RiskLocation[] }) {
   const maxScore = safeMax(locations.map((location) => location.score))
   const fallbackLocations = locations.length > 0
     ? locations
-    : [{ location: 'No location data', incidents: 0, score: 0, level: 'Low', responseLoad: 0, fire: 0, accident: 0, earthquake: 0, severityPressure: 0 }]
+    : [emptyRiskLocation('No location data')]
 
   return (
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
@@ -821,16 +842,19 @@ function HeatRiskMapGrid({ locations }: { locations: RiskLocation[] }) {
                 </div>
               </div>
 
-              <div className="mt-4 grid gap-2 sm:grid-cols-3">
-                <span className="rounded-full bg-white/70 px-3 py-1 text-center text-xs font-medium text-red-700">
-                  Fire {location.fire}
-                </span>
-                <span className="rounded-full bg-white/70 px-3 py-1 text-center text-xs font-medium text-blue-700">
-                  Accident {location.accident}
-                </span>
-                <span className="rounded-full bg-white/70 px-3 py-1 text-center text-xs font-medium text-emerald-700">
-                  EQ {location.earthquake}
-                </span>
+              <div className="mt-4 flex flex-wrap gap-2">
+                {[
+                  ...Object.entries(location.typeCounts).sort((a, b) => b[1] - a[1]).slice(0, 3),
+                  ...(location.earthquake > 0 ? [['Earthquake', location.earthquake] as [string, number]] : []),
+                ].map(([label, count]) => (
+                  <span
+                    className="rounded-full bg-white/70 px-3 py-1 text-xs font-medium"
+                    key={label}
+                    style={{ color: getAnalyticsTypeMeta(label).color }}
+                  >
+                    {label} {count}
+                  </span>
+                ))}
               </div>
 
               <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
@@ -882,53 +906,6 @@ function getUniqueAnalyticsReports(reports: HazardIncident[]): HazardIncident[] 
 }
 
 
-function getAnalyticsIncidentType(report: HazardIncident): 'Fire' | 'Accident' | 'Earthquake' | 'Other' {
-  const record = report as any
-
-  const combined = [
-    record.incidentType,
-    record.incident_type,
-    record.hazard_type_name,
-    record.type,
-    record.category,
-    record.incident_category,
-    record.nature_of_incident,
-    record.title,
-    record.name,
-    record.incidentTitle,
-    record.incident_title,
-    record.description,
-    record.actionTaken,
-    record.action_taken,
-    record.report_text,
-    record.particulars,
-    record.code,
-    record.hazard_code,
-  ]
-    .filter(Boolean)
-    .join(' ')
-    .toLowerCase()
-
-  const code = String(record.code || record.hazard_code || '').toUpperCase()
-
-  if (combined.includes('fire') || code === 'FR') return 'Fire'
-  if (combined.includes('earthquake') || code === 'EQ') return 'Earthquake'
-
-  if (
-    combined.includes('rca') ||
-    combined.includes('road crash') ||
-    combined.includes('vehicular') ||
-    combined.includes('vehicle') ||
-    combined.includes('collision') ||
-    combined.includes('traffic') ||
-    combined.includes('accident') ||
-    code === 'AC'
-  ) {
-    return 'Accident'
-  }
-
-  return 'Other'
-}
 
 export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSectionProps) {
   const analyticsReports = useMemo(() => getUniqueAnalyticsReports(reports), [reports])
@@ -1005,8 +982,12 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
   )
 
   const availableDisasterTypes = useMemo(
-    () => Array.from(new Set(analyticsReports.map((report) => getAnalyticsIncidentType(report)))).sort(),
-    [analyticsReports],
+    () => {
+      const present = new Set(analyticsReports.map((report) => getAnalyticsTypeLabel(report)))
+      if (earthquakeEvents.length > 0) present.add('Earthquake')
+      return ANALYTICS_TYPES.map((type) => type.label).filter((label) => present.has(label))
+    },
+    [analyticsReports, earthquakeEvents],
   )
 
   const filteredReports = useMemo(() => {
@@ -1031,7 +1012,7 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
     }
 
     if (selectedDisasterType) {
-      result = result.filter((report) => getAnalyticsIncidentType(report) === selectedDisasterType)
+      result = result.filter((report) => getAnalyticsTypeLabel(report) === selectedDisasterType)
     }
 
     if (selectedSeverity) {
@@ -1093,9 +1074,18 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
 
   const activeCount = filteredReports.filter((report) => getDisplayReportStatus(report) === 'active').length
 
-  const fireCount = filteredReports.filter((report) => getAnalyticsIncidentType(report) === 'Fire').length
-  const accidentCount = filteredReports.filter((report) => getAnalyticsIncidentType(report) === 'Accident').length
-  const earthquakeReportCount = filteredReports.filter((report) => getAnalyticsIncidentType(report) === 'Earthquake').length
+  const typeCounts = useMemo(() => {
+    const counts = new Map<string, number>()
+    filteredReports.forEach((report) => {
+      const label = getAnalyticsTypeLabel(report)
+      counts.set(label, (counts.get(label) || 0) + 1)
+    })
+    return counts
+  }, [filteredReports])
+
+  const fireCount = typeCounts.get('Fire Incident') || 0
+  const roadCrashCount = typeCounts.get('Road Crash (RCA)') || 0
+  const earthquakeReportCount = typeCounts.get('Earthquake') || 0
   const earthquakeTotalCount = earthquakeReportCount + earthquakeApiCount
 
   const highPriorityCount = filteredReports.filter(
@@ -1140,26 +1130,38 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
     ),
   )
 
-  const disasterTypeData = useMemo(
-    () => [
-      {
-        label: hazardLabels.FR,
-        value: fireCount,
-        color: hazardColors.FR,
-      },
-      {
-        label: hazardLabels.AC,
-        value: accidentCount,
-        color: hazardColors.AC,
-      },
-      {
-        label: 'Earthquake',
-        value: earthquakeTotalCount,
-        color: hazardColors.EQ,
-      },
-    ],
-    [accidentCount, earthquakeTotalCount, fireCount],
+  const disasterTypeData = useMemo<ChartItem[]>(
+    () =>
+      ANALYTICS_TYPES.map((type) => ({
+        label: type.label,
+        value: type.key === 'earthquake' ? earthquakeTotalCount : typeCounts.get(type.label) || 0,
+        color: type.color,
+      }))
+        .filter((item) => item.value > 0)
+        .sort((a, b) => b.value - a.value),
+    [earthquakeTotalCount, typeCounts],
   )
+
+  const topIncidentType = useMemo(() => {
+    const reportTypes = disasterTypeData.filter((item) => item.label !== 'Earthquake')
+    return reportTypes[0] || null
+  }, [disasterTypeData])
+
+  const detailInsights = useMemo(() => buildAllTypeInsights(filteredReports), [filteredReports])
+  const [insightTypeChoice, setInsightTypeChoice] = useState<string | null>(null)
+  const activeInsights =
+    detailInsights.find((item) => item.label === (selectedDisasterType || insightTypeChoice)) || detailInsights[0] || null
+
+  const timeOfDayData = useMemo<ChartItem[]>(
+    () => countByTimeOfDay(filteredReports).map((item, index) => ({ ...item, color: ['#6366f1', '#f59e0b', '#f97316', '#1e3a8a'][index] })),
+    [filteredReports],
+  )
+  const weekdayData = useMemo<ChartItem[]>(
+    () => countByWeekday(filteredReports, getReportDate).map((item) => ({ ...item, color: '#0ea5e9' })),
+    [filteredReports],
+  )
+  const busiestBlock = timeOfDayData.reduce<ChartItem | null>((best, item) => (!best || item.value > best.value ? item : best), null)
+  const busiestDay = weekdayData.reduce<ChartItem | null>((best, item) => (!best || item.value > best.value ? item : best), null)
 
   const severityData = useMemo<ChartItem[]>(
     () => (['Critical', 'High', 'Moderate', 'Low'] as const).map((severity) => {
@@ -1319,31 +1321,22 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
 
     filteredReports.forEach((report) => {
       const location = getLocationName(report.location)
-      const current = map.get(location) || {
-        location,
-        incidents: 0,
-        score: 0,
-        level: 'Low',
-        responseLoad: 0,
-        fire: 0,
-        accident: 0,
-        earthquake: 0,
-        severityPressure: 0,
-      }
+      const current = map.get(location) || emptyRiskLocation(location)
 
       const severityScore = getSeverityWeight(report.severity) * 2
       const displayStatus = getDisplayReportStatus(report)
       const statusScore = displayStatus === 'active' ? 3 : displayStatus === 'pending' ? 2 : 0
-      const earthquakeExposureScore = getAnalyticsIncidentType(report) === 'Earthquake' ? 2 : 0
+      const earthquakeExposureScore = getAnalyticsTypeLabel(report) === 'Earthquake' ? 2 : 0
 
       current.incidents += 1
       current.score += severityScore + statusScore + earthquakeExposureScore
       current.responseLoad += displayStatus === 'resolved' ? 1 : 2
       current.severityPressure += severityScore
 
-      if (getAnalyticsIncidentType(report) === 'Fire') current.fire += 1
-      if (getAnalyticsIncidentType(report) === 'Accident') current.accident += 1
-      if (getAnalyticsIncidentType(report) === 'Earthquake') current.earthquake += 1
+      const typeLabel = getAnalyticsTypeLabel(report)
+      if (typeLabel === 'Earthquake') current.earthquake += 1
+      else current.typeCounts[typeLabel] = (current.typeCounts[typeLabel] || 0) + 1
+      current.victims += getReportVictimCount(report)
 
       map.set(location, current)
     })
@@ -1351,17 +1344,7 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
     // Process all earthquake events without artificial limits to ensure comprehensive risk assessment
     analysisEarthquakeEvents.forEach((event) => {
       const location = event.place || 'Near Quezon Region'
-      const current = map.get(location) || {
-        location,
-        incidents: 0,
-        score: 0,
-        level: 'Low',
-        responseLoad: 0,
-        fire: 0,
-        accident: 0,
-        earthquake: 0,
-        severityPressure: 0,
-      }
+      const current = map.get(location) || emptyRiskLocation(location)
 
       const magnitudeScore = event.magnitude >= 5 ? 8 : event.magnitude >= 4 ? 5 : event.magnitude >= 3 ? 3 : 1
 
@@ -1451,7 +1434,7 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
     { label: 'Risk', value: barangayRiskData[0]?.score || 0 },
     { label: 'Load', value: barangayRiskData[0]?.responseLoad || 0 },
     { label: 'Severity', value: barangayRiskData[0]?.severityPressure || 0 },
-    { label: 'Fire', value: barangayRiskData[0]?.fire || 0 },
+    { label: 'Victims', value: barangayRiskData[0]?.victims || 0 },
     { label: 'Earthquake', value: barangayRiskData[0]?.earthquake || 0 },
   ]
 
@@ -1564,7 +1547,7 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
         pdf.text(item.label.slice(0, 26), margin, y + 4)
         pdf.setFillColor(226, 232, 240)
         pdf.roundedRect(margin + labelWidth, y, barWidth, 5, 1.5, 1.5, 'F')
-        pdf.setFillColor(...(item.color === '#ef4444' ? [239, 68, 68] : item.color === '#3b82f6' ? [59, 130, 246] : [16, 185, 129]))
+        pdf.setFillColor(...hexToRgb(item.color))
         pdf.roundedRect(margin + labelWidth, y, Math.max(item.value > 0 ? 2 : 0, (item.value / maxValue) * barWidth), 5, 1.5, 1.5, 'F')
         pdf.text(`${item.value} (${percent(item.value, total)}%)`, margin + labelWidth + barWidth + 4, y + 4)
         cursorY += 10
@@ -1685,11 +1668,45 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
     )
     barChart(teamPerformanceChartData, 100)
 
+    section('9. Incident Details Insights', 'Type-specific figures from the details saved on each responder report.')
+    if (detailInsights.length === 0) {
+      text('No incident details are available for the selected filters.', 8, [100, 116, 139])
+    }
+    detailInsights.forEach((insight) => {
+      text(`${insight.label} (${insight.reports} reports, ${insight.withDetails} with details)`, 9.5, [15, 23, 42], true)
+      table(
+        ['Measure', 'Value', 'Notes'],
+        [
+          ...insight.kpis.map((kpi) => [kpi.label, kpi.value, kpi.helper]),
+          ...insight.charts
+            .filter((chart) => chart.items.length > 0)
+            .map((chart) => [
+              chart.title,
+              chart.items[0].label,
+              chart.items.slice(0, 3).map((item) => `${item.label}: ${item.value}`).join(', '),
+            ]),
+        ],
+        [50, 45, contentWidth - 95],
+      )
+    })
+
+    section('10. When Incidents Happen', 'Time of day uses the time the incident occurred; day of week uses the report date.')
+    table(
+      ['Time of day', 'Incidents', 'Share'],
+      timeOfDayData.map((item) => [item.label, String(item.value), `${percent(item.value, totalIncidentReports)}%`]),
+      [75, 35, contentWidth - 110],
+    )
+    table(
+      ['Day of week', 'Incidents', 'Share'],
+      weekdayData.map((item) => [item.label, String(item.value), `${percent(item.value, totalIncidentReports)}%`]),
+      [75, 35, contentWidth - 110],
+    )
+
     section('Filtered Incident Records', 'Detailed records included in this report.')
     table(
       ['Date', 'Type', 'Severity', 'Barangay', 'Report'],
       filteredReports.length > 0
-        ? filteredReports.map((report) => [getReportDate(report).toLocaleDateString(), getAnalyticsIncidentType(report), report.severity, getLocationName(report.location), report.title])
+        ? filteredReports.map((report) => [getReportDate(report).toLocaleDateString(), getAnalyticsTypeLabel(report), report.severity, getLocationName(report.location), report.title])
         : [['-', '-', '-', '-', 'No incident reports match the selected filters.']],
       [25, 30, 28, 48, contentWidth - 131],
     )
@@ -1887,7 +1904,7 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
             ) : null}
           </div>
 
-          <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+          <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <AnalyticsMetricCard
               accentClass="border-t-blue-600"
               helper={`${totalIncidentReports} reports + ${earthquakeApiCount} live earthquake events.`}
@@ -1895,17 +1912,24 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
               value={totalRecords}
             />
             <AnalyticsMetricCard
-              accentClass="border-t-red-600"
-              helper={`${fireCount} fire-related reports in the dataset.`}
-              label="Fire Reports"
-              value={fireCount}
+              accentClass="border-t-amber-500"
+              helper={topIncidentType ? `${topIncidentType.value} reports • ${percent(topIncidentType.value, totalIncidentReports)}% of incidents.` : 'No incident reports yet.'}
+              label="Most Frequent Type"
+              value={topIncidentType?.label || 'N/A'}
             />
             <AnalyticsMetricCard
               accentClass="border-t-sky-600"
-              helper={`${accidentCount} accident-related reports in the dataset.`}
-              label="Accident Reports"
-              value={accidentCount}
+              helper={`${percent(roadCrashCount, totalIncidentReports)}% of incident reports are road crashes.`}
+              label="Road Crash Reports"
+              value={roadCrashCount}
             />
+            <AnalyticsMetricCard
+              accentClass="border-t-red-600"
+              helper={`${percent(fireCount, totalIncidentReports)}% of incident reports are fires.`}
+              label="Fire Reports"
+              value={fireCount}
+            />
+
             <AnalyticsMetricCard
               accentClass="border-t-emerald-600"
               helper={`${earthquakeApiCount} live API events + ${earthquakeReportCount} report records.`}
@@ -1924,11 +1948,103 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
         <div className={`${glassPanelClass} p-5 sm:p-6`}>
           <SectionHeader
             badge="Composition"
-            description="Shows how the current records are distributed across Fire, Accident, and live Earthquake data."
+            description="Shows how the current records are distributed across every incident type responders report, plus live earthquake data."
             eyebrow="Disaster Type Analysis"
             title="Disaster Type Analysis"
           />
           <DonutChart items={disasterTypeData} total={totalRecords} />
+        </div>
+
+        <div className={`${glassPanelClass} p-5 sm:p-6`}>
+          <SectionHeader
+            badge={activeInsights ? `${activeInsights.withDetails} of ${activeInsights.reports} with details` : 'Report details'}
+            description="Breaks down the details responders fill in for each incident type, like vehicle types and causes of road crashes, causes and damage of fires, or chief complaints of medical cases. Follows the filters above."
+            eyebrow="Incident Details Insights"
+            title="Incident Details Insights"
+          />
+
+          {detailInsights.length === 0 || !activeInsights ? (
+            <EmptyState message="No incident details are available for the current filters." />
+          ) : (
+            <>
+              <div aria-label="Incident type" className="mb-5 flex flex-wrap gap-2" role="tablist">
+                {detailInsights.map((insight) => {
+                  const active = insight.key === activeInsights.key
+                  return (
+                    <button
+                      aria-selected={active}
+                      className={`rounded-full border px-4 py-2 text-sm font-semibold transition ${
+                        active ? 'border-transparent text-white shadow-sm' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                      }`}
+                      key={insight.key}
+                      onClick={() => setInsightTypeChoice(insight.label)}
+                      role="tab"
+                      style={active ? { backgroundColor: insight.color } : undefined}
+                      type="button"
+                    >
+                      {insight.label} <span className="ml-1 opacity-75">{insight.reports}</span>
+                    </button>
+                  )
+                })}
+              </div>
+
+              {activeInsights.withDetails === 0 ? (
+                <EmptyState message={`The ${activeInsights.label} reports in this view were filed before details were recorded.`} />
+              ) : (
+                <>
+                  {activeInsights.kpis.length > 0 ? (
+                    <div className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                      {activeInsights.kpis.map((kpi) => (
+                        <AnalyticsMetricCard accentClass="border-t-slate-700" helper={kpi.helper} key={kpi.label} label={kpi.label} value={kpi.value} />
+                      ))}
+                    </div>
+                  ) : null}
+
+                  <div className="grid gap-5 xl:grid-cols-2">
+                    {activeInsights.charts.map((chart) => (
+                      <div key={chart.title}>
+                        <div className="mb-3">
+                          <h4 className="text-base font-semibold text-slate-900">{chart.title}</h4>
+                          <p className="text-xs text-slate-500">{chart.description}</p>
+                        </div>
+                        <HorizontalBarChart
+                          emptyText={`No ${chart.title.toLowerCase()} recorded yet.`}
+                          items={chart.items.map((item) => ({ ...item, color: activeInsights.color }))}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </>
+          )}
+        </div>
+
+        <div className={`${glassPanelClass} p-5 sm:p-6`}>
+          <SectionHeader
+            badge={busiestBlock && busiestBlock.value > 0 ? `Peak: ${busiestBlock.label.split(' (')[0]}` : 'Timing'}
+            description="Shows the time of day and day of the week incidents happen most, to help plan responder shifts and stand-by teams."
+            eyebrow="Incident Timing"
+            title="When Incidents Happen"
+          />
+          <div className="grid gap-5 xl:grid-cols-2">
+            <div>
+              <div className="mb-3">
+                <h4 className="text-base font-semibold text-slate-900">Time of day</h4>
+                <p className="text-xs text-slate-500">Based on the time each incident occurred.</p>
+              </div>
+              <HorizontalBarChart emptyText="No incident times available yet." items={timeOfDayData} />
+            </div>
+            <div>
+              <div className="mb-3">
+                <h4 className="text-base font-semibold text-slate-900">Day of the week</h4>
+                <p className="text-xs text-slate-500">
+                  {busiestDay && busiestDay.value > 0 ? `${busiestDay.label} is the busiest day in this view.` : 'Based on the report date.'}
+                </p>
+              </div>
+              <HorizontalBarChart emptyText="No incident dates available yet." items={weekdayData} />
+            </div>
+          </div>
         </div>
 
         <div className={`${glassPanelClass} p-5 sm:p-6`}>
@@ -2122,7 +2238,7 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
             <div>
               <SectionHeader
                 badge="Minutes"
-                description="Average response time in minutes from report start to response completion per team."
+                description="Average minutes per team from the time the incident occurred to when the responder filed the report."
                 eyebrow="Speed Breakdown"
                 title="Average Response Time by Team"
               />

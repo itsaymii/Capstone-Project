@@ -156,9 +156,8 @@ npm run build
 
 ## Documentation
 
-- [Complete System Documentation](docs/SYSTEM-DOCUMENTATION.md)
+- [System Documentation](docs/SYSTEM-DOCUMENTATION.md): users, pages, rules, API endpoints, known issues
 - [System Architecture](docs/architecture.md)
-- [Incident Reporting Flow](docs/system-flow.md)
 - [Authentication Flow](docs/authentication-flow.md)
+- [Incident and Evacuation Flows](docs/system-flow.md)
 - [Database ERD](docs/erd.md)
-- [Deployment](docs/deployment.md)

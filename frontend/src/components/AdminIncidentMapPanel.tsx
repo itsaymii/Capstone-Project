@@ -3,9 +3,18 @@ import L, { type LatLngBoundsExpression } from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import 'leaflet.heat'
 import confetti from 'canvas-confetti'
+import axios from 'axios'
 import type { HazardType } from '../data/adminOperations'
 import {
+  getIncidentCategoryKey,
+  getIncidentCategoryLabel,
+  getIncidentCategoryMeta,
+  sortIncidentCategoryLabels,
+} from '../data/incidentCategories'
+import { formatDetailValue, getIncidentTypeConfig } from '../data/incidentTypeFields'
+import {
   getIncidentReports,
+  updateIncidentReportFields,
   updateIncidentReportStatus,
   type IncidentReport,
 } from '../services/incidents'
@@ -20,9 +29,12 @@ import {
 
 type IncidentMapFilter = HazardType
 type ReportReviewStatus = 'pending' | 'approved'
-type OperationalStatus = 'On-going' | 'Resolved'
+type OperationalStatus = 'For review' | 'On-going' | 'Resolved'
+type Severity = 'Low' | 'Moderate' | 'High' | 'Critical'
+type SideListTab = 'review' | 'map'
 
 type AdminIncidentMapPanelProps = {
+  /** Dashboard records for the same reports; used for the linked incident's severity and status. */
   incidents?: unknown[]
   selectedType: IncidentMapFilter
   onSelectType: (filter: IncidentMapFilter) => void
@@ -34,11 +46,16 @@ type MapIncident = {
   id: string
   title: string
   time: string
+  /** When the report was filed (used by the year/month filters). */
+  date: Date | null
   status: ReportReviewStatus
   code: HazardType
+  /** Shared incident type name (see data/incidentCategories.ts). */
   incidentTypeLabel: string
+  color: string
   location: string
-  severity: 'Low' | 'Moderate' | 'High' | 'Critical'
+  barangay: string
+  severity: Severity
   operationalStatus: OperationalStatus
   responseTeam: string
   description: string
@@ -48,11 +65,10 @@ type MapIncident = {
   isNew: boolean
 }
 
+type LinkedIncidentInfo = { severity?: Severity; status?: string }
+
 type EditableIncident = {
-  incidentTypeLabel: string
   location: string
-  severity: 'Low' | 'Moderate' | 'High' | 'Critical'
-  operationalStatus: OperationalStatus
   responseTeam: string
   description: string
   latitude: string
@@ -77,26 +93,31 @@ const philippinesBounds: LatLngBoundsExpression = [
 ]
 
 const hazardColors: Record<HazardType, string> = {
-  EQ: '#4ade80',
-  FR: '#fb923c',
-  AC: '#facc15',
+  EQ: getIncidentCategoryMeta('earthquake').color,
+  FR: getIncidentCategoryMeta('fire').color,
+  AC: getIncidentCategoryMeta('rca').color,
 }
 
-const hazardTypeMeta: Record<HazardType, { label: string; color: string }> = {
-  EQ: { label: 'Earthquake', color: hazardColors.EQ },
-  FR: { label: 'Fire', color: hazardColors.FR },
-  AC: { label: 'Accident', color: hazardColors.AC },
+const hazardTypeMeta: Record<HazardType, { label: string; color: string; description: string }> = {
+  FR: { label: 'Fire', color: hazardColors.FR, description: 'Fire incidents' },
+  AC: {
+    label: 'Accident & Others',
+    color: hazardColors.AC,
+    description: 'Road crashes, medical, ambulance, crime, stand-by and drowning',
+  },
+  EQ: { label: 'Earthquake', color: hazardColors.EQ, description: 'Live seismic events' },
 }
+
+const hazardTabOrder: HazardType[] = ['FR', 'AC', 'EQ']
 
 const mapLegendItems = [
   { label: 'Philippine Fault Zone', color: '#dc2626' },
   { label: 'Valley Fault System', color: '#3b82f6' },
   { label: 'Other Active Faults', color: '#ef4444' },
-  { label: 'Earthquake Epicenter', color: '#4ade80' },
+  { label: 'Earthquake Epicenter', color: hazardColors.EQ },
 ]
 
-const validYearOptions = ['2020', '2021', '2022', '2023', '2024', '2025', '2026']
-const validMonthOptions = [
+const monthOptions = [
   { value: '01', label: 'January' },
   { value: '02', label: 'February' },
   { value: '03', label: 'March' },
@@ -116,19 +137,18 @@ const reviewStatusClass: Record<ReportReviewStatus, string> = {
   approved: 'border border-emerald-200 bg-emerald-50 text-emerald-800',
 }
 
-function getNormalizedStatusText(status?: string): string {
-  return String(status || '').trim().toLowerCase()
+const operationalStatusClass: Record<OperationalStatus, string> = {
+  'For review': 'bg-amber-50 text-amber-800',
+  'On-going': 'bg-red-50 text-red-700',
+  Resolved: 'bg-emerald-50 text-emerald-700',
 }
 
-function isApprovedStatus(status?: string): boolean {
-  const value = getNormalizedStatusText(status)
+const filterSelectClass =
+  'h-9 rounded-xl border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-800 shadow-sm outline-none transition hover:border-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100'
 
-  // IMPORTANT:
-  // Only an explicit report approval should make a responder report plottable.
-  // Do not treat backend/admin operational statuses such as verified/resolved/completed
-  // as approved here, because newly submitted reports may already create admin
-  // incident records but still need review first.
-  return value === 'approved' || value === 'approve' || value === 'approved report'
+function isApprovedStatus(status?: string): boolean {
+  // Only an explicit report approval makes a responder report plottable.
+  return String(status || '').trim().toLowerCase().startsWith('approve')
 }
 
 function normalizeStatus(status?: string): ReportReviewStatus {
@@ -194,17 +214,18 @@ function getReportCode(report: IncidentReport): string {
   return report.reportCode || report.report_code || report.incidentCode || report.incident_code || report.id
 }
 
-function getReportIncidentType(report: IncidentReport): string {
-  return report.incidentType || report.incident_type || ''
-}
-
 function getReportResponderTeam(report: IncidentReport): string {
   return report.responderTeam || report.responder_team || 'Responder Team'
 }
 
 function getReportTime(report: IncidentReport): string {
   const time = report.timeOccurred || report.time_occurred
+  const match = /^(\d{1,2}):(\d{2})/.exec(time || '')
 
+  if (match) {
+    const hours = Number(match[1])
+    return `${hours % 12 || 12}:${match[2]} ${hours < 12 ? 'AM' : 'PM'}`
+  }
   if (time) return time
 
   const createdAt = report.createdAt || report.created_at
@@ -218,23 +239,6 @@ function getReportTime(report: IncidentReport): string {
 
 function getVictimCount(report: IncidentReport): number {
   return Number(report.victimCount ?? report.victim_count ?? report.victims?.length ?? 0)
-}
-
-function getReportDateValue(report: IncidentReport): number {
-  const createdAt = report.createdAt || report.created_at
-  if (createdAt) {
-    const createdDate = new Date(createdAt).getTime()
-    if (Number.isFinite(createdDate)) return createdDate
-  }
-
-  const time = report.timeOccurred || report.time_occurred
-  if (time) {
-    const today = new Date().toISOString().slice(0, 10)
-    const timeDate = new Date(`${today}T${time}`).getTime()
-    if (Number.isFinite(timeDate)) return timeDate
-  }
-
-  return 0
 }
 
 function isNewReport(report: IncidentReport): boolean {
@@ -269,38 +273,6 @@ function saveViewedReportId(id: string): string[] {
   return next
 }
 
-function mapReportToIncident(report: IncidentReport): MapIncident {
-  const incidentTypeLabel = getReportIncidentType(report) || 'Incident Report'
-  const incidentType = incidentTypeLabel.toLowerCase()
-
-  const code: MapIncident['code'] = incidentType.includes('fire')
-    ? 'FR'
-    : incidentType.includes('earthquake')
-      ? 'EQ'
-      : 'AC'
-  const victimCount = getVictimCount(report)
-  const location = report.location || 'Lucena City'
-
-  return {
-    id: report.id,
-    title: `${incidentTypeLabel} - ${getReportCode(report)}`,
-    time: getReportTime(report),
-    status: normalizeStatus(report.status),
-    code,
-    incidentTypeLabel,
-    location,
-    severity: victimCount >= 5 ? 'Critical' : victimCount >= 3 ? 'High' : victimCount >= 1 ? 'Moderate' : 'Low',
-    operationalStatus: isApprovedStatus(report.status) ? 'Resolved' : 'On-going',
-    responseTeam: getReportResponderTeam(report),
-    description: report.description || report.actionTaken || report.action_taken || 'No description provided.',
-    coordinates: getReportCoordinates(report, location),
-    victims: report.victims || [],
-    rawReport: report,
-    isNew: isNewReport(report),
-  }
-}
-
-
 function escapePopupText(value: unknown): string {
   return String(value ?? '')
     .replace(/&/g, '&amp;')
@@ -310,66 +282,133 @@ function escapePopupText(value: unknown): string {
     .replace(/'/g, '&#039;')
 }
 
-function buildIncidentPopupHtml(incident: MapIncident, statusLabel: string): string {
-  const victimCount = incident.victims?.length ?? getVictimCount(incident.rawReport)
+function getReportDate(report: IncidentReport): Date | null {
+  const createdAt = report.createdAt || report.created_at
+  if (!createdAt) return null
+  const date = new Date(createdAt)
+  return Number.isNaN(date.getTime()) ? null : date
+}
+
+function getBarangayName(report: IncidentReport, location: string): string {
+  if (report.barangayName) return report.barangayName
+  const match = location.match(/(?:barangay|brgy\.?|bgy\.?)\s+([^,]+)/i)
+  if (match?.[1]) return match[1].trim()
+  const firstPart = location.split(',')[0]?.trim()
+  return firstPart && !/lucena/i.test(firstPart) ? firstPart : 'Unspecified'
+}
+
+/** Same rules the backend uses when it creates the incident on approval. */
+function estimateSeverity(categoryKey: string, victimCount: number): Severity {
+  if (victimCount >= 5) return 'Critical'
+  if (victimCount >= 3) return 'High'
+  if (victimCount > 0 || ['fire', 'drowning', 'crime'].includes(categoryKey)) return 'Moderate'
+  return 'Low'
+}
+
+function getOperationalStatus(report: IncidentReport, linkedStatus?: string): OperationalStatus {
+  if (!isApprovedStatus(report.status)) return 'For review'
+  const value = String(linkedStatus || '').toLowerCase()
+  if (['resolved', 'contained', 'false_alarm'].includes(value)) return 'Resolved'
+  return 'On-going'
+}
+
+function mapReportToIncident(report: IncidentReport, linked?: LinkedIncidentInfo): MapIncident {
+  const categoryKey = getIncidentCategoryKey(report)
+  const incidentTypeLabel = getIncidentCategoryLabel(report)
+  const code: HazardType = categoryKey === 'fire' ? 'FR' : categoryKey === 'earthquake' ? 'EQ' : 'AC'
+  const victimCount = getVictimCount(report)
+  const location = report.location || 'Lucena City'
+
+  return {
+    id: report.id,
+    title: `${incidentTypeLabel} - ${getReportCode(report)}`,
+    time: getReportTime(report),
+    date: getReportDate(report),
+    status: normalizeStatus(report.status),
+    code,
+    incidentTypeLabel,
+    color: getIncidentCategoryMeta(categoryKey).color,
+    location,
+    barangay: getBarangayName(report, location),
+    severity: linked?.severity || estimateSeverity(categoryKey, victimCount),
+    operationalStatus: getOperationalStatus(report, linked?.status),
+    responseTeam: getReportResponderTeam(report),
+    description: report.description || report.actionTaken || report.action_taken || 'No description provided.',
+    coordinates: getReportCoordinates(report, location),
+    victims: report.victims || [],
+    rawReport: report,
+    isNew: isNewReport(report),
+  }
+}
+
+function buildIncidentPopupHtml(incident: MapIncident): string {
+  const victimCount = incident.victims?.length || getVictimCount(incident.rawReport)
+  const date = incident.date ? incident.date.toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' }) : ''
 
   return `
     <div style="min-width: 230px; max-width: 280px; font-family: Inter, system-ui, sans-serif;">
+      <div style="display:inline-block; margin-bottom:6px; border-radius:999px; padding:2px 8px; font-size:10px; font-weight:800; color:#fff; background:${incident.color};">
+        ${escapePopupText(incident.incidentTypeLabel)}
+      </div>
       <div style="font-size: 13px; font-weight: 800; color: #0f172a; margin-bottom: 6px;">
         ${escapePopupText(incident.title)}
       </div>
       <div style="font-size: 12px; color: #475569; line-height: 1.55;">
+        <strong>Barangay:</strong> ${escapePopupText(incident.barangay)}<br/>
         <strong>Location:</strong> ${escapePopupText(incident.location)}<br/>
-        <strong>Time:</strong> ${escapePopupText(incident.time)}<br/>
-        <strong>Type:</strong> ${escapePopupText(incident.incidentTypeLabel)}<br/>
+        <strong>Date:</strong> ${escapePopupText(date)} ${escapePopupText(incident.time)}<br/>
         <strong>Severity:</strong> ${escapePopupText(incident.severity)}<br/>
-        <strong>Status:</strong> ${escapePopupText(statusLabel)}<br/>
+        <strong>Status:</strong> ${escapePopupText(incident.operationalStatus)}<br/>
         <strong>Team:</strong> ${escapePopupText(incident.responseTeam)}<br/>
         <strong>Victims:</strong> ${victimCount}
       </div>
       <div style="margin-top: 8px; border-top: 1px solid #e2e8f0; padding-top: 8px; font-size: 12px; color: #334155; line-height: 1.45;">
         ${escapePopupText(incident.description)}
       </div>
-      <div style="margin-top: 8px; font-size: 11px; font-weight: 700; color: #2563eb;">
-        Click marker to open full details
-      </div>
     </div>
   `
 }
 
-function getSavedEditedIncidents(): Record<string, Partial<MapIncident>> {
-  try {
-    return JSON.parse(localStorage.getItem('adminEditedIncidents') || '{}')
-  } catch {
-    return {}
-  }
+/** Readable list of the report's type-specific details, e.g. [["Vehicle types", "Motorcycle, Car"]]. */
+function getDetailRows(report: IncidentReport): Array<[string, string]> {
+  const config = getIncidentTypeConfig(report.incidentType || report.incident_type || '')
+  const details = report.details || {}
+  if (!config) return []
+  return config.fields
+    .filter((spec) => details[spec.name] !== undefined && details[spec.name] !== '')
+    .map((spec) => [spec.label, formatDetailValue(spec, details[spec.name])])
 }
 
-function saveEditedIncident(id: string, data: Partial<MapIncident>): void {
-  const current = getSavedEditedIncidents()
-  localStorage.setItem('adminEditedIncidents', JSON.stringify({ ...current, [id]: { ...current[id], ...data } }))
+function getVictimDetailRows(report: IncidentReport, victimIndex: number): Array<[string, string]> {
+  const config = getIncidentTypeConfig(report.incidentType || report.incident_type || '')
+  const details = report.victims?.[victimIndex]?.details || {}
+  if (!config) return []
+  return config.victimFields
+    .filter((spec) => details[spec.name] !== undefined && details[spec.name] !== '')
+    .map((spec) => [spec.label, formatDetailValue(spec, details[spec.name])])
 }
 
-function applySavedEdit(incident: MapIncident): MapIncident {
-  const saved = getSavedEditedIncidents()[incident.id]
-  if (!saved) return incident
+function getServerErrorMessage(error: unknown, fallback: string): string {
+  const data = axios.isAxiosError(error) ? (error.response?.data as Record<string, unknown> | undefined) : undefined
+  if (!data || typeof data !== 'object') return fallback
+  const first = Object.entries(data)[0]
+  if (!first) return fallback
+  const [field, value] = first
+  const message = Array.isArray(value) ? value.join(' ') : typeof value === 'string' ? value : JSON.stringify(value)
+  return ['detail', 'non_field_errors', 'coordinates'].includes(field) ? message : `${field}: ${message}`
+}
 
-  // Do not allow old localStorage edits to force a report into approved/resolved.
-  // Approval must come from the current backend report status or the Approve button.
-  const {
-    status: _ignoredStatus,
-    operationalStatus: _ignoredOperationalStatus,
-    rawReport: _ignoredRawReport,
-    ...safeSavedDisplayFields
-  } = saved
+function readLinkedIncidents(records: unknown[] | undefined): Map<string, LinkedIncidentInfo> {
+  const linked = new Map<string, LinkedIncidentInfo>()
+  ;(records || []).forEach((record) => {
+    const item = record as { id?: unknown; severity?: Severity; linkedIncidentStatus?: string }
+    if (item?.id) linked.set(String(item.id), { severity: item.linkedIncidentStatus ? item.severity : undefined, status: item.linkedIncidentStatus })
+  })
+  return linked
+}
 
-  return {
-    ...incident,
-    ...safeSavedDisplayFields,
-    status: normalizeStatus(incident.rawReport.status),
-    operationalStatus: isApprovedStatus(incident.rawReport.status) ? 'Resolved' : 'On-going',
-    rawReport: incident.rawReport,
-  }
+function sortNewestFirst(left: MapIncident, right: MapIncident): number {
+  return (right.date?.getTime() ?? 0) - (left.date?.getTime() ?? 0)
 }
 
 function getEarthquakeDescription(event: EarthquakeEvent): string {
@@ -419,10 +458,8 @@ function getIncidentHeatIntensity(severity: MapIncident['severity']): number {
   }
 }
 
-
-
-
 export function AdminIncidentMapPanel({
+  incidents,
   onIncidentReportApproved,
   selectedType,
   onSelectType,
@@ -431,11 +468,17 @@ export function AdminIncidentMapPanel({
   const mapInstanceRef = useRef<L.Map | null>(null)
   const savedMapViewRef = useRef<{ center: [number, number]; zoom: number } | null>(null)
   const previousSelectedTypeRef = useRef<IncidentMapFilter>(selectedType)
+  const markerRefs = useRef(new Map<string, L.Layer & { openPopup: () => unknown }>())
+  const lastReportsSignatureRef = useRef('')
 
   const [selectedIncident, setSelectedIncident] = useState<MapIncident | null>(null)
   const [editingIncident, setEditingIncident] = useState<MapIncident | null>(null)
   const [editForm, setEditForm] = useState<EditableIncident | null>(null)
-  const [incidentReports, setIncidentReports] = useState<MapIncident[]>([])
+  const [editSaving, setEditSaving] = useState(false)
+  const [editError, setEditError] = useState('')
+  const [actionError, setActionError] = useState('')
+  const [approvingId, setApprovingId] = useState('')
+  const [rawReports, setRawReports] = useState<IncidentReport[]>([])
   const [reportsLoading, setReportsLoading] = useState(false)
   const [reportsError, setReportsError] = useState('')
   const [earthquakeEvents, setEarthquakeEvents] = useState<EarthquakeEvent[]>([])
@@ -452,7 +495,12 @@ export function AdminIncidentMapPanel({
   const [eqSearchQuery, setEqSearchQuery] = useState('')
   const [selectedYear, setSelectedYear] = useState('')
   const [selectedMonth, setSelectedMonth] = useState('')
-  const [accidentTypeFilter, setAccidentTypeFilter] = useState('all')
+  const [typeFilter, setTypeFilter] = useState('all')
+  const [barangayFilter, setBarangayFilter] = useState('all')
+  const [severityFilter, setSeverityFilter] = useState('all')
+  const [listSearch, setListSearch] = useState('')
+  const [sideTab, setSideTab] = useState<SideListTab>('review')
+  const [focusRequest, setFocusRequest] = useState<{ id: string; at: number } | null>(null)
   const [viewedReportIds, setViewedReportIds] = useState<string[]>(() => getViewedReportIds())
   const [approvalSuccess, setApprovalSuccess] = useState<ApprovalSuccessModal>({
     open: false,
@@ -548,13 +596,15 @@ export function AdminIncidentMapPanel({
       setReportsError('')
 
       const reports = await getIncidentReports()
-      const mappedReports = reports.map((report) => applySavedEdit(mapReportToIncident(report)))
-
-      setIncidentReports(mappedReports)
+      // Skip the update when nothing changed, so the 30-second refresh does not redraw the map.
+      const signature = JSON.stringify(reports)
+      if (signature !== lastReportsSignatureRef.current) {
+        lastReportsSignatureRef.current = signature
+        setRawReports(reports)
+      }
     } catch (error) {
       console.error('[AdminIncidentMapPanel] Failed to load responder incident reports:', error)
       setReportsError('Failed to load responder reports.')
-      setIncidentReports([])
     } finally {
       setReportsLoading(false)
     }
@@ -570,100 +620,134 @@ export function AdminIncidentMapPanel({
     return () => window.clearInterval(intervalId)
   }, [loadIncidentReports])
 
-  const accidentTypeOptions = useMemo(() => {
-    const uniqueTypes = new Set(
-      incidentReports
-        .filter((incident) => incident.code === 'AC')
-        .map((incident) => incident.incidentTypeLabel)
-        .filter(Boolean),
-    )
-
-    return Array.from(uniqueTypes).sort((left, right) => left.localeCompare(right))
-  }, [incidentReports])
-
-  const filteredIncidents = useMemo(() => {
-    // Right-side review list rule:
-    // Pending / Submitted / On-going reports must stay visible for review.
-    // Approved reports must disappear from the side list because they are already plotted on the map.
-    if (selectedType === 'EQ') return []
-
-    const baseReports = incidentReports.filter(
-      (incident) => incident.code === selectedType && incident.status !== 'approved',
-    )
-
-    const filteredReports =
-      selectedType === 'AC' && accidentTypeFilter !== 'all'
-        ? baseReports.filter((incident) => incident.incidentTypeLabel === accidentTypeFilter)
-        : baseReports
-
-    return [...filteredReports].sort(
-      (left, right) => getReportDateValue(right.rawReport) - getReportDateValue(left.rawReport),
-    )
-  }, [accidentTypeFilter, incidentReports, selectedType])
-
-  const getReportDate = (report: MapIncident): Date | null => {
-    const rawDate =
-      report.rawReport.createdAt ||
-      report.rawReport.created_at ||
-      report.rawReport.timeOccurred ||
-      report.rawReport.time_occurred ||
-      report.time
-
-    const value = new Date(rawDate)
-    return Number.isNaN(value.getTime()) ? null : value
-  }
-
-  const matchesSelectedDate = (date: Date | null): boolean => {
-    if (!date) return true
-    if (selectedYear && date.getFullYear().toString() !== selectedYear) return false
-    if (selectedMonth && (date.getMonth() + 1).toString().padStart(2, '0') !== selectedMonth) return false
-    return true
-  }
-
-  const visiblePlottableMapIncidents = useMemo(
-    () =>
-      incidentReports.filter((incident) => {
-        if (incident.code !== selectedType) return false
-        if (incident.status !== 'approved') return false
-
-        return matchesSelectedDate(getReportDate(incident))
-      }),
-    [incidentReports, matchesSelectedDate, selectedType],
+  const linkedIncidents = useMemo(() => readLinkedIncidents(incidents), [incidents])
+  const linkedSignature = useMemo(
+    () => JSON.stringify(Array.from(linkedIncidents.entries())),
+    [linkedIncidents],
   )
 
+  const incidentReports = useMemo(
+    () => rawReports.map((report) => mapReportToIncident(report, linkedIncidents.get(String(report.id)))),
+    // linkedSignature instead of linkedIncidents: the dashboard passes a new array on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [rawReports, linkedSignature],
+  )
+
+  // Reports of the selected tab (Fire, or Accident & Others).
+  const tabReports = useMemo(
+    () => (selectedType === 'EQ' ? [] : incidentReports.filter((incident) => incident.code === selectedType)),
+    [incidentReports, selectedType],
+  )
+
+  // Filters reset when they no longer match the tab.
+  useEffect(() => {
+    setTypeFilter('all')
+    setBarangayFilter('all')
+    setSeverityFilter('all')
+    setListSearch('')
+    setFocusRequest(null)
+  }, [selectedType])
+
+  const matchesDate = useCallback(
+    (date: Date | null): boolean => {
+      if (!selectedYear) return true
+      if (!date) return false
+      if (date.getFullYear().toString() !== selectedYear) return false
+      if (selectedMonth && (date.getMonth() + 1).toString().padStart(2, '0') !== selectedMonth) return false
+      return true
+    },
+    [selectedMonth, selectedYear],
+  )
+
+  const matchesFilters = useCallback(
+    (incident: MapIncident): boolean =>
+      matchesDate(incident.date) &&
+      (typeFilter === 'all' || incident.incidentTypeLabel === typeFilter) &&
+      (barangayFilter === 'all' || incident.barangay === barangayFilter) &&
+      (severityFilter === 'all' || incident.severity === severityFilter),
+    [barangayFilter, matchesDate, severityFilter, typeFilter],
+  )
+
+  const matchesSearch = useCallback(
+    (incident: MapIncident): boolean => {
+      const query = listSearch.trim().toLowerCase()
+      if (!query) return true
+      return [incident.title, incident.location, incident.barangay, incident.responseTeam, incident.description]
+        .join(' ')
+        .toLowerCase()
+        .includes(query)
+    },
+    [listSearch],
+  )
+
+  // Right side "For review" list: pending reports that match the filters.
+  const reviewIncidents = useMemo(
+    () => tabReports.filter((incident) => incident.status === 'pending' && matchesFilters(incident) && matchesSearch(incident)).sort(sortNewestFirst),
+    [matchesFilters, matchesSearch, tabReports],
+  )
+
+  // Approved reports plotted on the map (same filters, search only narrows the side list).
   const plottableMapIncidents = useMemo(
-    () => visiblePlottableMapIncidents,
-    [visiblePlottableMapIncidents],
+    () => tabReports.filter((incident) => incident.status === 'approved' && matchesFilters(incident)),
+    [matchesFilters, tabReports],
   )
 
-  const filteredEarthquakeEvents = useMemo(() => {
-    return earthquakeEvents.filter((event) => matchesSelectedDate(new Date(event.rawTimestamp)))
-  }, [earthquakeEvents, matchesSelectedDate])
+  const onMapListIncidents = useMemo(
+    () => plottableMapIncidents.filter(matchesSearch).sort(sortNewestFirst),
+    [matchesSearch, plottableMapIncidents],
+  )
+
+  const filteredEarthquakeEvents = useMemo(
+    () => earthquakeEvents.filter((event) => matchesDate(new Date(event.rawTimestamp))),
+    [earthquakeEvents, matchesDate],
+  )
 
   const filteredEqHeatPoints = useMemo(() => toHeatPoints(filteredEarthquakeEvents), [filteredEarthquakeEvents])
 
-  const mapMonths = useMemo(() => {
+  // Filter options come from the data of the current tab.
+  const yearOptions = useMemo(() => {
+    const years = new Set<string>()
+    if (selectedType === 'EQ') {
+      earthquakeEvents.forEach((event) => years.add(new Date(event.rawTimestamp).getFullYear().toString()))
+    } else {
+      tabReports.forEach((incident) => incident.date && years.add(incident.date.getFullYear().toString()))
+    }
+    if (selectedYear) years.add(selectedYear)
+    return Array.from(years).sort((a, b) => Number(b) - Number(a))
+  }, [earthquakeEvents, selectedType, selectedYear, tabReports])
+
+  const monthValues = useMemo(() => {
     if (!selectedYear) return []
     const months = new Set<string>()
+    const add = (date: Date | null) => {
+      if (date && date.getFullYear().toString() === selectedYear) months.add((date.getMonth() + 1).toString().padStart(2, '0'))
+    }
+    if (selectedType === 'EQ') earthquakeEvents.forEach((event) => add(new Date(event.rawTimestamp)))
+    else tabReports.forEach((incident) => add(incident.date))
+    if (selectedMonth) months.add(selectedMonth)
+    return monthOptions.map((month) => month.value).filter((month) => months.has(month))
+  }, [earthquakeEvents, selectedMonth, selectedType, selectedYear, tabReports])
 
-    incidentReports.forEach((incident) => {
-      const date = getReportDate(incident)
-      if (date && date.getFullYear().toString() === selectedYear) {
-        months.add((date.getMonth() + 1).toString().padStart(2, '0'))
-      }
-    })
+  const typeOptions = useMemo(
+    () => sortIncidentCategoryLabels(Array.from(new Set(tabReports.map((incident) => incident.incidentTypeLabel)))),
+    [tabReports],
+  )
 
-    earthquakeEvents.forEach((event) => {
-      const date = new Date(event.rawTimestamp)
-      if (date.getFullYear().toString() === selectedYear) {
-        months.add((date.getMonth() + 1).toString().padStart(2, '0'))
-      }
-    })
+  const barangayOptions = useMemo(
+    () => Array.from(new Set(tabReports.map((incident) => incident.barangay))).sort((a, b) => a.localeCompare(b)),
+    [tabReports],
+  )
 
-    return validMonthOptions
-      .map((month) => month.value)
-      .filter((month) => months.has(month))
-  }, [incidentReports, earthquakeEvents, selectedYear])
+  const hasActiveFilters =
+    Boolean(selectedYear) || typeFilter !== 'all' || barangayFilter !== 'all' || severityFilter !== 'all'
+
+  function clearFilters(): void {
+    setSelectedYear('')
+    setSelectedMonth('')
+    setTypeFilter('all')
+    setBarangayFilter('all')
+    setSeverityFilter('all')
+  }
 
   const incidentHeatPoints = useMemo(
     () =>
@@ -675,25 +759,26 @@ export function AdminIncidentMapPanel({
     [plottableMapIncidents],
   )
 
+  // Approved records per tab, with the date filter applied.
   const incidentCounts = useMemo(
     () => ({
-      EQ:
-        filteredEarthquakeEvents.length +
-        incidentReports.filter((incident) => {
-          if (incident.code !== 'EQ' || incident.status !== 'approved') return false
-          return matchesSelectedDate(getReportDate(incident))
-        }).length,
-      FR: incidentReports.filter((incident) => {
-        if (incident.code !== 'FR' || incident.status !== 'approved') return false
-        return matchesSelectedDate(getReportDate(incident))
-      }).length,
-      AC: incidentReports.filter((incident) => {
-        if (incident.code !== 'AC' || incident.status !== 'approved') return false
-        return matchesSelectedDate(getReportDate(incident))
-      }).length,
+      EQ: filteredEarthquakeEvents.length,
+      FR: incidentReports.filter((incident) => incident.code === 'FR' && incident.status === 'approved' && matchesDate(incident.date)).length,
+      AC: incidentReports.filter((incident) => incident.code === 'AC' && incident.status === 'approved' && matchesDate(incident.date)).length,
     }),
-    [incidentReports, filteredEarthquakeEvents.length, matchesSelectedDate],
+    [filteredEarthquakeEvents.length, incidentReports, matchesDate],
   )
+
+  // Legend for the incident tabs: one entry per incident type on the map.
+  const plottedTypeLegend = useMemo(() => {
+    const counts = new Map<string, { color: string; count: number }>()
+    plottableMapIncidents.forEach((incident) => {
+      const current = counts.get(incident.incidentTypeLabel) || { color: incident.color, count: 0 }
+      current.count += 1
+      counts.set(incident.incidentTypeLabel, current)
+    })
+    return sortIncidentCategoryLabels(Array.from(counts.keys())).map((label) => ({ label, ...counts.get(label)! }))
+  }, [plottableMapIncidents])
 
   const loadEarthquakes = useCallback(async (silent = false) => {
     if (silent) {
@@ -1064,18 +1149,34 @@ export function AdminIncidentMapPanel({
       }
 
       plottableMapIncidents.forEach((incident) => {
-        const markerColor = hazardColors[incident.code]
-        const statusLabel = 'Approved / Resolved'
+        const markerColor = incident.color
 
-        const backgroundMarker = L.circleMarker(incident.coordinates, {
+        // On-going incidents pulse; resolved ones are a plain dot.
+        if (incident.operationalStatus === 'On-going') {
+          const pulseMarker = L.marker(incident.coordinates, {
+            pane: 'incident-marker-pane',
+            icon: L.divIcon({
+              className: 'ongoing-incident-pulse-marker',
+              html: `<div class="pulse-wrap"><span class="pulse-ring" style="background:${markerColor}47"></span><span class="pulse-dot" style="background:${markerColor}"></span></div>`,
+              iconSize: [38, 38],
+              iconAnchor: [19, 19],
+            }),
+            title: incident.title,
+          })
+            .addTo(overlayLayerGroup)
+            .bindPopup(buildIncidentPopupHtml(incident), { maxWidth: 320, closeButton: true })
+          markerRefs.current.set(incident.id, pulseMarker)
+          return
+        }
+
+        L.circleMarker(incident.coordinates, {
           pane: 'incident-marker-pane',
           radius: 17,
           stroke: false,
           fillColor: markerColor,
-          fillOpacity: 0.26,
+          fillOpacity: 0.22,
           interactive: false,
-        })
-        backgroundMarker.addTo(overlayLayerGroup)
+        }).addTo(overlayLayerGroup)
 
         const approvedMarker = L.circleMarker(incident.coordinates, {
           pane: 'incident-marker-pane',
@@ -1087,14 +1188,9 @@ export function AdminIncidentMapPanel({
           bubblingMouseEvents: false,
         })
           .addTo(overlayLayerGroup)
-          .bindPopup(buildIncidentPopupHtml(incident, statusLabel), {
-            maxWidth: 320,
-            closeButton: true,
-          })
+          .bindPopup(buildIncidentPopupHtml(incident), { maxWidth: 320, closeButton: true })
 
-        approvedMarker.on('click', () => {
-          approvedMarker.openPopup()
-        })
+        markerRefs.current.set(incident.id, approvedMarker)
       })
     }
 
@@ -1102,56 +1198,49 @@ export function AdminIncidentMapPanel({
       map.invalidateSize()
     }, 0)
 
-    // Add small in-map legend for admin map
-    try {
-      const legendControl = (L as any).control({ position: 'topright' })
+    // Small in-map legend: fault lines for earthquakes, incident types for the other tabs.
+    const legendItems = isEqView
+      ? mapLegendItems
+      : [
+          ...plottedTypeLegend.map((item) => ({ label: `${item.label} (${item.count})`, color: item.color })),
+          { label: 'Pulsing = on-going', color: '#64748b' },
+        ]
+
+    if (legendItems.length > 0) {
+      const legendControl = new L.Control({ position: 'topright' })
       legendControl.onAdd = function () {
-        const container = L.DomUtil.create('div', 'map-legend leaflet-bar rounded p-2 bg-white/90 shadow') as HTMLDivElement
-        container.style.fontSize = '12px'
-        container.style.lineHeight = '1.2'
-        container.style.pointerEvents = 'auto'
+        const container = L.DomUtil.create('div', 'map-legend leaflet-bar') as HTMLDivElement
+        container.style.cssText =
+          'font-size:12px;line-height:1.2;pointer-events:auto;background:rgba(255,255,255,0.92);padding:8px 10px;border-radius:10px;max-width:220px;'
 
-        mapLegendItems.forEach((item) => {
+        legendItems.forEach((item) => {
           const row = document.createElement('div')
-          row.style.display = 'flex'
-          row.style.alignItems = 'center'
-          row.style.gap = '8px'
-          row.style.marginBottom = '6px'
-
-          const sw = document.createElement('span')
-          sw.style.width = '14px'
-          sw.style.height = '14px'
-          sw.style.background = item.color
-          sw.style.display = 'inline-block'
-          sw.style.borderRadius = '3px'
-
+          row.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:5px;'
+          const swatch = document.createElement('span')
+          swatch.style.cssText = `width:12px;height:12px;flex-shrink:0;border-radius:999px;display:inline-block;background:${item.color};`
           const label = document.createElement('span')
           label.textContent = item.label
-          label.style.color = 'inherit'
-
-          row.appendChild(sw)
+          row.appendChild(swatch)
           row.appendChild(label)
           container.appendChild(row)
         })
 
         return container
       }
-
       legendControl.addTo(map)
-    } catch (e) {
-      // eslint-disable-next-line no-console
-      console.warn('Failed to add admin map legend control', e)
     }
 
     mapInstanceRef.current = map
     previousSelectedTypeRef.current = selectedType
 
     return () => {
+      markerRefs.current.clear()
       map.remove()
       mapInstanceRef.current = null
     }
   }, [
     plottableMapIncidents,
+    plottedTypeLegend,
     incidentHeatPoints,
     showIncidentHeatmap,
     selectedType,
@@ -1161,30 +1250,24 @@ export function AdminIncidentMapPanel({
     showFaultLines,
     faultLines,
     barangayLayer,
-    selectedYear,
-    selectedMonth,
   ])
 
+  // Fly to an incident picked from the "On map" list and open its popup.
+  useEffect(() => {
+    if (!focusRequest) return
+    const map = mapInstanceRef.current
+    const incident = plottableMapIncidents.find((item) => item.id === focusRequest.id)
+    const marker = markerRefs.current.get(focusRequest.id)
+    if (!map || !incident || !marker) return
+    map.setView(incident.coordinates, Math.max(map.getZoom(), 16))
+    const timer = window.setTimeout(() => marker.openPopup(), 250)
+    return () => window.clearTimeout(timer)
+  }, [focusRequest, plottableMapIncidents])
+
   function showApprovalCelebration(incident: MapIncident): void {
-    confetti({
-      particleCount: 160,
-      spread: 90,
-      origin: { y: 0.62 },
-    })
-
-    confetti({
-      particleCount: 90,
-      angle: 60,
-      spread: 70,
-      origin: { x: 0, y: 0.7 },
-    })
-
-    confetti({
-      particleCount: 90,
-      angle: 120,
-      spread: 70,
-      origin: { x: 1, y: 0.7 },
-    })
+    confetti({ particleCount: 160, spread: 90, origin: { y: 0.62 } })
+    confetti({ particleCount: 90, angle: 60, spread: 70, origin: { x: 0, y: 0.7 } })
+    confetti({ particleCount: 90, angle: 120, spread: 70, origin: { x: 1, y: 0.7 } })
 
     setApprovalSuccess({
       open: true,
@@ -1196,83 +1279,45 @@ export function AdminIncidentMapPanel({
 
   function handleViewIncident(incident: MapIncident): void {
     setViewedReportIds(saveViewedReportId(incident.id))
+    setActionError('')
     setSelectedIncident({ ...incident, isNew: false })
   }
 
-  function handleMapTypeSelect(filter: IncidentMapFilter): void {
-    onSelectType(filter)
+  function replaceRawReport(updated: IncidentReport): void {
+    setRawReports((current) => current.map((report) => (report.id === updated.id ? { ...report, ...updated } : report)))
   }
 
-  async function handleSetReviewStatus(incident: MapIncident, status: ReportReviewStatus): Promise<void> {
+  async function handleApprove(incident: MapIncident): Promise<void> {
+    setApprovingId(incident.id)
+    setActionError('')
     try {
-      const backendStatus = status === 'approved' ? 'Approved' : 'Pending'
-      const updatedReport = await updateIncidentReportStatus(incident.id, backendStatus)
+      const updatedReport = await updateIncidentReportStatus(incident.id, 'Approved')
+      replaceRawReport({ ...incident.rawReport, ...(updatedReport || {}), status: updatedReport?.status || 'Approved' })
 
-      // Do not depend only on the backend response here. Some APIs return a
-      // partial object after updating status, which can make the approved
-      // accident disappear from the map because the mapper loses its original
-      // coordinates/type. Keep the current incident data, then force the new
-      // review/operation status locally. The next refresh will sync it again
-      // from the backend.
-      const responseMapped = updatedReport?.id ? applySavedEdit(mapReportToIncident(updatedReport)) : incident
-      const mapped: MapIncident = {
-        ...incident,
-        ...responseMapped,
-        id: incident.id,
-        code: incident.code,
-        coordinates: responseMapped.coordinates || incident.coordinates,
-        status,
-        operationalStatus: status === 'approved' ? 'Resolved' : 'On-going',
-        rawReport: {
-          ...incident.rawReport,
-          ...(updatedReport || {}),
-          status: backendStatus,
-        },
-      }
+      setSelectedIncident(null)
+      setEditingIncident(null)
+      setEditForm(null)
+      showApprovalCelebration(incident)
+      onIncidentReportApproved?.()
 
-      setIncidentReports((current) =>
-        current.map((item) => (item.id === incident.id ? mapped : item)),
-      )
-
-      if (status === 'approved' && selectedType !== incident.code) {
-        onSelectType(incident.code)
-      }
-
-      if (selectedIncident?.id === incident.id) {
-        setSelectedIncident(mapped)
-      }
-
-      if (editingIncident?.id === incident.id) {
-        setEditingIncident(mapped)
-      }
-
-      if (status === 'approved') {
-        setSelectedIncident(null)
-        setEditingIncident(null)
-        setEditForm(null)
-        showApprovalCelebration(mapped)
-      }
-
-      if (status === 'approved') {
-        onIncidentReportApproved?.()
-      }
+      if (selectedType !== incident.code) onSelectType(incident.code)
 
       window.setTimeout(() => {
         void loadIncidentReports()
       }, 300)
     } catch (error) {
-      console.error('[AdminIncidentMapPanel] Failed to update report status:', error)
-      alert('Failed to update report status.')
+      console.error('[AdminIncidentMapPanel] Failed to approve report:', error)
+      setActionError(getServerErrorMessage(error, 'Failed to approve the report. Please try again.'))
+    } finally {
+      setApprovingId('')
     }
   }
 
   function handleEditIncident(incident: MapIncident): void {
     setEditingIncident(incident)
+    setEditError('')
     setEditForm({
-      incidentTypeLabel: incident.incidentTypeLabel,
       location: incident.location,
-      severity: incident.severity,
-      operationalStatus: incident.operationalStatus,
       responseTeam: incident.responseTeam,
       description: incident.description,
       latitude: String(incident.coordinates[0]),
@@ -1280,216 +1325,235 @@ export function AdminIncidentMapPanel({
     })
   }
 
-  function handleSaveEdit(): void {
+  async function handleSaveEdit(): Promise<void> {
     if (!editingIncident || !editForm) return
 
-    const lat = Number(editForm.latitude)
-    const lng = Number(editForm.longitude)
-    const coordinates: [number, number] =
-      Number.isFinite(lat) && Number.isFinite(lng) ? [lat, lng] : editingIncident.coordinates
-
-    const updatedIncident: MapIncident = {
-      ...editingIncident,
-      incidentTypeLabel: editForm.incidentTypeLabel,
-      title: `${editForm.incidentTypeLabel} - ${getReportCode(editingIncident.rawReport)}`,
-      location: editForm.location,
-      severity: editForm.severity,
-      operationalStatus: editForm.operationalStatus,
-      responseTeam: editForm.responseTeam,
-      description: editForm.description,
-      coordinates,
+    const latitude = Number(editForm.latitude)
+    const longitude = Number(editForm.longitude)
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+      setEditError('Latitude and longitude must be numbers.')
+      return
+    }
+    if (!editForm.location.trim() || !editForm.description.trim() || !editForm.responseTeam.trim()) {
+      setEditError('Location, response team and description are required.')
+      return
     }
 
-    saveEditedIncident(editingIncident.id, {
-      incidentTypeLabel: updatedIncident.incidentTypeLabel,
-      title: updatedIncident.title,
-      location: updatedIncident.location,
-      severity: updatedIncident.severity,
-      operationalStatus: updatedIncident.operationalStatus,
-      responseTeam: updatedIncident.responseTeam,
-      description: updatedIncident.description,
-      coordinates: updatedIncident.coordinates,
-    })
-
-    setIncidentReports((current) =>
-      current.map((item) => (item.id === editingIncident.id ? updatedIncident : item)),
-    )
-
-    setSelectedIncident(updatedIncident)
-    setEditingIncident(null)
-    setEditForm(null)
+    setEditSaving(true)
+    setEditError('')
+    try {
+      const updated = await updateIncidentReportFields(editingIncident.id, {
+        location: editForm.location.trim(),
+        description: editForm.description.trim(),
+        responderTeam: editForm.responseTeam.trim(),
+        latitude,
+        longitude,
+      })
+      const merged = { ...editingIncident.rawReport, ...updated }
+      replaceRawReport(merged)
+      setSelectedIncident(mapReportToIncident(merged, linkedIncidents.get(String(merged.id))))
+      setEditingIncident(null)
+      setEditForm(null)
+    } catch (error) {
+      console.error('[AdminIncidentMapPanel] Failed to save report details:', error)
+      setEditError(getServerErrorMessage(error, 'Failed to save the changes. Please try again.'))
+    } finally {
+      setEditSaving(false)
+    }
   }
 
   return (
     <section className="px-4 py-5 sm:px-6 sm:py-8">
       <div className="grid gap-5 xl:grid-cols-[minmax(0,2fr)_minmax(320px,0.9fr)] xl:items-start">
         <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_12px_32px_rgba(15,23,42,0.08)] md:flex md:h-[calc(100vh-13rem)] md:flex-col">
-          <div className="flex flex-col gap-4 border-b border-slate-200 bg-[linear-gradient(90deg,#e8f1fd_0%,#f6fbff_100%)] px-4 py-4 sm:px-5 sm:py-4 lg:flex-row lg:items-start lg:justify-between">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                {selectedType === 'EQ' ? 'Seismic Mapping — Philippines' : 'Approved Report Mapping'}
-              </p>
+          <div className="flex flex-col gap-4 border-b border-slate-200 bg-[linear-gradient(90deg,#e8f1fd_0%,#f6fbff_100%)] px-4 py-4 sm:px-5">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                  {selectedType === 'EQ' ? 'Seismic Mapping — Philippines' : 'Approved Report Mapping'}
+                </p>
+                <h2 className="mt-1 text-xl font-bold text-slate-900 sm:text-2xl">Lucena Incident Map</h2>
+                <p className="mt-1 text-xs text-slate-500">
+                  {selectedType === 'EQ'
+                    ? 'Live earthquake events with heatmap and PHIVOLCS fault lines.'
+                    : 'Only approved reports are plotted. Pending reports stay in the review list until approved.'}
+                </p>
+              </div>
 
-              <h2 className="mt-1 text-xl font-bold text-slate-900 sm:text-2xl">
-                Lucena Incident Map
-              </h2>
-
-              <p className="mt-1 text-xs text-slate-500">
-                Only approved reports are plotted on the map. Submitted, pending, and on-going reports stay in the review list only.
-              </p>
+              <div className="flex flex-wrap gap-2 lg:justify-end" role="tablist" aria-label="Map type">
+                {hazardTabOrder.map((typeCode) => {
+                  const active = selectedType === typeCode
+                  return (
+                    <button
+                      aria-selected={active}
+                      className={`flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
+                        active ? 'text-white shadow-[0_8px_18px_rgba(15,23,42,0.16)]' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
+                      }`}
+                      key={typeCode}
+                      onClick={() => onSelectType(typeCode)}
+                      role="tab"
+                      style={active ? { backgroundColor: hazardTypeMeta[typeCode].color, borderColor: hazardTypeMeta[typeCode].color } : undefined}
+                      title={hazardTypeMeta[typeCode].description}
+                      type="button"
+                    >
+                      {hazardTypeMeta[typeCode].label}
+                      {typeCode !== 'EQ' || earthquakeEvents.length > 0 ? (
+                        <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${active ? 'bg-white/25' : 'bg-slate-100 text-slate-600'}`}>
+                          {incidentCounts[typeCode]}
+                        </span>
+                      ) : null}
+                    </button>
+                  )
+                })}
+              </div>
             </div>
 
-            <div className="flex w-full flex-col gap-2 lg:w-auto lg:min-w-[360px] lg:items-end">
-              <div className="flex flex-wrap gap-2 lg:justify-end">
-                {(Object.keys(hazardTypeMeta) as HazardType[]).map((typeCode) => (
-                  <button
-                    className={`rounded-full border px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.12em] transition ${
-                      selectedType === typeCode
-                        ? 'text-slate-950 shadow-[0_8px_18px_rgba(15,23,42,0.12)]'
-                        : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
-                    }`}
-                    key={typeCode}
-                    onClick={() => handleMapTypeSelect(typeCode)}
-                    style={{
-                      backgroundColor: selectedType === typeCode ? hazardTypeMeta[typeCode].color : undefined,
-                      borderColor: selectedType === typeCode ? hazardTypeMeta[typeCode].color : undefined,
-                    }}
-                    type="button"
-                  >
-                    {hazardTypeMeta[typeCode].label}
-                  </button>
-                ))}
-              </div>
+            <div className="flex flex-wrap items-end gap-2">
+              <label className="flex flex-col gap-1">
+                <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">Year</span>
+                <select
+                  aria-label="Year"
+                  className={filterSelectClass}
+                  onChange={(event) => {
+                    setSelectedYear(event.target.value)
+                    setSelectedMonth('')
+                  }}
+                  value={selectedYear}
+                >
+                  <option value="">All years</option>
+                  {yearOptions.map((year) => (
+                    <option key={year} value={year}>{year}</option>
+                  ))}
+                </select>
+              </label>
 
-              <div className="flex flex-wrap items-center gap-2 lg:justify-end">
-                <div className="flex items-center gap-2 rounded-xl border border-slate-600 bg-slate-800/80 px-2.5 py-1.5">
-                  <span className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Year</span>
-                  <select
-                    value={selectedYear}
-                    onChange={(event) => {
-                      setSelectedYear(event.target.value)
-                      setSelectedMonth('')
-                    }}
-                    className="border-0 bg-slate-900 text-[11px] font-semibold text-slate-100 outline-none"
-                  >
-                    <option value="">All</option>
-                    {validYearOptions.map((year) => (
-                      <option key={year} value={year}>{year}</option>
+              <label className="flex flex-col gap-1">
+                <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">Month</span>
+                <select
+                  aria-label="Month"
+                  className={`${filterSelectClass} disabled:cursor-not-allowed disabled:opacity-50`}
+                  disabled={!selectedYear}
+                  onChange={(event) => setSelectedMonth(event.target.value)}
+                  title={selectedYear ? undefined : 'Choose a year first'}
+                  value={selectedMonth}
+                >
+                  <option value="">All months</option>
+                  {monthOptions
+                    .filter((month) => monthValues.includes(month.value))
+                    .map((month) => (
+                      <option key={month.value} value={month.value}>{month.label}</option>
                     ))}
-                  </select>
-                </div>
+                </select>
+              </label>
 
-                {selectedYear ? (
-                  <div className="flex items-center gap-2 rounded-xl border border-slate-600 bg-slate-800/80 px-2.5 py-1.5">
-                    <span className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Month</span>
-                    <select
-                      value={selectedMonth}
-                      onChange={(event) => setSelectedMonth(event.target.value)}
-                      className="border-0 bg-slate-900 text-[11px] font-semibold text-slate-100 outline-none"
-                    >
-                      <option value="">All</option>
-                      {validMonthOptions
-                        .filter((monthOption) => mapMonths.includes(monthOption.value))
-                        .map((monthOption) => (
-                          <option key={monthOption.value} value={monthOption.value}>
-                            {monthOption.label}
-                          </option>
+              {selectedType !== 'EQ' ? (
+                <>
+                  {selectedType === 'AC' ? (
+                    <label className="flex flex-col gap-1">
+                      <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">Incident type</span>
+                      <select aria-label="Incident type" className={filterSelectClass} onChange={(event) => setTypeFilter(event.target.value)} value={typeFilter}>
+                        <option value="all">All types</option>
+                        {typeOptions.map((type) => (
+                          <option key={type} value={type}>{type}</option>
                         ))}
+                      </select>
+                    </label>
+                  ) : null}
+
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">Barangay</span>
+                    <select aria-label="Barangay" className={filterSelectClass} onChange={(event) => setBarangayFilter(event.target.value)} value={barangayFilter}>
+                      <option value="all">All barangays</option>
+                      {barangayOptions.map((barangay) => (
+                        <option key={barangay} value={barangay}>{barangay}</option>
+                      ))}
                     </select>
-                  </div>
-                ) : null}
+                  </label>
 
-                {(selectedYear || selectedMonth) && (
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">Severity</span>
+                    <select aria-label="Severity" className={filterSelectClass} onChange={(event) => setSeverityFilter(event.target.value)} value={severityFilter}>
+                      <option value="all">All severity</option>
+                      {(['Critical', 'High', 'Moderate', 'Low'] as const).map((severity) => (
+                        <option key={severity} value={severity}>{severity}</option>
+                      ))}
+                    </select>
+                  </label>
+                </>
+              ) : null}
+
+              {hasActiveFilters ? (
+                <button
+                  className="h-9 rounded-xl border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+                  onClick={clearFilters}
+                  type="button"
+                >
+                  Clear filters
+                </button>
+              ) : null}
+
+              <div className="ml-auto flex flex-wrap items-center gap-2">
+                <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">Layers</span>
+                {selectedType === 'EQ' ? (
+                  <>
+                    <button
+                      aria-pressed={showHeatmap}
+                      className={`rounded-full border px-3 py-1 text-[11px] font-semibold transition ${showHeatmap ? 'border-emerald-500 bg-emerald-500 text-white' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'}`}
+                      onClick={() => setShowHeatmap((value) => !value)}
+                      type="button"
+                    >
+                      Heatmap
+                    </button>
+                    <button
+                      aria-pressed={showFaultLines}
+                      className={`rounded-full border px-3 py-1 text-[11px] font-semibold transition ${showFaultLines ? 'border-rose-500 bg-rose-500 text-white' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'}`}
+                      onClick={() => setShowFaultLines((value) => !value)}
+                      type="button"
+                    >
+                      Fault Lines
+                    </button>
+                  </>
+                ) : (
                   <button
-                    type="button"
-                    onClick={() => {
-                      setSelectedYear('')
-                      setSelectedMonth('')
-                    }}
-                    className="rounded-xl border border-slate-600 bg-slate-800/80 px-2.5 py-1.5 text-[11px] font-semibold text-slate-100 transition hover:bg-slate-700"
-                  >
-                    Reset
-                  </button>
-                )}
-              </div>
-
-              {selectedType === 'EQ' ? (
-                <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-200 bg-white/75 px-3 py-2 backdrop-blur lg:justify-end">
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
-                    Layers
-                  </span>
-
-                  <button
-                    className={`rounded-full border px-3 py-1 text-[11px] font-semibold transition ${
-                      showHeatmap
-                        ? 'border-emerald-500 bg-emerald-500 text-white'
-                        : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
-                    }`}
-                    onClick={() => setShowHeatmap((value) => !value)}
-                    type="button"
-                  >
-                    Heatmap
-                  </button>
-
-                  <button
-                    className={`rounded-full border px-3 py-1 text-[11px] font-semibold transition ${
-                      showFaultLines
-                        ? 'border-rose-500 bg-rose-500 text-white'
-                        : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
-                    }`}
-                    onClick={() => setShowFaultLines((value) => !value)}
-                    type="button"
-                  >
-                    Fault Lines
-                  </button>
-                </div>
-              ) : (
-                <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-200 bg-white/75 px-3 py-2 backdrop-blur lg:justify-end">
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
-                    Layers
-                  </span>
-
-                  <button
-                    className={`rounded-full border px-3 py-1 text-[11px] font-semibold transition ${
-                      showIncidentHeatmap
-                        ? 'border-emerald-500 bg-emerald-500 text-white'
-                        : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
-                    }`}
+                    aria-pressed={showIncidentHeatmap}
+                    className={`rounded-full border px-3 py-1 text-[11px] font-semibold transition ${showIncidentHeatmap ? 'border-emerald-500 bg-emerald-500 text-white' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'}`}
                     onClick={() => setShowIncidentHeatmap((value) => !value)}
                     type="button"
                   >
                     Heatmap
                   </button>
-                </div>
-              )}
+                )}
+              </div>
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3 border-b border-slate-200 px-4 py-3 text-xs text-slate-600 sm:px-5">
-            {(Object.keys(hazardTypeMeta) as HazardType[]).map((typeCode) => (
-              <div className="flex items-center gap-2" key={typeCode}>
-                <span
-                  className="inline-block h-2.5 w-2.5 rounded-full"
-                  style={{ backgroundColor: hazardTypeMeta[typeCode].color }}
-                />
-
-                <span className="font-semibold text-slate-700">{hazardTypeMeta[typeCode].label}</span>
-
-                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600">
-                  {incidentCounts[typeCode]}
-                </span>
-              </div>
-            ))}
-
-            {reportsLoading ? (
-              <span className="ml-auto text-[11px] font-semibold text-blue-600">
-                Loading responder reports...
-              </span>
+          <div className="flex flex-wrap items-center gap-3 border-b border-slate-200 px-4 py-2.5 text-xs text-slate-600 sm:px-5">
+            {selectedType === 'EQ' ? (
+              <span className="font-semibold text-slate-700">{filteredEarthquakeEvents.length} earthquake events in view</span>
+            ) : plottedTypeLegend.length > 0 ? (
+              plottedTypeLegend.map((item) => (
+                <button
+                  className={`flex items-center gap-1.5 rounded-full px-2 py-0.5 transition hover:bg-slate-100 ${typeFilter === item.label ? 'bg-slate-100' : ''}`}
+                  disabled={selectedType !== 'AC'}
+                  key={item.label}
+                  onClick={() => setTypeFilter((current) => (current === item.label ? 'all' : item.label))}
+                  title={selectedType === 'AC' ? 'Show only this type' : undefined}
+                  type="button"
+                >
+                  <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.color }} />
+                  <span className="font-semibold text-slate-700">{item.label}</span>
+                  <span className="text-[11px] text-slate-500">{item.count}</span>
+                </button>
+              ))
             ) : (
-              <span className="ml-auto text-[11px] font-semibold text-emerald-700">
-                {plottableMapIncidents.length} plotted on map
-              </span>
+              <span className="text-slate-500">No approved reports match these filters.</span>
             )}
+
+            {reportsLoading && rawReports.length === 0 ? (
+              <span className="ml-auto text-[11px] font-semibold text-blue-600">Loading responder reports...</span>
+            ) : selectedType !== 'EQ' ? (
+              <span className="ml-auto text-[11px] font-semibold text-emerald-700">{plottableMapIncidents.length} plotted on map</span>
+            ) : null}
           </div>
 
           <div className="h-[520px] w-full sm:h-[640px] md:h-auto md:flex-1" ref={mapContainerRef} />
@@ -1618,162 +1682,141 @@ export function AdminIncidentMapPanel({
           ) : (
             <div className="flex h-full min-h-0 flex-col">
               <div className="border-b border-slate-200 pb-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                  Responder Reports
-                </p>
-
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Responder Reports</p>
                 <h2 className="mt-1 text-xl font-bold text-slate-900 sm:text-2xl">
-                  {selectedType === 'FR' ? 'Fire Incident Reports' : 'Accident Incident Reports'}
+                  {selectedType === 'FR' ? 'Fire Incident Reports' : 'Accident & Other Incident Reports'}
                 </h2>
-
-                <p className="mt-2 text-sm leading-relaxed text-slate-600">
-                  {selectedType === 'FR'
-                    ? 'Fire reports stay here for review until approved. Only approved fire reports are plotted on the map as resolved records.'
-                    : 'Accident-related reports stay here for review until approved. Only approved reports are plotted on the map.'}
+                <p className="mt-1 text-xs leading-relaxed text-slate-500">
+                  {hazardTypeMeta[selectedType].description}. The filters on the map apply to both lists.
                 </p>
 
-                {selectedType === 'AC' ? (
-                  <div className="mt-5 rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-4 shadow-sm">
-                    <div className="flex flex-col gap-3">
-                      <div className="flex items-center justify-between gap-3">
-                        <div>
-                          <label
-                            className="block text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500"
-                            htmlFor="accident-hazard-filter"
-                          >
-                            Filter by Hazard Type
-                          </label>
-                          <p className="mt-1 text-xs text-slate-500">
-                            Select a specific responder report category.
-                          </p>
-                        </div>
+                <div className="mt-4 grid grid-cols-2 gap-1 rounded-2xl bg-slate-100 p-1" role="tablist" aria-label="Report list">
+                  {([
+                    ['review', 'For review', reviewIncidents.length],
+                    ['map', 'On map', onMapListIncidents.length],
+                  ] as const).map(([tab, label, count]) => (
+                    <button
+                      aria-selected={sideTab === tab}
+                      className={`rounded-xl px-3 py-2 text-xs font-bold transition ${sideTab === tab ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                      key={tab}
+                      onClick={() => setSideTab(tab)}
+                      role="tab"
+                      type="button"
+                    >
+                      {label} <span className="ml-1 rounded-full bg-slate-200 px-1.5 py-0.5 text-[10px] text-slate-700">{count}</span>
+                    </button>
+                  ))}
+                </div>
 
-                        {accidentTypeFilter !== 'all' ? (
-                          <button
-                            className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-bold text-slate-600 transition hover:bg-slate-100"
-                            onClick={() => setAccidentTypeFilter('all')}
-                            type="button"
-                          >
-                            Clear
-                          </button>
-                        ) : null}
-                      </div>
-
-                      <div className="relative">
-                        <select
-                          className="block h-12 w-full appearance-none rounded-xl border border-slate-300 bg-white px-4 pr-11 text-sm font-semibold text-slate-800 shadow-sm outline-none transition hover:border-amber-300 focus:border-amber-500 focus:ring-4 focus:ring-amber-100"
-                          id="accident-hazard-filter"
-                          onChange={(event) => setAccidentTypeFilter(event.target.value)}
-                          value={accidentTypeFilter}
-                        >
-                          <option value="all">All accident-related hazards</option>
-                          {accidentTypeOptions.map((type) => (
-                            <option key={type} value={type}>
-                              {type}
-                            </option>
-                          ))}
-                        </select>
-
-                        <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-slate-400">
-                          ▾
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                ) : null}
+                <input
+                  aria-label="Search reports"
+                  className="mt-3 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                  onChange={(event) => setListSearch(event.target.value)}
+                  placeholder="Search code, location, team..."
+                  type="search"
+                  value={listSearch}
+                />
               </div>
 
               {reportsError ? (
-                <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700">
-                  {reportsError}
+                <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 p-3 text-sm font-semibold text-red-700">
+                  {reportsError}{' '}
+                  <button className="underline" onClick={() => void loadIncidentReports()} type="button">Retry</button>
                 </div>
               ) : null}
 
               <div className="mt-4 min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
-                {filteredIncidents.length > 0 ? (
-                  filteredIncidents.map((incident) => (
-                    <article
-                      className="rounded-2xl border border-slate-200 bg-[#fbfdff] p-4 shadow-[0_8px_20px_rgba(15,23,42,0.05)]"
-                      key={incident.id}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span
-                              className="inline-flex rounded-md px-1.5 py-0.5 text-[10px] font-black text-slate-900"
-                              style={{ backgroundColor: hazardColors[incident.code] }}
-                            >
-                              {incident.code}
-                            </span>
-
-                            <p className="truncate text-sm font-bold text-slate-900">
-                              {incident.title}
-                            </p>
-                          </div>
-
-                          <p className="mt-2 text-xs text-slate-500">{incident.location}</p>
-                          <p className="mt-1 text-xs text-slate-500">{incident.time}</p>
-                          <p className="mt-1 text-xs text-slate-500">
-                            Hazard Type: <span className="font-semibold">{incident.incidentTypeLabel}</span>
-                          </p>
-                          <p className="mt-1 text-xs text-slate-500">
-                            Team: <span className="font-semibold">{incident.responseTeam}</span>
-                          </p>
-                          <p className="mt-1 text-xs text-slate-500">
-                            Severity: <span className="font-semibold">{incident.severity}</span>
-                          </p>
-                          <p className="mt-1 text-xs text-slate-500">
-                            Operation Status: <span className="font-semibold">{incident.operationalStatus}</span>
-                          </p>
-                        </div>
-
+                {(sideTab === 'review' ? reviewIncidents : onMapListIncidents).map((incident) => (
+                  <article
+                    className="rounded-2xl border border-slate-200 bg-[#fbfdff] p-4 shadow-[0_8px_20px_rgba(15,23,42,0.05)]"
+                    key={incident.id}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
                         <span
-                          className={`rounded-full px-2 py-1 text-[10px] font-bold uppercase ${reviewStatusClass[incident.status]}`}
+                          className="inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold text-white"
+                          style={{ backgroundColor: incident.color }}
                         >
-                          {incident.status}
+                          {incident.incidentTypeLabel}
                         </span>
+                        <p className="mt-1.5 truncate text-sm font-bold text-slate-900">{incident.title}</p>
+                      </div>
 
+                      <div className="flex shrink-0 flex-col items-end gap-1">
+                        <span className={`rounded-full px-2 py-1 text-[10px] font-bold uppercase ${operationalStatusClass[incident.operationalStatus]}`}>
+                          {incident.operationalStatus}
+                        </span>
                         {incident.isNew && !viewedReportIds.includes(incident.id) ? (
-                          <span className="animate-pulse rounded-full bg-red-500 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-white shadow-sm">
+                          <span className="animate-pulse rounded-full bg-red-500 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-white">
                             New
                           </span>
                         ) : null}
                       </div>
+                    </div>
 
-                      <p className="mt-3 line-clamp-2 text-xs leading-relaxed text-slate-600">
-                        {incident.description}
-                      </p>
+                    <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-xs text-slate-500">
+                      <dt>Barangay</dt>
+                      <dd className="truncate font-semibold text-slate-700">{incident.barangay}</dd>
+                      <dt>Date</dt>
+                      <dd className="font-semibold text-slate-700">
+                        {incident.date ? incident.date.toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' }) : '-'} · {incident.time}
+                      </dd>
+                      <dt>Severity</dt>
+                      <dd className="font-semibold text-slate-700">{incident.severity}</dd>
+                      <dt>Team</dt>
+                      <dd className="truncate font-semibold text-slate-700">{incident.responseTeam}</dd>
+                    </dl>
 
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    <button
-                      className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700 hover:bg-blue-100"
-                      onClick={() => handleViewIncident(incident)}
-                      type="button"
-                    >
-                      View Details
-                    </button>
+                    <p className="mt-2 line-clamp-2 text-xs leading-relaxed text-slate-600">{incident.description}</p>
 
-                    <button
-                      className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                      onClick={() => handleEditIncident(incident)}
-                      type="button"
-                    >
-                      Edit Details
-                    </button>
-                  </div>
-                    </article>
-                  ))
-                ) : (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button
+                        className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-100"
+                        onClick={() => handleViewIncident(incident)}
+                        type="button"
+                      >
+                        View Details
+                      </button>
+
+                      {incident.status === 'pending' ? (
+                        <button
+                          className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                          onClick={() => handleEditIncident(incident)}
+                          type="button"
+                        >
+                          Edit Details
+                        </button>
+                      ) : (
+                        <button
+                          className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
+                          onClick={() => setFocusRequest({ id: incident.id, at: Date.now() })}
+                          type="button"
+                        >
+                          Show on map
+                        </button>
+                      )}
+                    </div>
+                  </article>
+                ))}
+
+                {(sideTab === 'review' ? reviewIncidents : onMapListIncidents).length === 0 ? (
                   <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-5 text-center">
                     <p className="text-sm font-semibold text-slate-700">
-                      No responder reports yet.
+                      {reportsLoading && rawReports.length === 0
+                        ? 'Loading reports...'
+                        : sideTab === 'review'
+                          ? 'No reports waiting for review.'
+                          : 'No approved reports on the map.'}
                     </p>
-
                     <p className="mt-1 text-xs text-slate-500">
-                      Once responders submit {selectedType === 'FR' ? 'fire' : 'accident'} reports, all records for this tab will appear here.
+                      {hasActiveFilters || listSearch
+                        ? 'Try clearing the filters or the search.'
+                        : sideTab === 'review'
+                          ? 'New responder reports for this tab will appear here.'
+                          : 'Approve a report to plot it on the map.'}
                     </p>
                   </div>
-                )}
+                ) : null}
               </div>
             </div>
           )}
@@ -1831,16 +1874,20 @@ export function AdminIncidentMapPanel({
           onClick={() => setSelectedIncident(null)}
         >
           <div className="mx-auto my-6 w-full max-w-3xl sm:my-8" onClick={(event) => event.stopPropagation()}>
-            <section className="flex max-h-[88vh] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_20px_40px_rgba(15,23,42,0.22)]">
+            <section
+              aria-label="Report details"
+              className="flex max-h-[88vh] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_20px_40px_rgba(15,23,42,0.22)]"
+              role="dialog"
+            >
               <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-200 px-5 py-4 sm:px-6">
                 <div>
-                  <p className="text-xs font-bold uppercase tracking-[0.15em] text-slate-500">
-                    Responder Incident Report
-                  </p>
-
-                  <h3 className="mt-1 text-xl font-black text-slate-900 sm:text-2xl">
-                    {selectedIncident.title}
-                  </h3>
+                  <span
+                    className="inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold text-white"
+                    style={{ backgroundColor: selectedIncident.color }}
+                  >
+                    {selectedIncident.incidentTypeLabel}
+                  </span>
+                  <h3 className="mt-1 text-xl font-black text-slate-900 sm:text-2xl">{selectedIncident.title}</h3>
                 </div>
 
                 <button
@@ -1853,104 +1900,106 @@ export function AdminIncidentMapPanel({
               </div>
 
               <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4 sm:px-6">
-                <p className="text-sm leading-relaxed text-slate-600 sm:text-base">
-                  {selectedIncident.description}
-                </p>
+                <p className="text-sm leading-relaxed text-slate-600 sm:text-base">{selectedIncident.description}</p>
 
                 <div className="mt-4 grid gap-2 text-sm sm:grid-cols-2">
+                  {([
+                    ['Barangay', selectedIncident.barangay],
+                    ['Location', selectedIncident.location],
+                    ['Date', `${selectedIncident.date ? selectedIncident.date.toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' }) : '-'} · ${selectedIncident.time}`],
+                    ['Severity', selectedIncident.severity],
+                    ['Response Team', selectedIncident.responseTeam],
+                    ['Operation Status', selectedIncident.operationalStatus],
+                    ['Coordinates', `${selectedIncident.coordinates[0].toFixed(5)}, ${selectedIncident.coordinates[1].toFixed(5)}`],
+                  ] as const).map(([label, value]) => (
+                    <p className="text-slate-600" key={label}>
+                      <span className="font-semibold text-slate-800">{label}:</span> {value}
+                    </p>
+                  ))}
                   <p className="text-slate-600">
-                    <span className="font-semibold text-slate-800">Location:</span> {selectedIncident.location}
-                  </p>
-
-                  <p className="text-slate-600">
-                    <span className="font-semibold text-slate-800">Time:</span> {selectedIncident.time}
-                  </p>
-
-                  <p className="text-slate-600">
-                    <span className="font-semibold text-slate-800">Severity:</span> {selectedIncident.severity}
-                  </p>
-
-                  <p className="text-slate-600">
-                    <span className="font-semibold text-slate-800">Operation Status:</span> {selectedIncident.operationalStatus}
-                  </p>
-
-                  <p className="text-slate-600">
-                    <span className="font-semibold text-slate-800">Response Team:</span>{' '}
-                    {selectedIncident.responseTeam}
-                  </p>
-
-                  <p className="text-slate-600">
-                    <span className="font-semibold text-slate-800">Type:</span>{' '}
-                    {selectedIncident.incidentTypeLabel}
-                  </p>
-
-                  <p className="text-slate-600">
-                    <span className="font-semibold text-slate-800">Status:</span>{' '}
-                    <span
-                      className={`rounded-full px-2 py-1 text-[10px] font-bold uppercase ${
-                        reviewStatusClass[selectedIncident.status]
-                      }`}
-                    >
-                      {selectedIncident.status}
+                    <span className="font-semibold text-slate-800">Review:</span>{' '}
+                    <span className={`rounded-full px-2 py-1 text-[10px] font-bold uppercase ${reviewStatusClass[selectedIncident.status]}`}>
+                      {selectedIncident.status === 'approved' ? 'Approved' : 'Pending'}
                     </span>
-                  </p>
-
-                  <p className="text-slate-600">
-                    <span className="font-semibold text-slate-800">Coordinates:</span>{' '}
-                    {selectedIncident.coordinates[0].toFixed(5)}, {selectedIncident.coordinates[1].toFixed(5)}
                   </p>
                 </div>
 
+                {getDetailRows(selectedIncident.rawReport).length > 0 ? (
+                  <div className="mt-5 border-t border-slate-200 pt-4">
+                    <p className="text-sm font-bold text-slate-900">{selectedIncident.incidentTypeLabel} details</p>
+                    <dl className="mt-2 grid gap-x-4 gap-y-1.5 text-sm sm:grid-cols-2">
+                      {getDetailRows(selectedIncident.rawReport).map(([label, value]) => (
+                        <div className="flex gap-2" key={label}>
+                          <dt className="font-semibold text-slate-800">{label}:</dt>
+                          <dd className="text-slate-600">{value}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                  </div>
+                ) : null}
+
                 {selectedIncident.victims && selectedIncident.victims.length > 0 ? (
                   <div className="mt-5 border-t border-slate-200 pt-4">
-                    <p className="text-sm font-bold text-slate-900">Victims</p>
-
-                    <div className="mt-2 space-y-2">
+                    <p className="text-sm font-bold text-slate-900">Victims ({selectedIncident.victims.length})</p>
+                    <div className="mt-2 grid gap-2 sm:grid-cols-2">
                       {selectedIncident.victims.map((victim, index) => (
-                        <div
-                          className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600"
-                          key={victim.id || index}
-                        >
-                          <p className="font-semibold text-slate-800">
-                            Victim {index + 1}: {victim.name}
-                          </p>
-                          <p>Age: {victim.age}</p>
-                          <p>Gender: {victim.gender || 'N/A'}</p>
+                        <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600" key={victim.id || index}>
+                          <p className="font-semibold text-slate-800">Victim {index + 1}: {victim.name}</p>
+                          <p>Age: {victim.age} · Gender: {victim.gender || 'N/A'}</p>
                           <p>Address: {victim.address}</p>
                           <p>Condition: {victim.condition}</p>
+                          {getVictimDetailRows(selectedIncident.rawReport, index).map(([label, value]) => (
+                            <p key={label}>{label}: {value}</p>
+                          ))}
                         </div>
                       ))}
                     </div>
                   </div>
                 ) : null}
+
+                {actionError ? (
+                  <p className="mt-4 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-700" role="alert">
+                    {actionError}
+                  </p>
+                ) : null}
               </div>
 
               <div className="shrink-0 border-t border-slate-200 bg-white px-5 py-4 sm:px-6">
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                    onClick={() => handleEditIncident(selectedIncident)}
-                    type="button"
-                  >
-                    Edit Details
-                  </button>
-
-                  <button
-                    className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-xs font-semibold text-amber-800 hover:bg-amber-100"
-                    onClick={() => void handleSetReviewStatus(selectedIncident, 'pending')}
-                    type="button"
-                  >
-                    Mark as Pending
-                  </button>
-
-                  <button
-                    className="rounded-lg border border-emerald-300 bg-emerald-50 px-4 py-2 text-xs font-semibold text-emerald-800 hover:bg-emerald-100"
-                    onClick={() => void handleSetReviewStatus(selectedIncident, 'approved')}
-                    type="button"
-                  >
-                    Approved Report
-                  </button>
-                </div>
+                {selectedIncident.status === 'pending' ? (
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                      onClick={() => handleEditIncident(selectedIncident)}
+                      type="button"
+                    >
+                      Edit Details
+                    </button>
+                    <button
+                      className="rounded-lg border border-emerald-600 bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+                      disabled={approvingId === selectedIncident.id}
+                      onClick={() => void handleApprove(selectedIncident)}
+                      type="button"
+                    >
+                      {approvingId === selectedIncident.id ? 'Approving...' : 'Approve Report'}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-xs text-slate-500">
+                      Approved and plotted on the map. Update its status from the Incident Reports page.
+                    </p>
+                    <button
+                      className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
+                      onClick={() => {
+                        setFocusRequest({ id: selectedIncident.id, at: Date.now() })
+                        setSelectedIncident(null)
+                      }}
+                      type="button"
+                    >
+                      Show on map
+                    </button>
+                  </div>
+                )}
               </div>
             </section>
           </div>
@@ -1961,43 +2010,23 @@ export function AdminIncidentMapPanel({
         <div
           className="fixed inset-0 z-[1400] overflow-y-auto bg-slate-900/50 p-4 backdrop-blur-sm sm:p-8"
           onClick={() => {
+            if (editSaving) return
             setEditingIncident(null)
             setEditForm(null)
           }}
         >
           <div className="mx-auto my-6 w-full max-w-3xl" onClick={(event) => event.stopPropagation()}>
-            <section className="rounded-2xl border border-slate-200 bg-white shadow-[0_20px_40px_rgba(15,23,42,0.22)]">
+            <section aria-label="Edit report" className="rounded-2xl border border-slate-200 bg-white shadow-[0_20px_40px_rgba(15,23,42,0.22)]" role="dialog">
               <div className="border-b border-slate-200 px-5 py-4 sm:px-6">
-                <p className="text-xs font-bold uppercase tracking-[0.15em] text-blue-700">
-                  Edit Incident Details
-                </p>
-                <h3 className="mt-1 text-xl font-black text-slate-900">
-                  {editingIncident.title}
-                </h3>
+                <p className="text-xs font-bold uppercase tracking-[0.15em] text-blue-700">Edit Report Before Approval</p>
+                <h3 className="mt-1 text-xl font-black text-slate-900">{editingIncident.title}</h3>
                 <p className="mt-1 text-xs text-slate-500">
-                  This updates the admin display and map coordinates locally. Backend update requires a separate update API.
+                  Changes are saved to the report. Incident type and type details come from the responder and cannot be changed here.
+                  Severity is set when the report is approved.
                 </p>
               </div>
 
               <div className="grid gap-4 px-5 py-5 sm:grid-cols-2 sm:px-6">
-                <label className="block">
-                  <span className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">Incident Type</span>
-                  <input
-                    className="mt-2 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-blue-500"
-                    onChange={(event) => setEditForm({ ...editForm, incidentTypeLabel: event.target.value })}
-                    value={editForm.incidentTypeLabel}
-                  />
-                </label>
-
-                <label className="block">
-                  <span className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">Response Team</span>
-                  <input
-                    className="mt-2 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-blue-500"
-                    onChange={(event) => setEditForm({ ...editForm, responseTeam: event.target.value })}
-                    value={editForm.responseTeam}
-                  />
-                </label>
-
                 <label className="block sm:col-span-2">
                   <span className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">Location</span>
                   <input
@@ -2007,46 +2036,20 @@ export function AdminIncidentMapPanel({
                   />
                 </label>
 
-                <label className="block">
-                  <span className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">Severity</span>
-                  <select
+                <label className="block sm:col-span-2">
+                  <span className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">Response Team</span>
+                  <input
                     className="mt-2 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-blue-500"
-                    onChange={(event) =>
-                      setEditForm({
-                        ...editForm,
-                        severity: event.target.value as EditableIncident['severity'],
-                      })
-                    }
-                    value={editForm.severity}
-                  >
-                    <option value="Low">Low</option>
-                    <option value="Moderate">Moderate</option>
-                    <option value="High">High</option>
-                    <option value="Critical">Critical</option>
-                  </select>
-                </label>
-
-                <label className="block">
-                  <span className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">Operation Status</span>
-                  <select
-                    className="mt-2 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-blue-500"
-                    onChange={(event) =>
-                      setEditForm({
-                        ...editForm,
-                        operationalStatus: event.target.value as EditableIncident['operationalStatus'],
-                      })
-                    }
-                    value={editForm.operationalStatus}
-                  >
-                    <option value="On-going">On-going</option>
-                    <option value="Resolved">Resolved</option>
-                  </select>
+                    onChange={(event) => setEditForm({ ...editForm, responseTeam: event.target.value })}
+                    value={editForm.responseTeam}
+                  />
                 </label>
 
                 <label className="block">
                   <span className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">Latitude</span>
                   <input
                     className="mt-2 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-blue-500"
+                    inputMode="decimal"
                     onChange={(event) => setEditForm({ ...editForm, latitude: event.target.value })}
                     value={editForm.latitude}
                   />
@@ -2056,6 +2059,7 @@ export function AdminIncidentMapPanel({
                   <span className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">Longitude</span>
                   <input
                     className="mt-2 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-blue-500"
+                    inputMode="decimal"
                     onChange={(event) => setEditForm({ ...editForm, longitude: event.target.value })}
                     value={editForm.longitude}
                   />
@@ -2069,11 +2073,18 @@ export function AdminIncidentMapPanel({
                     value={editForm.description}
                   />
                 </label>
+
+                {editError ? (
+                  <p className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-700 sm:col-span-2" role="alert">
+                    {editError}
+                  </p>
+                ) : null}
               </div>
 
               <div className="flex flex-wrap justify-end gap-2 border-t border-slate-200 px-5 py-4 sm:px-6">
                 <button
                   className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                  disabled={editSaving}
                   onClick={() => {
                     setEditingIncident(null)
                     setEditForm(null)
@@ -2082,13 +2093,13 @@ export function AdminIncidentMapPanel({
                 >
                   Cancel
                 </button>
-
                 <button
-                  className="rounded-xl bg-blue-800 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-900"
-                  onClick={handleSaveEdit}
+                  className="rounded-xl bg-blue-800 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-900 disabled:opacity-60"
+                  disabled={editSaving}
+                  onClick={() => void handleSaveEdit()}
                   type="button"
                 >
-                  Save Details
+                  {editSaving ? 'Saving...' : 'Save Changes'}
                 </button>
               </div>
             </section>

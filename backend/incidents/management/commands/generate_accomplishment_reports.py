@@ -1,6 +1,5 @@
 import random
-import uuid
-from datetime import datetime, time
+from datetime import timedelta
 
 from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand, CommandError
@@ -8,10 +7,17 @@ from django.db import transaction
 from django.utils import timezone
 from faker import Faker
 
+from incidents.incident_types import validate_report_details
 from incidents.models import (
     AccomplishmentReport,
     IncidentReport,
     VictimDetail,
+)
+from incidents.sample_details import (
+    sample_details,
+    sample_report_datetime,
+    sample_victim_details,
+    victim_count_for,
 )
 
 try:
@@ -200,32 +206,6 @@ def get_randomized_coordinates(barangay_name):
     longitude = round(base_lng + random.uniform(-0.0018, 0.0018), 6)
     return min(max(latitude, 13.89), 13.98), min(max(longitude, 121.57), 121.69)
 
-def get_random_created_at(start_year, end_year):
-    now = timezone.localtime()
-    effective_end_year = min(end_year, now.year)
-    if start_year > effective_end_year:
-        raise CommandError(
-            'Invalid year range. start-year must be less than or equal to the current year.'
-        )
-
-    random_year = random.randint(start_year, effective_end_year)
-    if random_year == now.year:
-        random_month = random.randint(1, now.month)
-        max_day = now.day if random_month == now.month else 28
-    else:
-        random_month = random.randint(1, 12)
-        max_day = 28
-
-    random_date = datetime(
-        year=random_year,
-        month=random_month,
-        day=random.randint(1, max_day),
-        hour=random.randint(0, 23),
-        minute=random.randint(0, 59),
-        second=random.randint(0, 59),
-    )
-    return timezone.make_aware(random_date)
-
 def get_incident_description(incident_type, location):
     descriptions = INCIDENT_DESCRIPTIONS.get(incident_type, ['Incident reported in the area. Responders conducted assessment and provided necessary emergency assistance.'])
     return f'{random.choice(descriptions)} Location: {location}.'
@@ -282,144 +262,250 @@ def get_barangay_for_incident(incident_type):
         return random.choice(BARANGAY_NAMES)
 
 
-def generate_unique_incident_code(created_at):
-    """
-    Generate a unique incident code using timestamp and UUID to avoid duplicates.
-    Example: INC-20230615-A3F5B2C1
-    """
-    date_str = created_at.strftime('%Y%m%d')
-    unique_suffix = uuid.uuid4().hex[:8].upper()
-    return f'INC-{date_str}-{unique_suffix}'
+# How often each incident type appears in the sample data (roughly like a city DRRMO's mix).
+TYPE_WEIGHTS = {
+    'RCA': 25,
+    'Medical Emergency': 20,
+    'Ambulance Assistance': 14,
+    'Crime Against Person/Property': 12,
+    'Stand-by Medical Team': 12,
+    'Fire Incident': 10,
+    'Drowning': 7,
+}
+
+ACTIONS_BY_TYPE = {
+    'RCA': [
+        'Secured the scene, provided first aid, and coordinated traffic control with PNP.',
+        'Immobilized injured persons and transported them to the nearest hospital.',
+        'Assessed all persons involved; minor injuries treated on site.',
+    ],
+    'Fire Incident': [
+        'Assisted BFP with evacuation and crowd control; treated minor burns and smoke inhalation.',
+        'Set up a first aid station near the fire scene and monitored affected families.',
+        'Coordinated temporary shelter for displaced families with the barangay.',
+    ],
+    'Crime Against Person/Property': [
+        'Provided first aid to the victim and endorsed the case to PNP.',
+        'Secured the area until PNP arrived and documented the incident.',
+    ],
+    'Medical Emergency': [
+        'Performed initial assessment, monitored vital signs, and transported the patient.',
+        'Provided oxygen support and continuous monitoring during transport.',
+        'Gave first aid on site; patient refused hospital transfer after assessment.',
+    ],
+    'Ambulance Assistance': [
+        'Transported the patient safely to the receiving hospital and endorsed to the ER staff.',
+        'Provided monitoring during transport; patient endorsed to the receiving facility.',
+    ],
+    'Stand-by Medical Team': [
+        'Maintained a first aid station throughout the event and attended to minor cases.',
+        'Roving medical team stationed at the venue; no major incidents recorded.',
+    ],
+    'Drowning': [
+        'Conducted water rescue, performed CPR, and transported victims to the hospital.',
+        'Coordinated search and retrieval with the Coast Guard and barangay volunteers.',
+    ],
+}
+
+INCIDENT_FINAL_STATUSES = ['verified', 'ongoing', 'contained', 'resolved']
+
+
+def next_code_numbers(prefix_template):
+    """Highest number already used per year for codes like INC-2026-00012, from reports and incidents."""
+    import re
+    pattern = re.compile(prefix_template.replace('{year}', r'(\d{4})') + r'(\d+)$')
+    highest = {}
+    sources = [IncidentReport.objects.values_list('incident_code', flat=True),
+               IncidentReport.objects.values_list('report_code', flat=True)]
+    if Incident is not None:
+        sources.append(Incident.objects.values_list('reference_code', flat=True))
+    for source in sources:
+        for code in source:
+            match = pattern.match(code or '')
+            if match:
+                year, number = int(match.group(1)), int(match.group(2))
+                highest[year] = max(highest.get(year, 0), number)
+    return highest
+
+
+def final_incident_status(rng, occurred_at, now):
+    """Older incidents are mostly resolved; recent ones may still be ongoing."""
+    age_days = (now - occurred_at).days
+    if age_days > 30:
+        return rng.choices(INCIDENT_FINAL_STATUSES, weights=[5, 3, 12, 80])[0]
+    if age_days > 3:
+        return rng.choices(INCIDENT_FINAL_STATUSES, weights=[15, 20, 25, 40])[0]
+    return rng.choices(INCIDENT_FINAL_STATUSES, weights=[40, 40, 15, 5])[0]
 
 
 class Command(BaseCommand):
-    help = 'Generate incident reports with specific barangay distributions.'
+    help = (
+        'Generate realistic sample responder reports, with type-specific details and victims, '
+        'spread across Lucena barangays and dates. Use --approved to also create the linked incidents.'
+    )
 
     def add_arguments(self, parser):
-        parser.add_argument('--count', type=int, default=50)
-        parser.add_argument('--clear', action='store_true')
-        parser.add_argument('--start-year', type=int, default=2020)
-        parser.add_argument('--end-year', type=int, default=2026)
-        parser.add_argument('--approved', action='store_true', help='Generate incident reports as Approved and auto-create linked Incident records via approval signals.')
-        parser.add_argument('--also-create-incidents', action='store_true')
+        now_year = timezone.localtime().year
+        parser.add_argument('--count', type=int, default=200, help='Number of reports to create (default 200).')
+        parser.add_argument('--start-year', type=int, default=now_year - 3, help='Earliest year (default: 3 years ago).')
+        parser.add_argument('--end-year', type=int, default=now_year, help='Latest year (default: this year).')
+        parser.add_argument('--recent-share', type=float, default=0.3,
+                            help='Share of reports in the last 120 days, so recent views have data (default 0.3).')
+        parser.add_argument('--approved', action='store_true',
+                            help='Save reports as Approved, which creates the linked Incident and detail rows.')
+        parser.add_argument('--also-create-incidents', action='store_true',
+                            help='With pending reports, still create Incident rows directly.')
+        parser.add_argument('--seed', type=int, default=None, help='Use the same seed to get the same data again.')
+        parser.add_argument('--clear', action='store_true',
+                            help='Delete ALL incident reports, victims, and accomplishment reports first '
+                                 '(and ALL incidents when used with --approved or --also-create-incidents).')
 
     def handle(self, *args, **options):
         count = options['count']
-        should_clear = options['clear']
-        start_year = options['start_year']
-        end_year = options['end_year']
-        generate_approved = options['approved']
-        also_create_incidents = options['also_create_incidents']
+        start_year, end_year = options['start_year'], options['end_year']
+        approved = options['approved']
+        also_create_incidents = options['also_create_incidents'] and not approved and Incident is not None
+        recent_share = options['recent_share']
 
-        if count < 0: raise CommandError('count must be 0 or higher.')
-        if start_year > end_year: raise CommandError('Invalid year range.')
-        if Barangay is None: raise CommandError('locations.models.Barangay could not be imported.')
-        if not has_model_field(IncidentReport, 'barangay'): raise CommandError('IncidentReport has no barangay ForeignKey.')
+        if count < 0:
+            raise CommandError('count must be 0 or higher.')
+        if start_year > end_year:
+            raise CommandError('start-year must not be after end-year.')
+        if not 0 <= recent_share <= 1:
+            raise CommandError('recent-share must be between 0 and 1.')
+        if Barangay is None or not has_model_field(IncidentReport, 'barangay'):
+            raise CommandError('Barangays are not available. Run: python manage.py import_barangays ../lucena_barangays.geojson')
 
-        if also_create_incidents and Incident is None:
-            self.stdout.write(self.style.WARNING('Incident model could not be imported. Skipping --also-create-incidents.'))
-            also_create_incidents = False
-
-        create_incidents_explicitly = also_create_incidents
-        should_create_incidents = generate_approved or create_incidents_explicitly
+        seed = options['seed']
+        rng = random.Random(seed)
+        if seed is not None:
+            random.seed(seed)  # helpers above (barangays, coordinates) use the random module
+            Faker.seed(seed)
 
         User = get_user_model()
-        responders = list(User.objects.filter(is_staff=True))
+        responders = list(User.objects.filter(is_staff=True, is_superuser=False)) or list(User.objects.filter(is_staff=True))
         if not responders:
-            responder = User.objects.create_user(username='field_responder', email='responder@example.com', password='Demo1234!', is_staff=True)
-            responders = [responder]
+            responders = [User.objects.create_user(
+                username='field_responder', email='responder@example.com', password='Demo1234!', is_staff=True,
+            )]
+            self.stdout.write(self.style.WARNING('No staff accounts found: created field_responder / Demo1234!'))
 
-        if should_clear:
-            self.stdout.write(self.style.WARNING('Clearing old generated report data...'))
+        if options['clear']:
+            self.stdout.write(self.style.WARNING('Clearing existing reports...'))
             AccomplishmentReport.objects.all().delete()
             VictimDetail.objects.all().delete()
             IncidentReport.objects.all().delete()
-            if should_create_incidents and Incident is not None:
+            if (approved or also_create_incidents) and Incident is not None:
                 Incident.objects.all().delete()
 
-        self.stdout.write(self.style.SUCCESS('Fire Incident limited to: Barangay 1, Barangay 9, Market View'))
-        self.stdout.write(self.style.SUCCESS('RCA (Accident) heavily weighted to: Gulang-Gulang, Domoit'))
+        now = timezone.localtime()
+        types = list(TYPE_WEIGHTS)
+        plans = []
+        for _ in range(count):
+            reported_at = sample_report_datetime(rng, start_year, end_year, now, recent_share=recent_share)
+            plans.append((reported_at, rng.choices(types, weights=[TYPE_WEIGHTS[t] for t in types])[0]))
+        plans.sort(key=lambda plan: plan[0])  # codes go up with the date, like real reports
 
-        report_state = 'approved' if generate_approved else 'pending'
-        self.stdout.write(self.style.WARNING(f'Generating {count} {report_state} incident report records from {start_year} to {end_year}...'))
-
-        linked_reports = 0
-        linked_incidents = 0
+        next_incident = next_code_numbers('INC-{year}-')
+        next_report = next_code_numbers('IR-{year}-')
+        summary = {incident_type: 0 for incident_type in types}
+        victims_total = 0
+        missing_barangays = set()
 
         with transaction.atomic():
-            for index in range(count):
-                created_at = get_random_created_at(start_year, end_year)
-                incident_type = random.choice(INCIDENT_TYPES)
-                victim_count = random.randint(0, 4)
-                
+            for reported_at, incident_type in plans:
                 barangay_name = get_barangay_for_incident(incident_type)
                 barangay = find_barangay(barangay_name)
-
                 if barangay is None:
-                    raise CommandError(f'Barangay "{barangay_name}" was not found in the Barangay table.')
+                    missing_barangays.add(barangay_name)
+                    continue
+
+                occurred_at = reported_at - timedelta(minutes=rng.randint(10, 90))
+                year = occurred_at.year
+                next_incident[year] = next_incident.get(year, 0) + 1
+                next_report[reported_at.year] = next_report.get(reported_at.year, 0) + 1
 
                 location = f'{barangay_name}, Lucena City'
                 latitude, longitude = get_randomized_coordinates(barangay_name)
-                
-                # FIXED: Use unique incident code with UUID to avoid duplicates
-                incident_code = generate_unique_incident_code(created_at)
-                
-                occurred_time = time(hour=random.randint(0, 23), minute=random.randint(0, 59))
-                responder = random.choice(responders)
-                description = get_incident_description(incident_type, location)
-                action_taken = random.choice(ACTIONS)
+                victim_count = victim_count_for(rng, incident_type)
+                details = sample_details(rng, incident_type, victim_count, occurred_at, barangay_name)
+                victims = [sample_victim_details(rng, incident_type, details) for _ in range(victim_count)]
 
-                report_kwargs = build_create_kwargs(
-                    IncidentReport,
-                    incident_code=incident_code, time_occurred=occurred_time, incident_type=incident_type,
-                    responder_team=random.choice(TEAMS), location=location, address=location, barangay=barangay,
-                    latitude=latitude, longitude=longitude, description=description, victim_count=victim_count,
-                    action_taken=action_taken,
-                    status='Approved' if generate_approved else 'Pending',
+                cleaned, victim_details, errors = validate_report_details(
+                    incident_type, details, [{'details': victim} for victim in victims],
+                )
+                if errors:
+                    raise CommandError(f'Sample data failed validation for {incident_type}: {errors}')
+
+                responder = rng.choice(responders)
+                report = IncidentReport.objects.create(
+                    report_code=f'IR-{reported_at.year}-{next_report[reported_at.year]:05d}',
+                    incident_code=f'INC-{year}-{next_incident[year]:05d}',
+                    time_occurred=occurred_at.time().replace(second=0, microsecond=0),
+                    incident_type=incident_type,
+                    responder_team=rng.choice(TEAMS),
+                    location=location,
+                    barangay=barangay,
+                    latitude=latitude,
+                    longitude=longitude,
+                    description=get_incident_description(incident_type, location),
+                    victim_count=victim_count,
+                    action_taken=rng.choice(ACTIONS_BY_TYPE.get(incident_type, ACTIONS)),
+                    status='Approved' if approved else 'Pending',
+                    details=cleaned,
                     created_by=responder,
                 )
+                IncidentReport.objects.filter(id=report.id).update(created_at=reported_at)
 
-                report = IncidentReport.objects.create(**report_kwargs)
-                set_created_at(IncidentReport, report.id, created_at)
-                linked_reports += 1
-
-                if create_incidents_explicitly and Incident is not None:
-                    if generate_approved:
-                        # Approved reports already create linked Incidents via the post-save signal.
-                        linked_incidents += 1
-                    else:
-                        hazard_type = get_or_create_hazard_type(incident_type)
-                        severity_level, impact_level = get_severity_and_impact(incident_type, barangay_name, victim_count)
-                        incident_kwargs = build_create_kwargs(
-                            Incident,
-                            reference_code=incident_code, hazard_type=hazard_type, latitude=latitude, longitude=longitude,
-                            address=location, barangay=barangay, reported_by=responder, incident_datetime=created_at,
-                            severity_level=severity_level,
-                            status=random.choice(['reported', 'verified', 'ongoing', 'contained', 'resolved']),
-                            impact_level=impact_level,
-                            description=description,
-                        )
-                        incident = Incident.objects.create(**incident_kwargs)
-                        set_created_at(Incident, incident.id, created_at)
-                        linked_incidents += 1
-
-                for _ in range(victim_count):
-                    victim_barangay = random.choice(BARANGAY_NAMES)
+                for extra in victim_details:
                     VictimDetail.objects.create(
-                        incident_report=report, name=fake.name(), age=str(random.randint(1, 85)),
-                        gender=random.choice(['M', 'F']), address=f'{victim_barangay}, Lucena City',
-                        condition=random.choice(CONDITIONS),
+                        incident_report=report,
+                        name=fake.name(),
+                        age=str(rng.randint(5, 80)),
+                        gender=rng.choice(['M', 'F']),
+                        address=f'{rng.choice(BARANGAY_NAMES)}, Lucena City',
+                        condition=rng.choice(CONDITIONS),
+                        details=extra,
                     )
+                victims_total += victim_count
 
-        report_state_label = 'approved' if generate_approved else 'pending'
-        approval_note = (
-            ' Reports created with Approved status will auto-generate linked Incident records if the approval signal is active.'
-            if generate_approved
-            else ' All generated reports require manual admin approval.'
-        )
+                if approved and Incident is not None:
+                    # The approval signal created the incident with today's date; give it the real dates.
+                    Incident.objects.filter(reference_code=report.incident_code).update(
+                        incident_datetime=occurred_at,
+                        date_reported=reported_at,
+                        created_at=reported_at,
+                        status=final_incident_status(rng, occurred_at, now),
+                    )
+                elif also_create_incidents:
+                    severity_level, impact_level = get_severity_and_impact(incident_type, barangay_name, victim_count)
+                    incident = Incident.objects.create(**build_create_kwargs(
+                        Incident,
+                        reference_code=report.incident_code, hazard_type=get_or_create_hazard_type(incident_type),
+                        latitude=latitude, longitude=longitude, address=location, barangay=barangay,
+                        reported_by=responder, incident_datetime=occurred_at, severity_level=severity_level,
+                        status=final_incident_status(rng, occurred_at, now), impact_level=impact_level,
+                        description=report.description,
+                    ))
+                    set_created_at(Incident, incident.id, reported_at)
 
+                summary[incident_type] += 1
+
+        if missing_barangays:
+            self.stdout.write(self.style.WARNING(
+                f'Skipped reports for barangays not in the database: {", ".join(sorted(missing_barangays))}. '
+                'Run import_barangays first.'
+            ))
+
+        created = sum(summary.values())
         self.stdout.write(self.style.SUCCESS(
-            f'Successfully generated {count} {report_state_label} incident reports from {start_year} to {end_year}. '
-            f'Report barangay linked: {linked_reports}. Incident barangay linked: {linked_incidents}. '
-            f'Victim details total: {VictimDetail.objects.count()}.{approval_note}'
+            f'Created {created} {"approved" if approved else "pending"} reports '
+            f'({start_year}-{end_year}, {victims_total} victims).'
         ))
+        for incident_type, number in summary.items():
+            self.stdout.write(f'  {incident_type}: {number}')
+        if approved:
+            self.stdout.write('Linked incidents and detail rows (fire_details, vehicular_accidents, ...) were created.')
+            self.stdout.write('Next: python manage.py calculate_risk_scores --days 365')
+        else:
+            self.stdout.write('Reports are Pending: approve them in Admin Dashboard > Mapping to create incidents.')

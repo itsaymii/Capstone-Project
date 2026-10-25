@@ -18,6 +18,8 @@ export type HazardIncident = {
   reportedAt?: string
   /** Real hazard type name from the backend (e.g. "Crime", "Drowning"), when available. */
   hazardTypeName?: string
+  /** Raw backend incident status (reported, verified, ongoing, contained, resolved, false_alarm). */
+  backendStatus?: string
 }
 
 export const hazardIncidents: HazardIncident[] = []
@@ -107,6 +109,7 @@ export function mapBackendIncidentToHazardIncident(
     ],
     referenceCode: incident.reference_code || undefined,
     hazardTypeName: incident.hazard_type?.name || undefined,
+    backendStatus: incident.status || undefined,
     reportedAt: Number.isNaN(parsedDate.getTime()) ? undefined : parsedDate.toISOString(),
   }
 }

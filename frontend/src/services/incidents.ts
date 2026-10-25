@@ -151,6 +151,8 @@ export interface IncidentReport {
   responderTeam?: string
   responder_team?: string
   location: string
+  /** Name of the report's barangay, or null when none was linked. */
+  barangayName?: string | null
   description: string
   victimCount?: number
   victim_count?: number
@@ -432,6 +434,28 @@ export async function getAccomplishmentReports(): Promise<any[]> {
     console.error('[getAccomplishmentReports] Failed to fetch accomplishment reports:', error)
     throw error
   }
+}
+
+export type IncidentReportEditableFields = {
+  location: string
+  description: string
+  responderTeam: string
+  latitude: number
+  longitude: number
+}
+
+/** Save admin edits to a report (only the fields an admin may correct before approval). */
+export async function updateIncidentReportFields(
+  id: string,
+  fields: IncidentReportEditableFields,
+): Promise<IncidentReport> {
+  await ensureCsrfCookie()
+  const response = await api.patch<IncidentReport>(`/api/incidents/incident-reports/${id}/`, {
+    ...fields,
+    latitude: Number(fields.latitude.toFixed(6)),
+    longitude: Number(fields.longitude.toFixed(6)),
+  })
+  return response.data
 }
 
 export async function updateIncidentReportStatus(

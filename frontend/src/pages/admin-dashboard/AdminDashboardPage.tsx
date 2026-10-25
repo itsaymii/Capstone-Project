@@ -27,6 +27,12 @@ import { SimulationSection } from './sections/SimulationSection'
 import { UsersSection } from './sections/UsersSection'
 import { AccomplishmentReports } from './sections/AccomplishmentReports'
 import { IncidentReports } from './sections/IncidentReports'
+import {
+  getIncidentCategoryKey,
+  getIncidentCategoryLabel,
+  INCIDENT_CATEGORIES,
+  sortIncidentCategoryLabels,
+} from '../../data/incidentCategories'
 
 type WorkspaceSection =
   | 'overview'
@@ -69,7 +75,7 @@ function getDashboardSeverityScoreFromRecord(record: any): number {
 }
 
 function calculateDashboardFireRiskScore(records: any[]): number {
-  const fireRecords = records.filter((record) => getDashboardIncidentType(record) === 'Fire')
+  const fireRecords = records.filter((record) => getIncidentCategoryKey(record) === 'fire')
   if (fireRecords.length === 0) return 0
 
   const activeFireRecords = fireRecords.filter((record) => getDashboardIncidentStatus(record) === 'pending')
@@ -343,64 +349,9 @@ function getDashboardIncidentStatus(record: any): 'pending' | 'approved' | 'reso
   return 'pending'
 }
 
+// Same incident type names and rules as every other admin page (see data/incidentCategories.ts).
 function getDashboardIncidentType(record: any): string {
-  // The backend hazard type name is the most reliable source, so use it first.
-  const hazardTypeName = getRecordValue(record, 'hazardTypeName') || getRecordValue(record?.hazard_type, 'name')
-  if (hazardTypeName) {
-    const lowerHazard = hazardTypeName.toLowerCase()
-    if (lowerHazard.includes('fire')) return 'Fire'
-    if (lowerHazard.includes('earthquake')) return 'Earthquake'
-    if (lowerHazard.includes('medical')) return 'Medical'
-    if (lowerHazard.includes('crime')) return 'Crime'
-    if (lowerHazard.includes('drowning')) return 'Drowning'
-    if (lowerHazard.includes('vehicular') || lowerHazard.includes('accident') || lowerHazard.includes('rca')) {
-      return 'Accident'
-    }
-    return toTitleCase(hazardTypeName)
-  }
-
-  const explicitType = getRecordValue(
-    record,
-    'incidentType',
-    'incident_type',
-    'hazard_type_name',
-    'type',
-    'category',
-    'incident_category',
-    'nature_of_incident',
-  )
-  const title = getRecordValue(record, 'title', 'name', 'incidentTitle', 'incident_title')
-  const description = getRecordValue(record, 'description', 'actionTaken', 'action_taken', 'report_text', 'particulars')
-  const code = getRecordValue(record, 'code', 'incidentCode', 'incident_code', 'hazard_code').toUpperCase()
-  const combined = `${explicitType} ${title} ${description} ${code}`.toLowerCase()
-
-  if (combined.includes('fire') || code === 'FR') return 'Fire'
-  if (combined.includes('earthquake') || code === 'EQ') return 'Earthquake'
-  if (
-    combined.includes('medical') ||
-    combined.includes('ambulance') ||
-    combined.includes('stand-by') ||
-    combined.includes('standby') ||
-    combined.includes('health')
-  ) {
-    return 'Medical'
-  }
-  if (combined.includes('crime') || combined.includes('theft') || combined.includes('robbery')) return 'Crime'
-  if (combined.includes('drowning')) return 'Drowning'
-  if (
-    combined.includes('rca') ||
-    combined.includes('road crash') ||
-    combined.includes('vehicular') ||
-    combined.includes('vehicle') ||
-    combined.includes('collision') ||
-    combined.includes('traffic') ||
-    combined.includes('accident') ||
-    code === 'AC'
-  ) {
-    return 'Accident'
-  }
-
-  return explicitType ? toTitleCase(explicitType) : 'Other'
+  return getIncidentCategoryLabel(record)
 }
 
 function toTitleCase(value: string): string {
@@ -523,6 +474,11 @@ function buildCountData<T extends string>(items: any[], getKey: (item: any) => T
 
 const chartPalette = ['#2563eb', '#f59e0b', '#059669', '#dc2626', '#7c3aed', '#0891b2']
 const softChartPalette = ['#dbeafe', '#fef3c7', '#d1fae5', '#fee2e2', '#ede9fe', '#cffafe']
+
+/** Fixed color for an incident type name, so a type keeps its color on every chart. */
+function getCategoryColor(name: string, index: number): string {
+  return INCIDENT_CATEGORIES.find((category) => category.label === name)?.color ?? chartPalette[index % chartPalette.length]
+}
 
 type CountDataItem = { name: string; count: number }
 type TrendDataItem = { date: string; isoDate: string; dayKey: string; count: number }
@@ -1041,7 +997,7 @@ function DashboardDonutChart({ data }: { data: CountDataItem[] }) {
                 filter="url(#donutGlow)"
                 key={item.name}
                 r={radius}
-                stroke={chartPalette[index % chartPalette.length]}
+                stroke={getCategoryColor(item.name, index)}
                 strokeDasharray={`${dashLength} ${circumference - dashLength}`}
                 strokeDashoffset={dashOffset}
                 strokeLinecap="round"
@@ -1116,7 +1072,7 @@ function DashboardDonutChart({ data }: { data: CountDataItem[] }) {
                   <div className="flex min-w-0 items-center gap-2">
                     <span
                       className="h-3 w-3 shrink-0 rounded-full shadow-sm ring-4 ring-slate-50"
-                      style={{ backgroundColor: chartPalette[index % chartPalette.length] }}
+                      style={{ backgroundColor: getCategoryColor(entry.name, index) }}
                     />
                     <span className="truncate text-xs font-black text-slate-700">{entry.name}</span>
                   </div>
@@ -1130,7 +1086,7 @@ function DashboardDonutChart({ data }: { data: CountDataItem[] }) {
                     className="dashboard-chart-bar-fill h-full rounded-full transition-all duration-700 group-hover:brightness-110"
                     style={{
                       animationDelay: `${310 + index * 75}ms`,
-                      background: `linear-gradient(90deg, ${softChartPalette[index % softChartPalette.length]}, ${chartPalette[index % chartPalette.length]})`,
+                      background: `linear-gradient(90deg, ${getCategoryColor(entry.name, index)}33, ${getCategoryColor(entry.name, index)})`,
                       width: `${Math.max(5, percentage)}%`,
                     }}
                   />
@@ -1323,6 +1279,8 @@ export function AdminDashboardPage() {
   // Merge responder reports as pseudo-incidents for display
   const responderReportIncidents = useMemo(() => {
     const refOrIdToHazardType = new Map<string, HazardType>()
+    // The incident created when a report was approved, by reference code.
+    const incidentByRefCode = new Map<string, HazardIncident>()
 
     reports.forEach((incident) => {
       const refCode = (incident as any).reference_code || (incident as any).referenceCode || undefined
@@ -1331,43 +1289,24 @@ export function AdminDashboardPage() {
         refOrIdToHazardType.set(String(refCode), incident.code)
       }
 
+      if (refCode) {
+        incidentByRefCode.set(String(refCode).toUpperCase(), incident)
+      }
+
       if (incident.id && incident.code) {
         refOrIdToHazardType.set(String(incident.id), incident.code)
       }
     })
 
     return responderReports.map((report) => {
-      const explicitType = getRecordValue(
-        report,
-        'incidentType',
-        'incident_type',
-        'hazard_type_name',
-        'type',
-        'category',
-        'nature_of_incident',
-      )
-      const combinedType = `${explicitType} ${getDashboardDescription(report)}`.toLowerCase()
+      const reportCategory = getIncidentCategoryKey(report)
 
-      let code: HazardType = 'AC'
+      let code: HazardType = reportCategory === 'fire' ? 'FR' : reportCategory === 'earthquake' ? 'EQ' : 'AC'
 
       if (report.incident_reference_code_readonly && refOrIdToHazardType.has(String(report.incident_reference_code_readonly))) {
         code = refOrIdToHazardType.get(String(report.incident_reference_code_readonly)) as HazardType
       } else if (report.incident_id && refOrIdToHazardType.has(String(report.incident_id))) {
         code = refOrIdToHazardType.get(String(report.incident_id)) as HazardType
-      } else if (combinedType.includes('fire')) {
-        code = 'FR'
-      } else if (combinedType.includes('earthquake')) {
-        code = 'EQ'
-      } else if (
-        combinedType.includes('rca') ||
-        combinedType.includes('road crash') ||
-        combinedType.includes('vehicular') ||
-        combinedType.includes('vehicle') ||
-        combinedType.includes('collision') ||
-        combinedType.includes('traffic') ||
-        combinedType.includes('accident')
-      ) {
-        code = 'AC'
       }
 
       let status: 'active' | 'pending' | 'approved' | 'resolved' = 'active'
@@ -1381,14 +1320,24 @@ export function AdminDashboardPage() {
         status = 'resolved'
       }
 
-      let severity: 'Low' | 'Moderate' | 'High' | 'Critical' = 'Moderate'
+      const linkedIncident = incidentByRefCode.get(
+        String(report.incidentCode || report.incident_code || report.incident_reference_code_readonly || '').toUpperCase(),
+      )
 
-      if (Number(getRecordValue(report, 'victimCount', 'victim_count')) >= 3) {
-        severity = 'High'
+      // Prefer the severity of the linked incident; otherwise use the same rules as the backend.
+      let severity: 'Low' | 'Moderate' | 'High' | 'Critical' = linkedIncident?.severity || 'Low'
+
+      if (!linkedIncident) {
+        const victimCount = Number(getRecordValue(report, 'victimCount', 'victim_count')) || 0
+        if (victimCount >= 5) severity = 'Critical'
+        else if (victimCount >= 3) severity = 'High'
+        else if (victimCount > 0 || ['fire', 'drowning', 'crime'].includes(reportCategory)) {
+          severity = 'Moderate'
+        }
       }
 
       const reportId = getIncidentRecordId(report)
-      const readableType = getDashboardIncidentType({ ...report, code })
+      const readableType = getDashboardIncidentType(report)
       const latitude = Number(getRecordValue(report, 'latitude', 'lat'))
       const longitude = Number(getRecordValue(report, 'longitude', 'lng', 'lon'))
       const coordinates: [number, number] =
@@ -1405,6 +1354,8 @@ export function AdminDashboardPage() {
         // Keep the original backend status (e.g. "Submitted", "Approved") for the Reports table.
         reportStatus: getRecordValue(report, 'status', 'status_update'),
         severity,
+        // Status of the linked incident (e.g. "ongoing", "resolved"), used by Analytics.
+        linkedIncidentStatus: linkedIncident?.backendStatus || '',
         location: getDashboardLocation(report),
         time: getRecordDate(report).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }),
         responseTeam: report.responderTeam || report.responder_team || report.responder_username || report.responder || '-',
@@ -1533,31 +1484,19 @@ export function AdminDashboardPage() {
 
   const analyticsIncidentRecords = useMemo(() => {
     return approvedDashboardIncidentRecords.map((record) => {
-      const dashboardType = getDashboardIncidentType(record)
-
-      if (dashboardType === 'Fire') {
-        return { ...record, code: 'FR' as HazardType }
-      }
-
-      if (dashboardType === 'Accident') {
-        return { ...record, code: 'AC' as HazardType }
-      }
-
-      if (dashboardType === 'Earthquake') {
-        return { ...record, code: 'EQ' as HazardType }
-      }
-
-      return record
+      const category = getIncidentCategoryKey(record)
+      const code: HazardType = category === 'fire' ? 'FR' : category === 'earthquake' ? 'EQ' : 'AC'
+      return { ...record, code }
     })
   }, [approvedDashboardIncidentRecords])
 
   const fireDashboardRecords = useMemo(
-    () => dashboardIncidentRecords.filter((record) => getDashboardIncidentType(record) === 'Fire'),
+    () => dashboardIncidentRecords.filter((record) => getIncidentCategoryKey(record) === 'fire'),
     [dashboardIncidentRecords],
   )
 
-  const accidentDashboardRecords = useMemo(
-    () => dashboardIncidentRecords.filter((record) => getDashboardIncidentType(record) === 'Accident'),
+  const incidentTypeCount = useMemo(
+    () => new Set(dashboardIncidentRecords.map((record) => getDashboardIncidentType(record))).size,
     [dashboardIncidentRecords],
   )
 
@@ -1613,9 +1552,9 @@ export function AdminDashboardPage() {
       value: totalIncidentReportsCount,
       comparison: 'All current report records in dashboard',
       delta:
-        accidentDashboardRecords.length > 0
-          ? `${totalIncidentReportsCount} total reports included`
-          : 'No accident-type reports recorded yet',
+        totalIncidentReportsCount > 0
+          ? `Across ${incidentTypeCount} incident type${incidentTypeCount === 1 ? '' : 's'}`
+          : 'No incident reports recorded yet',
       accent: 'border-t-[7px] border-t-blue-700',
       valueClass: 'text-blue-700',
     },
@@ -1648,8 +1587,7 @@ export function AdminDashboardPage() {
   ]
 
   const availableTrendIncidentTypes = useMemo(() => {
-    return Array.from(new Set(dashboardIncidentRecords.map((record) => getDashboardIncidentType(record))))
-      .sort((left, right) => left.localeCompare(right))
+    return sortIncidentCategoryLabels(Array.from(new Set(dashboardIncidentRecords.map((record) => getDashboardIncidentType(record)))))
   }, [dashboardIncidentRecords])
 
   const trendRecords = useMemo(() => {

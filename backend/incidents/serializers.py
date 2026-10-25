@@ -423,6 +423,8 @@ class IncidentReportSerializer(serializers.ModelSerializer):
     # Include creator info to help the frontend decide selection eligibility
     createdBy = serializers.CharField(source='created_by.username', read_only=True)
     createdByRole = serializers.SerializerMethodField()
+    # Barangay name for filters on the admin map (None when the report has no barangay).
+    barangayName = serializers.CharField(source='barangay.name', read_only=True, default=None)
 
     class Meta:
         model = IncidentReport
@@ -434,6 +436,7 @@ class IncidentReportSerializer(serializers.ModelSerializer):
             'incidentType',
             'responderTeam',
             'location',
+            'barangayName',
             'latitude',
             'longitude',
             'coordinates',
