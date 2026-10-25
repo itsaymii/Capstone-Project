@@ -32,7 +32,9 @@ import type {
   CreateEvacuationCenterPayload,
   EvacuationCenter,
   EvacuationCenterStatus,
+  NearbyEvacuationCentersResponse,
   NearestEvacuationCenter,
+  UpdateEvacuationCenterPayload,
 } from '../types/api'
 
 function getApiErrorMessage(error: unknown, fallback: string): string {
@@ -257,27 +259,74 @@ interface PaginatedResponse<T> {
   results: T[]
 }
 
+// The API sends decimals (latitude/longitude) as text, e.g. "13.938781". Turn them into numbers.
+function normalizeEvacuationCenter<T extends EvacuationCenter>(center: T): T {
+  return {
+    ...center,
+    latitude: Number(center.latitude),
+    longitude: Number(center.longitude),
+    capacity: Number(center.capacity) || 0,
+    current_occupancy: Number(center.current_occupancy) || 0,
+  }
+}
+
 export async function getEvacuationCenters(): Promise<EvacuationCenter[]> {
   const response = await api.get<EvacuationCenter[] | PaginatedResponse<EvacuationCenter>>(
     '/api/resources/evacuation-centers/',
   )
 
   if (Array.isArray(response.data)) {
-    return response.data
+    return response.data.map(normalizeEvacuationCenter)
   }
 
-  if (response.data && Array.isArray((response.data as PaginatedResponse<EvacuationCenter>).results)) {
-    return (response.data as PaginatedResponse<EvacuationCenter>).results
+  if (!response.data || !Array.isArray(response.data.results)) {
+    return []
   }
 
-  return []
+  // Follow every page so no centers are left out when there are more than one page's worth.
+  let centers = response.data.results
+  let nextUrl = response.data.next
+
+  while (nextUrl) {
+    const nextPage = await api.get<PaginatedResponse<EvacuationCenter>>(nextUrl)
+    centers = [...centers, ...nextPage.data.results]
+    nextUrl = nextPage.data.next
+  }
+
+  return centers.map(normalizeEvacuationCenter)
 }
 
 export async function getNearestEvacuationCenter(latitude: number, longitude: number): Promise<NearestEvacuationCenter> {
   const { data } = await api.get<NearestEvacuationCenter>('/api/resources/evacuation-centers/nearest/', {
     params: { latitude, longitude },
   })
-  return data
+  return normalizeEvacuationCenter(data)
+}
+
+/** Closest centers to the user (default 5), with centers that accept evacuees listed first. */
+export async function getNearbyEvacuationCenters(
+  latitude: number,
+  longitude: number,
+  limit = 5,
+): Promise<NearbyEvacuationCentersResponse> {
+  const { data } = await api.get<NearbyEvacuationCentersResponse>('/api/resources/evacuation-centers/nearby/', {
+    params: { latitude, longitude, limit },
+  })
+  return {
+    ...data,
+    results: data.results.map(normalizeEvacuationCenter),
+    not_accepting_nearby: data.not_accepting_nearby.map(normalizeEvacuationCenter),
+  }
+}
+
+/** Save capacity, current occupancy and/or status. The backend may change status to Full/Available. */
+export async function updateEvacuationCenter(
+  id: string,
+  payload: UpdateEvacuationCenterPayload,
+): Promise<EvacuationCenter> {
+  await ensureCsrfCookie()
+  const { data } = await api.patch<EvacuationCenter>(`/api/resources/evacuation-centers/${id}/`, payload)
+  return normalizeEvacuationCenter(data)
 }
 
 export async function deleteEvacuationCenter(id: string): Promise<void> {
@@ -291,7 +340,7 @@ export async function updateEvacuationCenterStatus(
 ): Promise<EvacuationCenter> {
   await ensureCsrfCookie()
   const { data } = await api.patch<EvacuationCenter>(`/api/resources/evacuation-centers/${id}/`, { status })
-  return data
+  return normalizeEvacuationCenter(data)
 }
 
 export async function getDashboardAccounts(): Promise<DashboardAccountsResponse> {

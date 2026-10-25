@@ -229,9 +229,10 @@ export interface CreateEvacuationCenterPayload {
   longitude: number
   address: string
   barangay_id?: string
-  capacity: number
-  current_occupancy: number
-  status: EvacuationCenterStatus
+  /** Optional: when left out, the saved value (or 0 for a new center) is kept. */
+  capacity?: number
+  current_occupancy?: number
+  status?: EvacuationCenterStatus
 }
 
 export type EvacuationCenterStatus = 'available' | 'full' | 'closed' | 'maintenance'
@@ -245,18 +246,47 @@ export interface EvacuationCenter {
   capacity: number
   current_occupancy: number
   status: EvacuationCenterStatus
+  /** Free spaces left; null when capacity has not been set. */
+  available_slots?: number | null
+  /** Percent of capacity in use (0-100); null when capacity has not been set. */
+  occupancy_rate?: number | null
+  /** True only when status is Available. */
+  is_accepting_evacuees?: boolean
   barangay?: {
     id: string
     name: string
   } | null
 }
 
-export interface NearestEvacuationCenter extends EvacuationCenter {
+export interface EvacuationCenterWithDistance extends EvacuationCenter {
   distance_km: number
+}
+
+export interface NearestEvacuationCenter extends EvacuationCenterWithDistance {
   user_location: {
     latitude: number
     longitude: number
   }
+}
+
+export interface NearbyEvacuationCentersResponse {
+  user_location: {
+    latitude: number
+    longitude: number
+  }
+  limit: number
+  total_centers: number
+  accepting_count: number
+  /** Closest centers that accept evacuees (filled with others if not enough are available). */
+  results: EvacuationCenterWithDistance[]
+  /** Closer centers that are Full, Closed, or Under Maintenance. */
+  not_accepting_nearby: EvacuationCenterWithDistance[]
+}
+
+export interface UpdateEvacuationCenterPayload {
+  capacity?: number
+  current_occupancy?: number
+  status?: EvacuationCenterStatus
 }
 
 export interface SimulationProgressPayload {
@@ -428,4 +458,3 @@ export interface SimulationCertificate {
 export interface SimulationCertificatesResponse {
   certificates: SimulationCertificate[]
 }
-
