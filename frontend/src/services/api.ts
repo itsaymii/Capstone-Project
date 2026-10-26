@@ -653,3 +653,51 @@ export async function resetSimulationProgressForTesting(userId?: number): Promis
     throw new Error(getApiErrorMessage(error, 'Unable to reset simulation progress.'))
   }
 }
+export type PerformanceSummary = {
+  assignments: number
+  resolved: number
+  resolution_rate: number
+  measured: number
+  average_minutes: number | null
+  median_minutes: number | null
+  fastest_minutes: number | null
+  slowest_minutes: number | null
+  on_time: number
+  on_time_rate: number
+  high_priority: number
+  victims: number
+  average_first_action_minutes: number | null
+  score: number
+  score_parts: { speed: number | null; on_time: number | null; resolution: number }
+}
+
+export type ResponsePerformanceResponse = {
+  overall: PerformanceSummary
+  teams: Array<PerformanceSummary & { team: string }>
+  by_severity: Array<PerformanceSummary & { severity: string }>
+  by_incident_type: Array<PerformanceSummary & { incident_type: string }>
+  filters: Record<string, string>
+  methodology: { response_time: string; on_time_minutes: number; resolved_statuses: string[]; score: string }
+}
+
+export type ResponsePerformanceFilters = {
+  year?: string
+  month?: string
+  barangay?: string
+  /** Saved incident type names (e.g. "RCA"), comma separated on the request. */
+  incidentTypes?: string[]
+  severity?: string
+}
+
+/** Team responsiveness and performance (backend/analytics/performance.py). */
+export async function getResponsePerformance(filters: ResponsePerformanceFilters = {}): Promise<ResponsePerformanceResponse> {
+  const params: Record<string, string> = {}
+  if (filters.year) params.year = filters.year
+  if (filters.year && filters.month) params.month = filters.month
+  if (filters.barangay) params.barangay = filters.barangay
+  if (filters.incidentTypes && filters.incidentTypes.length > 0) params.incident_type = filters.incidentTypes.join(',')
+  if (filters.severity) params.severity = filters.severity.toLowerCase()
+
+  const { data } = await api.get<ResponsePerformanceResponse>('/api/analytics/performance/', { params })
+  return data
+}

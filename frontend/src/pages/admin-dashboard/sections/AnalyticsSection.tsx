@@ -1,8 +1,10 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { jsPDF } from 'jspdf'
 import type { HazardIncident, IncidentStatus } from '../../../data/adminOperations'
 import type { EarthquakeEvent } from '../../../services/earthquakes'
 import { glassPanelClass, glassPanelSoftClass } from './constants'
+import { INCIDENT_TYPE_CONFIGS } from '../../../data/incidentTypeFields'
+import { getResponsePerformance, type ResponsePerformanceResponse } from '../../../services/api'
 import {
   ANALYTICS_TYPES,
   buildAllTypeInsights,
@@ -49,6 +51,7 @@ type TeamPerformanceItem = {
   resolvedCount: number
   withResponseTimeCount: number
   averageResponseMinutes: number
+  medianResponseMinutes: number | null
   onTimeRate: number
   resolutionRate: number
   performanceScore: number
@@ -71,6 +74,15 @@ function hexToRgb(hex: string | undefined): [number, number, number] {
   if (!match) return [37, 99, 235]
   const value = parseInt(match[1], 16)
   return [(value >> 16) & 255, (value >> 8) & 255, value & 255]
+}
+
+// Same rules as backend/analytics/performance.py.
+const ON_TIME_MINUTES = 30
+
+function getPerformanceScore(averageMinutes: number | null, onTimeRate: number, resolutionRate: number): number {
+  if (averageMinutes === null) return resolutionRate
+  const speed = averageMinutes <= 15 ? 100 : averageMinutes >= 120 ? 0 : (100 * (120 - averageMinutes)) / 105
+  return (speed * 40 + onTimeRate * 20 + resolutionRate * 40) / 100
 }
 
 function getSeverityWeight(severity: HazardIncident['severity']): number {
@@ -1183,96 +1195,106 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
     [filteredReports, totalIncidentReports],
   )
 
-  const teamPerformanceData = useMemo<TeamPerformanceItem[]>(() => {
-    const bucket = new Map<
-      string,
-      {
-        assignments: number
-        resolvedCount: number
-        withResponseTimeCount: number
-        responseMinutesSum: number
-        onTimeCount: number
-      }
-    >()
+  // Team performance comes from the backend (analytics/performance.py) with the same filters.
+  // When the server cannot be reached, the same rules are applied in the browser instead.
+  const [serverPerformance, setServerPerformance] = useState<ResponsePerformanceResponse | null>(null)
+  const [performanceSource, setPerformanceSource] = useState<'loading' | 'server' | 'browser'>('loading')
+
+  useEffect(() => {
+    // Earthquake and Other have no responder teams on the server side.
+    const config = selectedDisasterType ? INCIDENT_TYPE_CONFIGS.find((item) => item.label === selectedDisasterType) : null
+    if (selectedDisasterType && !config) {
+      setServerPerformance(null)
+      setPerformanceSource('browser')
+      return
+    }
+
+    let cancelled = false
+    setPerformanceSource('loading')
+    getResponsePerformance({
+      year: selectedYear || undefined,
+      month: selectedMonth || undefined,
+      barangay: selectedBarangay || undefined,
+      incidentTypes: config ? [config.incidentType] : undefined,
+      severity: selectedSeverity || undefined,
+    })
+      .then((data) => {
+        if (cancelled) return
+        setServerPerformance(data)
+        setPerformanceSource('server')
+      })
+      .catch((error) => {
+        if (cancelled) return
+        console.warn('[AnalyticsSection] Team performance API unavailable, using browser calculation.', error)
+        setServerPerformance(null)
+        setPerformanceSource('browser')
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [selectedBarangay, selectedDisasterType, selectedMonth, selectedSeverity, selectedYear])
+
+  const localTeamPerformanceData = useMemo<TeamPerformanceItem[]>(() => {
+    const bucket = new Map<string, { assignments: number; resolvedCount: number; minutes: number[] }>()
 
     filteredReports.forEach((report) => {
       const team = getResponseTeamName(report)
-      const current =
-        bucket.get(team) ||
-        {
-          assignments: 0,
-          resolvedCount: 0,
-          withResponseTimeCount: 0,
-          responseMinutesSum: 0,
-          onTimeCount: 0,
-        }
-
+      const current = bucket.get(team) || { assignments: 0, resolvedCount: 0, minutes: [] }
       current.assignments += 1
-
-      if (getDisplayReportStatus(report) === 'resolved') {
-        current.resolvedCount += 1
-      }
-
+      if (getDisplayReportStatus(report) === 'resolved') current.resolvedCount += 1
       const minutes = getResponseMinutes(report)
-      if (minutes !== null) {
-        current.withResponseTimeCount += 1
-        current.responseMinutesSum += minutes
-
-        if (minutes <= 30) {
-          current.onTimeCount += 1
-        }
-      }
-
+      if (minutes !== null) current.minutes.push(minutes)
       bucket.set(team, current)
     })
 
-    const maxAssignments = safeMax(Array.from(bucket.values()).map((item) => item.assignments))
-
     return Array.from(bucket.entries())
       .map(([team, summary]) => {
-        const averageResponseMinutes =
-          summary.withResponseTimeCount > 0
-            ? Math.round(summary.responseMinutesSum / summary.withResponseTimeCount)
-            : 0
-
+        const measured = summary.minutes.length
+        const average = measured > 0 ? summary.minutes.reduce((total, value) => total + value, 0) / measured : null
+        const sorted = [...summary.minutes].sort((a, b) => a - b)
+        const middle = Math.floor(sorted.length / 2)
+        const median = measured === 0 ? null : measured % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2
         const resolutionRate = percent(summary.resolvedCount, summary.assignments)
-        const onTimeRate =
-          summary.withResponseTimeCount > 0
-            ? percent(summary.onTimeCount, summary.withResponseTimeCount)
-            : 0
-
-        const speedScore =
-          summary.withResponseTimeCount > 0
-            ? Math.max(0, 100 - Math.min(100, (averageResponseMinutes / 120) * 100))
-            : 0
-
-        const loadScore = Math.min(100, Math.round((summary.assignments / maxAssignments) * 100))
-
-        const performanceScore = Math.round(
-          speedScore * 0.45 + resolutionRate * 0.35 + onTimeRate * 0.15 + loadScore * 0.05,
-        )
+        const onTimeRate = percent(summary.minutes.filter((value) => value <= ON_TIME_MINUTES).length, measured)
 
         return {
           team,
           assignments: summary.assignments,
           resolvedCount: summary.resolvedCount,
-          withResponseTimeCount: summary.withResponseTimeCount,
-          averageResponseMinutes,
+          withResponseTimeCount: measured,
+          averageResponseMinutes: average === null ? 0 : Math.round(average),
+          medianResponseMinutes: median === null ? null : Math.round(median),
           onTimeRate,
           resolutionRate,
-          performanceScore,
+          performanceScore: Math.round(getPerformanceScore(average, onTimeRate, resolutionRate)),
         }
       })
-      .sort((a, b) => b.performanceScore - a.performanceScore)
-      .slice(0, 8)
+      .sort((a, b) => b.performanceScore - a.performanceScore || b.assignments - a.assignments)
   }, [filteredReports])
+
+  const teamPerformanceData = useMemo<TeamPerformanceItem[]>(() => {
+    if (performanceSource !== 'server' || !serverPerformance) return localTeamPerformanceData.slice(0, 8)
+
+    return serverPerformance.teams.slice(0, 8).map((team) => ({
+      team: team.team,
+      assignments: team.assignments,
+      resolvedCount: team.resolved,
+      withResponseTimeCount: team.measured,
+      averageResponseMinutes: Math.round(team.average_minutes ?? 0),
+      medianResponseMinutes: team.median_minutes === null ? null : Math.round(team.median_minutes),
+      onTimeRate: Math.round(team.on_time_rate),
+      resolutionRate: Math.round(team.resolution_rate),
+      performanceScore: Math.round(team.score),
+    }))
+  }, [localTeamPerformanceData, performanceSource, serverPerformance])
 
   const teamPerformanceChartData = useMemo<ChartItem[]>(
     () =>
       teamPerformanceData.map((item) => ({
         label: item.team,
         value: item.performanceScore,
-        helper: `${item.resolutionRate}% resolved • ${item.onTimeRate}% <=30m • ${item.assignments} assignments`,
+        helper: `${item.resolutionRate}% resolved • ${item.withResponseTimeCount > 0 ? `${item.onTimeRate}% within ${ON_TIME_MINUTES} min` : 'no timed reports'} • ${item.assignments} reports`,
         color:
           item.performanceScore >= 80
             ? '#16a34a'
@@ -1284,37 +1306,56 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
   )
 
   const teamPerformanceSummary = useMemo(() => {
-    if (teamPerformanceData.length === 0) {
+    const top = teamPerformanceData[0]
+
+    if (performanceSource === 'server' && serverPerformance) {
+      const overall = serverPerformance.overall
       return {
-        topTeam: 'N/A',
-        topScore: 0,
-        overallAvgResponse: 0,
-        overallOnTimeRate: 0,
+        topTeam: top?.team || 'N/A',
+        topScore: top?.performanceScore ?? 0,
+        overallAvgResponse: overall.average_minutes === null ? null : Math.round(overall.average_minutes),
+        overallMedianResponse: overall.median_minutes === null ? null : Math.round(overall.median_minutes),
+        overallOnTimeRate: Math.round(overall.on_time_rate),
+        overallResolutionRate: Math.round(overall.resolution_rate),
+        measured: overall.measured,
+        assignments: overall.assignments,
       }
     }
 
-    const top = teamPerformanceData[0]
-    const measuredTeams = teamPerformanceData.filter((item) => item.withResponseTimeCount > 0)
-
-    const overallAvgResponse =
-      measuredTeams.length > 0
-        ? Math.round(
-            measuredTeams.reduce((sum, item) => sum + item.averageResponseMinutes, 0) / measuredTeams.length,
-          )
-        : 0
-
-    const overallOnTimeRate =
-      measuredTeams.length > 0
-        ? Math.round(measuredTeams.reduce((sum, item) => sum + item.onTimeRate, 0) / measuredTeams.length)
-        : 0
+    const allMinutes = filteredReports
+      .map((report) => getResponseMinutes(report))
+      .filter((minutes): minutes is number => minutes !== null)
+      .sort((a, b) => a - b)
+    const middle = Math.floor(allMinutes.length / 2)
+    const resolved = filteredReports.filter((report) => getDisplayReportStatus(report) === 'resolved').length
 
     return {
-      topTeam: top.team,
-      topScore: top.performanceScore,
-      overallAvgResponse,
-      overallOnTimeRate,
+      topTeam: top?.team || 'N/A',
+      topScore: top?.performanceScore ?? 0,
+      overallAvgResponse: allMinutes.length ? Math.round(allMinutes.reduce((a, b) => a + b, 0) / allMinutes.length) : null,
+      overallMedianResponse: allMinutes.length
+        ? Math.round(allMinutes.length % 2 ? allMinutes[middle] : (allMinutes[middle - 1] + allMinutes[middle]) / 2)
+        : null,
+      overallOnTimeRate: percent(allMinutes.filter((minutes) => minutes <= ON_TIME_MINUTES).length, allMinutes.length),
+      overallResolutionRate: percent(resolved, filteredReports.length),
+      measured: allMinutes.length,
+      assignments: filteredReports.length,
     }
-  }, [teamPerformanceData])
+  }, [filteredReports, performanceSource, serverPerformance, teamPerformanceData])
+
+  // Speed and resolution per severity level (server only; it knows the linked incident's severity).
+  const severityPerformanceData = useMemo<ChartItem[]>(() => {
+    if (performanceSource !== 'server' || !serverPerformance) return []
+    const colors: Record<string, string> = { critical: '#dc2626', high: '#f97316', moderate: '#f59e0b', low: '#10b981' }
+    return serverPerformance.by_severity
+      .filter((item) => item.severity !== 'unknown')
+      .map((item) => ({
+        label: item.severity.charAt(0).toUpperCase() + item.severity.slice(1),
+        value: Math.round(item.resolution_rate),
+        helper: `${item.assignments} reports • ${item.average_minutes === null ? 'no timed reports' : `${Math.round(item.average_minutes)} min avg response`}`,
+        color: colors[item.severity] || '#64748b',
+      }))
+  }, [performanceSource, serverPerformance])
 
   const barangayRiskData = useMemo(() => {
     const map = new Map<string, RiskLocation>()
@@ -1660,11 +1701,21 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
       [55, 38, contentWidth - 93],
     )
 
-    section('8. Emergency Response Performance', 'Team response metrics calculated from the filtered reports with available response data.')
+    section(
+      '8. Emergency Response Performance',
+      `Response time = minutes from the incident to the filed report; on time = within ${ON_TIME_MINUTES} minutes. Score = speed 40% + on-time 20% + resolved 40%.`,
+    )
     table(
-      ['Team', 'Assignments', 'Resolved', 'Avg response', 'Performance'],
-      teamPerformanceData.map((item) => [item.team, String(item.assignments), `${item.resolutionRate}%`, `${item.averageResponseMinutes} min`, `${item.performanceScore}/100`]),
-      [55, 28, 28, 38, contentWidth - 149],
+      ['Team', 'Reports', 'Resolved', 'Avg response', 'On time', 'Score'],
+      teamPerformanceData.map((item) => [
+        item.team,
+        String(item.assignments),
+        `${item.resolutionRate}%`,
+        item.withResponseTimeCount > 0 ? `${item.averageResponseMinutes} min` : 'N/A',
+        item.withResponseTimeCount > 0 ? `${item.onTimeRate}%` : 'N/A',
+        `${item.performanceScore}/100`,
+      ]),
+      [50, 22, 24, 30, 24, contentWidth - 150],
     )
     barChart(teamPerformanceChartData, 100)
 
@@ -2188,11 +2239,18 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
 
         <div className={`${glassPanelClass} p-5 sm:p-6`}>
           <SectionHeader
-            badge="Team Performance"
-            description="Measures team responsiveness and operational performance using actual response timestamps, resolution rate, and on-time response share."
+            badge={performanceSource === 'server' ? 'Live from server' : performanceSource === 'loading' ? 'Loading...' : 'Calculated in browser'}
+            description="Compares response teams by response time, reports finished on time, and incidents resolved. Follows the filters above."
             eyebrow="Emergency Response Teams"
             title="Responsiveness and Performance Analytics"
           />
+
+          <p className="mb-5 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs leading-relaxed text-slate-600">
+            <span className="font-semibold text-slate-800">How this is measured: </span>
+            response time is the minutes from when the incident happened to when the responder filed the report (dispatch and arrival
+            times are not recorded yet). On time means within {ON_TIME_MINUTES} minutes. Resolved means the incident status is resolved
+            or contained. Score = speed 40% + on-time 20% + resolved 40%; teams with no timed reports are scored on resolved only.
+          </p>
 
           <div className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <AnalyticsMetricCard
@@ -2209,15 +2267,19 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
             />
             <AnalyticsMetricCard
               accentClass="border-t-orange-600"
-              helper="Mean average response time across teams with measurable timestamps."
+              helper={
+                teamPerformanceSummary.overallMedianResponse === null
+                  ? 'No timed reports in this view.'
+                  : `Median ${teamPerformanceSummary.overallMedianResponse} min • ${teamPerformanceSummary.measured} of ${teamPerformanceSummary.assignments} reports timed.`
+              }
               label="Avg Response Time"
-              value={`${teamPerformanceSummary.overallAvgResponse} min`}
+              value={teamPerformanceSummary.overallAvgResponse === null ? 'N/A' : `${teamPerformanceSummary.overallAvgResponse} min`}
             />
             <AnalyticsMetricCard
               accentClass="border-t-violet-600"
-              helper="Average share of team responses completed within 30 minutes."
+              helper={`Reports filed within ${ON_TIME_MINUTES} minutes • ${teamPerformanceSummary.overallResolutionRate}% of incidents resolved.`}
               label="On-Time Rate"
-              value={`${teamPerformanceSummary.overallOnTimeRate}%`}
+              value={teamPerformanceSummary.measured > 0 ? `${teamPerformanceSummary.overallOnTimeRate}%` : 'N/A'}
             />
           </div>
 
@@ -2245,6 +2307,18 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
               <TeamResponseTimeChart items={teamPerformanceData} />
             </div>
           </div>
+
+          {severityPerformanceData.length > 0 ? (
+            <div className="mt-6">
+              <SectionHeader
+                badge="% resolved"
+                description="Share of incidents resolved per severity level, with the average response time."
+                eyebrow="By Severity"
+                title="Performance by Severity"
+              />
+              <HorizontalBarChart emptyText="No severity data available yet." items={severityPerformanceData} />
+            </div>
+          ) : null}
         </div>
 
       </div>

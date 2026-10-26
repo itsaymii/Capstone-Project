@@ -296,5 +296,17 @@ def hazard_insights_view(request):
 @api_view(['GET'])
 @permission_classes([AllowAny])
 def response_performance_view(request):
-    data = get_response_performance_metrics()
-    return Response(data)
+    """Team responsiveness and performance; accepts year, month, barangay, incident_type, severity, team."""
+    params = request.query_params
+    filters = {key: params.get(key, '').strip() for key in ('year', 'month', 'barangay', 'incident_type', 'severity', 'team')}
+
+    if filters['year'] and not filters['year'].isdigit():
+        return Response({'year': 'Year must be a number, e.g. 2026.'}, status=status.HTTP_400_BAD_REQUEST)
+    if filters['month'] and not (filters['month'].isdigit() and 1 <= int(filters['month']) <= 12):
+        return Response({'month': 'Month must be 1 to 12.'}, status=status.HTTP_400_BAD_REQUEST)
+    if filters['month'] and not filters['year']:
+        return Response({'month': 'Choose a year together with the month.'}, status=status.HTTP_400_BAD_REQUEST)
+    if filters['severity'] and filters['severity'].lower() not in ('low', 'moderate', 'high', 'critical'):
+        return Response({'severity': 'Severity must be low, moderate, high or critical.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    return Response(get_response_performance_metrics(filters))
