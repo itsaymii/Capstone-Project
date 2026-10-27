@@ -12,7 +12,8 @@ from .aggregators import get_barangay_profile, get_hazard_citywide_stats, get_in
 from .performance import get_response_performance_metrics
 from .scoring import calculate_risk_score
 from .prediction import predict_top_hazard
-from .insights import generate_hazard_insight
+from .insights import format_insight_text, generate_hazard_insight_sections
+from locations.models import Barangay
 
 
 def build_score_history(barangay_id, window_days=30, points=6):
@@ -272,13 +273,13 @@ def hazard_insights_view(request):
         end_date=end_date
     )
 
-    # 2. Generate Insight
-    insight_text = generate_hazard_insight(
-        hazard_name, 
-        stats, 
-        days=days, 
-        start_date=start_date, 
-        end_date=end_date
+    # 2. Generate Insight (sections for the page, plus the same content as text)
+    insight_sections = generate_hazard_insight_sections(
+        hazard_name,
+        stats,
+        days=days,
+        start_date=start_date,
+        end_date=end_date,
     )
 
     # 3. Return strategic intelligence
@@ -290,7 +291,61 @@ def hazard_insights_view(request):
             'end_date': end_date_str
         },
         'raw_stats': stats,
-        'ai_insight': insight_text
+        'ai_insight': format_insight_text(insight_sections),
+        'ai_insight_sections': insight_sections,
+    })
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def barangay_risk_ranking_view(request):
+    """
+    Risk score of every barangay for one period, highest first.
+    Params: days (default 90), or start_date + end_date, or year (+ month).
+    """
+    try:
+        days = int(request.query_params.get('days', 90))
+    except ValueError:
+        return Response({'error': 'days must be an integer.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    year_params, year_param_error = parse_year_month_params(request)
+    if year_param_error:
+        return year_param_error
+
+    start_date_str = request.query_params.get('start_date')
+    end_date_str = request.query_params.get('end_date')
+    start_date = parse_date(start_date_str) if start_date_str else None
+    end_date = parse_date(end_date_str) if end_date_str else None
+
+    if (start_date_str or end_date_str) and not (start_date and end_date):
+        return Response(
+            {'error': 'Both start_date and end_date must be valid YYYY-MM-DD values when using a custom range.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if start_date and end_date:
+        if start_date > end_date:
+            return Response({'error': 'start_date must be earlier than or equal to end_date.'}, status=status.HTTP_400_BAD_REQUEST)
+        start_date, end_date = normalize_datetime_range(start_date, end_date)
+    elif year_params['has_year_filter']:
+        start_date, end_date = resolve_year_month_range(year_params['year'], year_params['month'])
+
+    rows = []
+    for barangay in Barangay.objects.only('id', 'name').order_by('name'):
+        risk = calculate_risk_score(str(barangay.id), days=days, start_date=start_date, end_date=end_date)
+        rows.append({
+            'barangay_id': str(barangay.id),
+            'barangay_name': barangay.name,
+            'score': risk['score'],
+            'breakdown': risk['breakdown'],
+            'total_incidents': risk['explanation']['total_incidents'],
+        })
+
+    rows.sort(key=lambda row: (-row['score'], -row['total_incidents'], row['barangay_name']))
+    return Response({
+        'timeframe_days': None if start_date else days,
+        'start_date': start_date.date().isoformat() if start_date else None,
+        'end_date': end_date.date().isoformat() if end_date else None,
+        'results': rows,
     })
 
 @api_view(['GET'])

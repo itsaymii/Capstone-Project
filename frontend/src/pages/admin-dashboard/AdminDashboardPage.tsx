@@ -2094,7 +2094,7 @@ export function AdminDashboardPage() {
           </header>
 
           {activeSection === 'overview' ? (
-            <section className="mx-auto w-full max-w-[1440px] px-3 pb-8 sm:px-5 lg:px-6 lg:pb-10">
+            <section className="w-full px-3 pb-8 sm:px-6 lg:pb-10">
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 xl:gap-4">
                 {overviewMetricCards.map((card) => (
                   <article

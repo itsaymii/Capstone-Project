@@ -3,6 +3,7 @@ import type {
   AdminDashboardSummaryResponse,
   Barangay,
   BarangayRiskScoreResponse,
+  BarangayRiskRankingResponse,
   HazardInsightResponse,
   DashboardAccountsResponse,
   DashboardCreateAccountPayload,
@@ -194,6 +195,12 @@ export async function verifyRegisterOtp(payload: VerifyOtpPayload): Promise<Auth
 export async function loginAccount(payload: LoginApiPayload): Promise<AuthApiResponse> {
   const { data } = await api.post<AuthApiResponse>('/accounts/auth/login/', payload)
   return data
+}
+
+/** End the server session. */
+export async function logoutAccount(): Promise<void> {
+  await ensureCsrfCookie()
+  await api.post('/accounts/auth/logout/')
 }
 
 export async function verifyLoginOtp(payload: VerifyOtpPayload): Promise<AuthApiResponse> {
@@ -404,6 +411,25 @@ export async function getBarangayRiskScore(
   const { data } = await api.get<BarangayRiskScoreResponse>('/api/analytics/barangay-risk/', {
     params,
   })
+  return data
+}
+
+/** Risk score of every barangay for one period, highest first. */
+export async function getBarangayRiskRanking(options?: {
+  days?: number
+  startDate?: string
+  endDate?: string
+  year?: number
+  month?: number
+}): Promise<BarangayRiskRankingResponse> {
+  const params = new URLSearchParams()
+  if (options?.days !== undefined) params.append('days', String(options.days))
+  if (options?.startDate) params.append('start_date', options.startDate)
+  if (options?.endDate) params.append('end_date', options.endDate)
+  if (options?.year !== undefined) params.append('year', String(options.year))
+  if (options?.month !== undefined) params.append('month', String(options.month))
+
+  const { data } = await api.get<BarangayRiskRankingResponse>('/api/analytics/barangay-risk-ranking/', { params })
   return data
 }
 

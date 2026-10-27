@@ -11,9 +11,30 @@ import {
   countByTimeOfDay,
   countByWeekday,
   getAnalyticsTypeLabel,
-  getAnalyticsTypeMeta,
   getIncidentToReportMinutes,
+  getOccurredHour,
 } from '../../../data/incidentCategories'
+import {
+  BarList,
+  ChoroplethMap,
+  DayHourGrid,
+  HeatTable,
+  Histogram,
+  LineChart,
+  ScatterPlot,
+  ShareBar,
+  ShareRows,
+  SmallMultiples,
+  SERIES_BLUE,
+  STATUS_COLORS,
+  normalizeBarangayKey,
+  type BarItem,
+  type BarangayFeature,
+  type LineSeries,
+  type MapValue,
+  type ScatterPoint,
+  type ShareSegment,
+} from './analyticsCharts'
 
 type AnalyticsSectionProps = {
   reports: HazardIncident[]
@@ -38,11 +59,6 @@ type RiskLocation = {
   earthquake: number
   victims: number
   severityPressure: number
-}
-
-type RadarAxis = {
-  label: string
-  value: number
 }
 
 type TeamPerformanceItem = {
@@ -75,6 +91,10 @@ function hexToRgb(hex: string | undefined): [number, number, number] {
   const value = parseInt(match[1], 16)
   return [(value >> 16) & 255, (value >> 8) & 255, value & 255]
 }
+
+// Reference palette slots, in order, for parts-of-a-whole bars (colors follow the option's position).
+const SHARE_COLORS = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300']
+const EARTHQUAKE_COLOR = '#008300'
 
 // Same rules as backend/analytics/performance.py.
 const ON_TIME_MINUTES = 30
@@ -436,455 +456,6 @@ function EmptyState({ message }: { message: string }) {
   )
 }
 
-function HorizontalBarChart({
-  items,
-  emptyText = 'No data available yet.',
-}: {
-  items: ChartItem[]
-  emptyText?: string
-}) {
-  const maxValue = safeMax(items.map((item) => item.value))
-
-  if (items.length === 0 || items.every((item) => item.value === 0)) {
-    return <EmptyState message={emptyText} />
-  }
-
-  return (
-    <div className="space-y-3">
-      {items.map((item, index) => {
-        const width = `${Math.max(8, (item.value / maxValue) * 100)}%`
-
-        return (
-          <article
-            className="group rounded-2xl border border-slate-100 bg-white/85 p-4 shadow-sm transition-all duration-300 hover:-translate-y-0.5 hover:shadow-md"
-            key={item.label}
-          >
-            <div className="mb-2 flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <p className="truncate text-sm font-semibold text-slate-800">{item.label}</p>
-                {item.helper ? (
-                  <p className="mt-0.5 text-xs text-slate-500">{item.helper}</p>
-                ) : null}
-              </div>
-              <span className="shrink-0 rounded-full bg-slate-50 px-3 py-1 text-xs font-bold text-slate-900">
-                {item.value}
-              </span>
-            </div>
-
-            <div className="h-3 overflow-hidden rounded-full bg-slate-100">
-              <div
-                className="h-full rounded-full shadow-[0_4px_16px_rgba(15,23,42,0.14)] transition-all duration-700 group-hover:brightness-110"
-                style={{
-                  background: `linear-gradient(90deg, ${item.color || '#bfdbfe'}, ${
-                    item.color || '#2563eb'
-                  })`,
-                  width,
-                }}
-              />
-            </div>
-
-            <p className="mt-1 text-right text-[10px] font-bold text-slate-400">
-              Rank {index + 1}
-            </p>
-          </article>
-        )
-      })}
-    </div>
-  )
-}
-
-function DonutChart({
-  items,
-  total,
-}: {
-  items: ChartItem[]
-  total: number
-}) {
-  const radius = 74
-  const circumference = 2 * Math.PI * radius
-  let runningTotal = 0
-
-  return (
-    <div className="flex flex-col items-center gap-4 rounded-[24px] border border-slate-100 bg-white/85 p-4 lg:flex-row lg:justify-center">
-      <svg className="h-[230px] w-[230px]" viewBox="0 0 240 240">
-        <circle cx="120" cy="120" fill="#ffffff" r="106" />
-        <circle cx="120" cy="120" fill="none" r={radius} stroke="#e2e8f0" strokeWidth="28" />
-
-        {items.map((item) => {
-          const share = total > 0 ? item.value / total : 0
-          const dashLength = share * circumference
-          const dashOffset = -runningTotal * circumference
-          runningTotal += share
-
-          return (
-            <circle
-              cx="120"
-              cy="120"
-              fill="none"
-              key={item.label}
-              r={radius}
-              stroke={item.color || '#2563eb'}
-              strokeDasharray={`${dashLength} ${circumference - dashLength}`}
-              strokeDashoffset={dashOffset}
-              strokeLinecap="round"
-              strokeWidth="28"
-              transform="rotate(-90 120 120)"
-            >
-              <animate
-                attributeName="stroke-dasharray"
-                dur="0.9s"
-                fill="freeze"
-                values={`0 ${circumference}; ${dashLength} ${circumference - dashLength}`}
-              />
-            </circle>
-          )
-        })}
-
-        <circle cx="120" cy="120" fill="#ffffff" r="54" />
-        <text fill="#0f172a" fontSize="32" fontWeight="800" textAnchor="middle" x="120" y="114">
-          {total}
-        </text>
-        <text fill="#64748b" fontSize="12" fontWeight="700" textAnchor="middle" x="120" y="136">
-          Records
-        </text>
-      </svg>
-
-      <div className="w-full space-y-2 lg:max-w-[260px]">
-        {items.map((item) => (
-          <div className="rounded-2xl bg-slate-50 p-3" key={item.label}>
-            <div className="mb-2 flex items-center justify-between gap-3">
-              <div className="flex min-w-0 items-center gap-2">
-                <span className="h-3 w-3 shrink-0 rounded-full" style={{ backgroundColor: item.color || '#2563eb' }} />
-                <span className="truncate text-xs font-semibold text-slate-700">{item.label}</span>
-              </div>
-              <span className="shrink-0 text-xs font-semibold text-slate-900">
-                {percent(item.value, total)}%
-              </span>
-            </div>
-            <div className="h-2 overflow-hidden rounded-full bg-white">
-              <div
-                className="h-full rounded-full"
-                style={{
-                  backgroundColor: item.color || '#2563eb',
-                  width: `${Math.max(4, percent(item.value, total))}%`,
-                }}
-              />
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}
-
-function TrendChart({ points }: { points: TrendPoint[] }) {
-  if (points.length === 0 || points.every((point) => point.reports === 0 && point.earthquakes === 0)) {
-    return <EmptyState message="No dated incident or earthquake activity is available yet." />
-  }
-
-  const width = 760
-  const height = 280
-  const padding = { top: 24, right: 20, bottom: 48, left: 42 }
-  const chartWidth = width - padding.left - padding.right
-  const chartHeight = height - padding.top - padding.bottom
-  const maxValue = safeMax(points.flatMap((point) => [point.reports, point.earthquakes]))
-  const xStep = points.length > 1 ? chartWidth / (points.length - 1) : chartWidth
-  const getX = (index: number) => padding.left + (points.length > 1 ? index * xStep : chartWidth / 2)
-  const getY = (value: number) => padding.top + chartHeight - (value / maxValue) * chartHeight
-  const reportPath = points.map((point, index) => `${getX(index)},${getY(point.reports)}`).join(' ')
-  const earthquakePath = points.map((point, index) => `${getX(index)},${getY(point.earthquakes)}`).join(' ')
-  const labelStep = Math.max(1, Math.ceil(points.length / 8))
-
-  return (
-    <div className="rounded-[24px] border border-slate-100 bg-white/85 p-4">
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap gap-4 text-xs font-semibold text-slate-600">
-          <span className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full bg-blue-600" />Incident reports</span>
-          <span className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full bg-emerald-500" />Live earthquakes</span>
-        </div>
-        <span className="text-xs text-slate-500">Peak: {maxValue}</span>
-      </div>
-
-      <div className="overflow-x-auto">
-        <svg aria-label="Incident reports and live earthquakes over time" className="h-auto min-w-[620px] w-full" role="img" viewBox={`0 0 ${width} ${height}`}>
-          {[0, 0.5, 1].map((ratio) => {
-            const y = padding.top + chartHeight * ratio
-            const value = Math.round(maxValue * (1 - ratio))
-            return (
-              <g key={ratio}>
-                <line stroke="#e2e8f0" strokeDasharray="4 5" x1={padding.left} x2={width - padding.right} y1={y} y2={y} />
-                <text fill="#94a3b8" fontSize="11" textAnchor="end" x={padding.left - 8} y={y + 4}>{value}</text>
-              </g>
-            )
-          })}
-          <polyline fill="none" points={reportPath} stroke="#2563eb" strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" />
-          <polyline fill="none" points={earthquakePath} stroke="#10b981" strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" />
-          {points.map((point, index) => (
-            <g key={`${point.label}-${index}`}>
-              <circle cx={getX(index)} cy={getY(point.reports)} fill="#ffffff" r="4" stroke="#2563eb" strokeWidth="2" />
-              <circle cx={getX(index)} cy={getY(point.earthquakes)} fill="#ffffff" r="4" stroke="#10b981" strokeWidth="2" />
-              {index % labelStep === 0 || index === points.length - 1 ? (
-                <text fill="#64748b" fontSize="10" textAnchor="middle" x={getX(index)} y={height - 16}>{point.label}</text>
-              ) : null}
-            </g>
-          ))}
-        </svg>
-      </div>
-    </div>
-  )
-}
-
-function TeamResponseTimeChart({ items }: { items: TeamPerformanceItem[] }) {
-  const measurable = items.filter((item) => item.withResponseTimeCount > 0)
-
-  if (measurable.length === 0) {
-    return <EmptyState message="No response-time fields are available for team analytics yet." />
-  }
-
-  const maxMinutes = safeMax(measurable.map((item) => item.averageResponseMinutes))
-
-  return (
-    <div className="space-y-3">
-      {measurable.map((item) => {
-        const width = `${Math.max(8, (item.averageResponseMinutes / maxMinutes) * 100)}%`
-        const tone =
-          item.averageResponseMinutes <= 30
-            ? 'from-emerald-200 to-emerald-500'
-            : item.averageResponseMinutes <= 60
-              ? 'from-amber-200 to-amber-500'
-              : 'from-rose-200 to-rose-500'
-
-        return (
-          <article
-            className="rounded-2xl border border-slate-100 bg-white/85 p-4 shadow-sm"
-            key={`team-time-${item.team}`}
-          >
-            <div className="mb-2 flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <p className="truncate text-sm font-semibold text-slate-800">{item.team}</p>
-                <p className="mt-0.5 text-xs text-slate-500">
-                  {item.withResponseTimeCount} timed reports • {item.resolvedCount} resolved
-                </p>
-              </div>
-              <span className="shrink-0 rounded-full bg-slate-50 px-3 py-1 text-xs font-bold text-slate-900">
-                {item.averageResponseMinutes} min avg
-              </span>
-            </div>
-
-            <div className="h-3 overflow-hidden rounded-full bg-slate-100">
-              <div
-                className={`h-full rounded-full bg-gradient-to-r ${tone}`}
-                style={{ width }}
-              />
-            </div>
-          </article>
-        )
-      })}
-    </div>
-  )
-}
-
-function RadarChart({ axes }: { axes: RadarAxis[] }) {
-  const size = 260
-  const center = size / 2
-  const radius = 90
-  const levels = [0.25, 0.5, 0.75, 1]
-  const maxValue = safeMax(axes.map((axis) => axis.value))
-
-  const points = axes.map((axis, index) => {
-    const angle = -Math.PI / 2 + (index / axes.length) * Math.PI * 2
-    const distance = (axis.value / maxValue) * radius
-    return {
-      ...axis,
-      x: center + Math.cos(angle) * distance,
-      y: center + Math.sin(angle) * distance,
-      lx: center + Math.cos(angle) * (radius + 24),
-      ly: center + Math.sin(angle) * (radius + 24),
-      ax: center + Math.cos(angle) * radius,
-      ay: center + Math.sin(angle) * radius,
-    }
-  })
-
-  const polygon = points.map((point) => `${point.x},${point.y}`).join(' ')
-
-  return (
-    <div className="rounded-[24px] border border-blue-100 bg-[radial-gradient(circle_at_center,#eff6ff_0%,#ffffff_60%,#f8fafc_100%)] p-4">
-      <svg className="mx-auto h-[300px] w-full max-w-[360px]" viewBox={`0 0 ${size} ${size}`}>
-        {levels.map((level) => {
-          const levelPoints = axes.map((_, index) => {
-            const angle = -Math.PI / 2 + (index / axes.length) * Math.PI * 2
-            return `${center + Math.cos(angle) * radius * level},${center + Math.sin(angle) * radius * level}`
-          })
-
-          return (
-            <polygon
-              fill="none"
-              key={level}
-              points={levelPoints.join(' ')}
-              stroke="#dbeafe"
-              strokeWidth="1.4"
-            />
-          )
-        })}
-
-        {points.map((point) => (
-          <g key={point.label}>
-            <line stroke="#dbeafe" strokeWidth="1.4" x1={center} x2={point.ax} y1={center} y2={point.ay} />
-            <text fill="#475569" fontSize="10" fontWeight="700" textAnchor="middle" x={point.lx} y={point.ly}>
-              {point.label}
-            </text>
-          </g>
-        ))}
-
-        <polygon fill="#2563eb" opacity="0.18" points={polygon} />
-        <polygon fill="none" points={polygon} stroke="#2563eb" strokeLinejoin="round" strokeWidth="3" />
-
-        {points.map((point) => (
-          <circle cx={point.x} cy={point.y} fill="#2563eb" key={`${point.label}-point`} r="4" />
-        ))}
-      </svg>
-    </div>
-  )
-}
-
-function HeatRiskMapGrid({ locations }: { locations: RiskLocation[] }) {
-  const maxScore = safeMax(locations.map((location) => location.score))
-  const fallbackLocations = locations.length > 0
-    ? locations
-    : [emptyRiskLocation('No location data')]
-
-  return (
-    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-      {fallbackLocations.map((location, index) => {
-        const intensity = location.score / maxScore
-        const riskPercent = Math.min(100, Math.round(intensity * 100))
-
-        const config =
-          intensity >= 0.75
-            ? {
-                card: 'border-red-200 bg-[radial-gradient(circle_at_top_left,#fee2e2_0%,#fff7f7_46%,#ffffff_100%)]',
-                text: 'text-red-800',
-                badge: 'bg-red-600 text-white',
-                meter: 'from-red-200 via-red-400 to-red-600',
-                glow: 'bg-red-500/15',
-                label: 'Critical Hotspot',
-              }
-            : intensity >= 0.5
-              ? {
-                  card: 'border-orange-200 bg-[radial-gradient(circle_at_top_left,#ffedd5_0%,#fff8ef_46%,#ffffff_100%)]',
-                  text: 'text-orange-800',
-                  badge: 'bg-orange-600 text-white',
-                  meter: 'from-orange-200 via-orange-400 to-orange-600',
-                  glow: 'bg-orange-500/15',
-                  label: 'High Watch',
-                }
-              : intensity >= 0.25
-                ? {
-                    card: 'border-amber-200 bg-[radial-gradient(circle_at_top_left,#fef3c7_0%,#fffbea_46%,#ffffff_100%)]',
-                    text: 'text-amber-800',
-                    badge: 'bg-amber-500 text-white',
-                    meter: 'from-amber-100 via-amber-300 to-amber-500',
-                    glow: 'bg-amber-400/15',
-                    label: 'Moderate Watch',
-                  }
-                : {
-                    card: 'border-emerald-200 bg-[radial-gradient(circle_at_top_left,#d1fae5_0%,#f3fffa_46%,#ffffff_100%)]',
-                    text: 'text-emerald-800',
-                    badge: 'bg-emerald-600 text-white',
-                    meter: 'from-emerald-100 via-emerald-300 to-emerald-600',
-                    glow: 'bg-emerald-500/15',
-                    label: 'Routine Watch',
-                  }
-
-        return (
-          <article
-            className={`group relative overflow-hidden rounded-[26px] border p-5 shadow-sm transition-all duration-300 hover:-translate-y-1.5 hover:shadow-[0_20px_45px_rgba(15,23,42,0.14)] ${config.card}`}
-            key={location.location}
-          >
-            <div className={`pointer-events-none absolute -right-10 -top-10 h-28 w-28 rounded-full blur-2xl transition-opacity duration-300 group-hover:opacity-100 ${config.glow}`} />
-            <div className="relative z-10">
-              <div className="mb-5 flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="mb-2 flex flex-wrap items-center gap-2">
-                    <span className={`rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.08em] ${config.badge}`}>
-                      Rank #{index + 1}
-                    </span>
-                    <span className="rounded-full bg-white/70 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">
-                      {config.label}
-                    </span>
-                  </div>
-
-                  <p className={`line-clamp-2 min-h-[44px] text-base font-semibold leading-snug ${config.text}`}>
-                    {location.location}
-                  </p>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div className="rounded-2xl border border-white/70 bg-white/75 p-4 shadow-sm">
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">
-                    Incidents
-                  </p>
-                  <p className={`mt-1 text-3xl font-semibold ${config.text}`}>
-                    {location.incidents}
-                  </p>
-                </div>
-
-                <div className="rounded-2xl border border-white/70 bg-white/75 p-4 shadow-sm">
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">
-                    Risk Score
-                  </p>
-                  <p className={`mt-1 text-3xl font-semibold ${config.text}`}>
-                    {location.score}
-                  </p>
-                </div>
-              </div>
-
-              <div className="mt-5 rounded-2xl border border-white/70 bg-white/75 p-4 shadow-sm">
-                <div className="mb-2 flex items-center justify-between gap-3">
-                  <p className="text-xs font-semibold text-slate-600">Heat / risk intensity</p>
-                  <p className={`text-xs font-semibold ${config.text}`}>{riskPercent}%</p>
-                </div>
-
-                <div className="h-3 overflow-hidden rounded-full bg-slate-100">
-                  <div
-                    className={`h-full rounded-full bg-gradient-to-r ${config.meter} shadow-[0_6px_18px_rgba(15,23,42,0.16)] transition-all duration-700 group-hover:brightness-110`}
-                    style={{ width: `${Math.max(7, riskPercent)}%` }}
-                  />
-                </div>
-              </div>
-
-              <div className="mt-4 flex flex-wrap gap-2">
-                {[
-                  ...Object.entries(location.typeCounts).sort((a, b) => b[1] - a[1]).slice(0, 3),
-                  ...(location.earthquake > 0 ? [['Earthquake', location.earthquake] as [string, number]] : []),
-                ].map(([label, count]) => (
-                  <span
-                    className="rounded-full bg-white/70 px-3 py-1 text-xs font-medium"
-                    key={label}
-                    style={{ color: getAnalyticsTypeMeta(label).color }}
-                  >
-                    {label} {count}
-                  </span>
-                ))}
-              </div>
-
-              <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-                <span className={`rounded-full bg-white/80 px-4 py-2 text-xs font-semibold ${config.text}`}>
-                  {location.level}
-                </span>
-                <span className="rounded-full bg-white/70 px-4 py-2 text-xs font-medium text-slate-600">
-                  Load: {location.responseLoad}
-                </span>
-              </div>
-            </div>
-          </article>
-        )
-      })}
-    </div>
-  )
-}
-
 function getAnalyticsRecordKey(report: HazardIncident): string {
   const record = report as any
 
@@ -1002,22 +573,9 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
     [analyticsReports, earthquakeEvents],
   )
 
-  const filteredReports = useMemo(() => {
+  // Filters other than the date, so the KPI cards can compare with the period before.
+  const nonDateFilteredReports = useMemo(() => {
     let result = analyticsReports
-
-    if (selectedYear) {
-      result = result.filter((report) => getReportDate(report).getFullYear().toString() === selectedYear)
-    }
-
-    if (selectedMonth && selectedYear) {
-      result = result.filter((report) => {
-        const date = getReportDate(report)
-        return (
-          date.getFullYear().toString() === selectedYear &&
-          (date.getMonth() + 1).toString().padStart(2, '0') === selectedMonth
-        )
-      })
-    }
 
     if (selectedBarangay) {
       result = result.filter((report) => getLocationName(report.location) === selectedBarangay)
@@ -1032,7 +590,64 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
     }
 
     return result
-  }, [analyticsReports, selectedBarangay, selectedDisasterType, selectedMonth, selectedSeverity, selectedYear])
+  }, [analyticsReports, selectedBarangay, selectedDisasterType, selectedSeverity])
+
+  const filteredReports = useMemo(() => {
+    if (!selectedYear) return nonDateFilteredReports
+
+    return nonDateFilteredReports.filter((report) => {
+      const date = getReportDate(report)
+      if (date.getFullYear().toString() !== selectedYear) return false
+      return !selectedMonth || (date.getMonth() + 1).toString().padStart(2, '0') === selectedMonth
+    })
+  }, [nonDateFilteredReports, selectedMonth, selectedYear])
+
+  // The same filters on the period before: previous month, previous year, or the 30 days before the last 30.
+  const periodComparison = useMemo(() => {
+    const countBetween = (start: Date, end: Date) =>
+      nonDateFilteredReports.filter((report) => {
+        const time = getReportDate(report).getTime()
+        return time >= start.getTime() && time < end.getTime()
+      }).length
+
+    if (selectedYear && selectedMonth) {
+      const year = Number(selectedYear)
+      const month = Number(selectedMonth) - 1
+      const previousStart = new Date(year, month - 1, 1)
+      return {
+        current: countBetween(new Date(year, month, 1), new Date(year, month + 1, 1)),
+        previous: countBetween(previousStart, new Date(year, month, 1)),
+        label: previousStart.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }),
+      }
+    }
+
+    if (selectedYear) {
+      const year = Number(selectedYear)
+      return {
+        current: countBetween(new Date(year, 0, 1), new Date(year + 1, 0, 1)),
+        previous: countBetween(new Date(year - 1, 0, 1), new Date(year, 0, 1)),
+        label: String(year - 1),
+      }
+    }
+
+    const now = new Date()
+    const day = 24 * 60 * 60 * 1000
+    return {
+      current: countBetween(new Date(now.getTime() - 30 * day), new Date(now.getTime() + day)),
+      previous: countBetween(new Date(now.getTime() - 60 * day), new Date(now.getTime() - 30 * day)),
+      label: 'the 30 days before',
+      recent: true,
+    }
+  }, [nonDateFilteredReports, selectedMonth, selectedYear])
+
+  const periodChangeText = (() => {
+    const { current, previous, label } = periodComparison
+    const prefix = 'recent' in periodComparison ? `Last 30 days: ${current}. ` : ''
+    if (previous === 0) return `${prefix}${current > 0 ? `No reports in ${label} to compare with.` : 'No reports to compare.'}`
+    const change = Math.round(((current - previous) / previous) * 100)
+    if (change === 0) return `${prefix}Same as ${label} (${previous}).`
+    return `${prefix}${change > 0 ? '▲' : '▼'} ${Math.abs(change)}% vs ${label} (${previous}).`
+  })()
 
   const analysisEarthquakeEvents = useMemo(() => {
     if (selectedBarangay || (selectedDisasterType && selectedDisasterType !== 'Earthquake')) return []
@@ -1095,8 +710,6 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
     return counts
   }, [filteredReports])
 
-  const fireCount = typeCounts.get('Fire Incident') || 0
-  const roadCrashCount = typeCounts.get('Road Crash (RCA)') || 0
   const earthquakeReportCount = typeCounts.get('Earthquake') || 0
   const earthquakeTotalCount = earthquakeReportCount + earthquakeApiCount
 
@@ -1154,11 +767,6 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
     [earthquakeTotalCount, typeCounts],
   )
 
-  const topIncidentType = useMemo(() => {
-    const reportTypes = disasterTypeData.filter((item) => item.label !== 'Earthquake')
-    return reportTypes[0] || null
-  }, [disasterTypeData])
-
   const detailInsights = useMemo(() => buildAllTypeInsights(filteredReports), [filteredReports])
   const [insightTypeChoice, setInsightTypeChoice] = useState<string | null>(null)
   const activeInsights =
@@ -1172,8 +780,6 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
     () => countByWeekday(filteredReports, getReportDate).map((item) => ({ ...item, color: '#0ea5e9' })),
     [filteredReports],
   )
-  const busiestBlock = timeOfDayData.reduce<ChartItem | null>((best, item) => (!best || item.value > best.value ? item : best), null)
-  const busiestDay = weekdayData.reduce<ChartItem | null>((best, item) => (!best || item.value > best.value ? item : best), null)
 
   const severityData = useMemo<ChartItem[]>(
     () => (['Critical', 'High', 'Moderate', 'Low'] as const).map((severity) => {
@@ -1470,14 +1076,252 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
     significantEarthquakes,
   ])
 
-  const radarAxes: RadarAxis[] = [
-    { label: 'Incidents', value: barangayRiskData[0]?.incidents || 0 },
-    { label: 'Risk', value: barangayRiskData[0]?.score || 0 },
-    { label: 'Load', value: barangayRiskData[0]?.responseLoad || 0 },
-    { label: 'Severity', value: barangayRiskData[0]?.severityPressure || 0 },
-    { label: 'Victims', value: barangayRiskData[0]?.victims || 0 },
-    { label: 'Earthquake', value: barangayRiskData[0]?.earthquake || 0 },
-  ]
+
+  // Reports per period for each incident type, with empty periods filled in so lines do not skip gaps.
+  const typeTrend = useMemo(() => {
+    const daily = frequencyMode === 'daily' && Boolean(selectedYear && selectedMonth)
+    const yearly = frequencyMode === 'yearly'
+    const startOf = (date: Date) =>
+      new Date(date.getFullYear(), yearly ? 0 : date.getMonth(), daily ? date.getDate() : 1)
+    const step = (date: Date) =>
+      new Date(date.getFullYear() + (yearly ? 1 : 0), date.getMonth() + (!yearly && !daily ? 1 : 0), date.getDate() + (daily ? 1 : 0))
+
+    const dates = [
+      ...filteredReports.map((report) => getReportDate(report)),
+      ...analysisEarthquakeEvents.map((event) => getEarthquakeEventDate(event)),
+    ]
+    if (dates.length === 0) return { periods: [] as string[], total: [] as number[], earthquakes: [] as number[], byType: [] as LineSeries[] }
+
+    let first = startOf(new Date(Math.min(...dates.map((date) => date.getTime()))))
+    let last = startOf(new Date(Math.max(...dates.map((date) => date.getTime()))))
+    if (selectedYear && !yearly) {
+      // Show the whole selected year (or month) even when the first or last periods are empty.
+      first = selectedMonth && daily ? new Date(Number(selectedYear), Number(selectedMonth) - 1, 1) : selectedMonth ? first : new Date(Number(selectedYear), 0, 1)
+      if (!selectedMonth) last = new Date(Math.min(new Date(Number(selectedYear), 11, 1).getTime(), startOf(new Date()).getTime()))
+      if (selectedMonth && daily) last = new Date(Math.min(new Date(Number(selectedYear), Number(selectedMonth), 0).getTime(), startOf(new Date()).getTime()))
+    }
+
+    const keys: number[] = []
+    for (let cursor = first; cursor.getTime() <= last.getTime() && keys.length < 400; cursor = step(cursor)) keys.push(cursor.getTime())
+    const index = new Map(keys.map((key, position) => [key, position]))
+
+    const total = keys.map(() => 0)
+    const earthquakes = keys.map(() => 0)
+    const perType = new Map<string, number[]>()
+
+    filteredReports.forEach((report) => {
+      const position = index.get(startOf(getReportDate(report)).getTime())
+      if (position === undefined) return
+      total[position] += 1
+      const label = getAnalyticsTypeLabel(report)
+      const values = perType.get(label) || keys.map(() => 0)
+      values[position] += 1
+      perType.set(label, values)
+    })
+    analysisEarthquakeEvents.forEach((event) => {
+      const position = index.get(startOf(getEarthquakeEventDate(event)).getTime())
+      if (position !== undefined) earthquakes[position] += 1
+    })
+
+    const periods = keys.map((key) => {
+      const date = new Date(key)
+      return yearly
+        ? String(date.getFullYear())
+        : daily
+          ? date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+          : `${date.toLocaleDateString(undefined, { month: 'short' })} '${String(date.getFullYear()).slice(2)}`
+    })
+
+    const byType = ANALYTICS_TYPES.filter((type) => perType.has(type.label)).map((type) => ({
+      label: type.label,
+      color: type.color,
+      values: perType.get(type.label)!,
+    }))
+
+    return { periods, total, earthquakes, byType }
+  }, [analysisEarthquakeEvents, filteredReports, frequencyMode, selectedMonth, selectedYear])
+
+  const trendPeak = useMemo(() => {
+    const peak = Math.max(0, ...typeTrend.total)
+    return peak > 0 ? { value: peak, period: typeTrend.periods[typeTrend.total.indexOf(peak)] } : null
+  }, [typeTrend])
+
+  // counts[day][hour], day 0 = Monday; hour = when the incident occurred.
+  const dayHourCounts = useMemo(() => {
+    const counts = Array.from({ length: 7 }, () => Array.from({ length: 24 }, () => 0))
+    filteredReports.forEach((report) => {
+      const hour = getOccurredHour(report)
+      if (hour === null) return
+      const day = (getReportDate(report).getDay() + 6) % 7
+      counts[day][hour] += 1
+    })
+    return counts
+  }, [filteredReports])
+
+  const busiestSlot = useMemo(() => {
+    const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+    let best = { day: 0, hour: 0, value: 0 }
+    dayHourCounts.forEach((hours, day) =>
+      hours.forEach((value, hour) => {
+        if (value > best.value) best = { day, hour, value }
+      }),
+    )
+    const dayTotals = dayHourCounts.map((hours) => hours.reduce((sum, value) => sum + value, 0))
+    const busiestDayIndex = dayTotals.indexOf(Math.max(...dayTotals))
+    const hourTotals = Array.from({ length: 24 }, (_, hour) => dayHourCounts.reduce((sum, hours) => sum + hours[hour], 0))
+    const busiestHour = hourTotals.indexOf(Math.max(...hourTotals))
+    const hourText = (hour: number) => new Date(2026, 0, 1, hour).toLocaleTimeString(undefined, { hour: 'numeric' })
+    return best.value > 0
+      ? {
+          day: days[busiestDayIndex],
+          hour: `${hourText(busiestHour)}–${hourText((busiestHour + 1) % 24)}`,
+          slot: `${days[best.day]} ${hourText(best.hour)}`,
+          value: best.value,
+        }
+      : null
+  }, [dayHourCounts])
+
+  // Barangay boundaries for the map (public/lucena_barangays.geojson).
+  const [barangayFeatures, setBarangayFeatures] = useState<BarangayFeature[]>([])
+  const [mapStatus, setMapStatus] = useState<'loading' | 'ready' | 'error'>('loading')
+
+  useEffect(() => {
+    let cancelled = false
+    fetch('/lucena_barangays.geojson')
+      .then((response) => (response.ok ? response.json() : Promise.reject(new Error(`HTTP ${response.status}`))))
+      .then((data: { features?: BarangayFeature[] }) => {
+        if (cancelled) return
+        setBarangayFeatures((data.features || []).filter((feature) => feature.geometry))
+        setMapStatus('ready')
+      })
+      .catch((error) => {
+        if (cancelled) return
+        console.warn('[AnalyticsSection] Barangay boundaries unavailable.', error)
+        setMapStatus('error')
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  // Incidents per barangay, keyed like the map's barangay names.
+  const barangayStats = useMemo(() => {
+    const stats = new Map<string, { name: string; incidents: number; victims: number; highPriority: number; types: Map<string, number> }>()
+    filteredReports.forEach((report) => {
+      const record = report as HazardIncident & { barangayName?: string | null }
+      const name = record.barangayName ? `Barangay ${record.barangayName}`.replace(/^Barangay Barangay /, 'Barangay ') : getLocationName(report.location)
+      const key = normalizeBarangayKey(name)
+      if (!key || key === 'unspecifiedlocation') return
+      const current = stats.get(key) || { name, incidents: 0, victims: 0, highPriority: 0, types: new Map<string, number>() }
+      current.incidents += 1
+      current.victims += getReportVictimCount(report)
+      if (report.severity === 'High' || report.severity === 'Critical') current.highPriority += 1
+      const type = getAnalyticsTypeLabel(report)
+      current.types.set(type, (current.types.get(type) || 0) + 1)
+      stats.set(key, current)
+    })
+    return stats
+  }, [filteredReports])
+
+  const barangayMapValues = useMemo(() => {
+    const values = new Map<string, MapValue>()
+    barangayStats.forEach((item, key) => {
+      const topType = Array.from(item.types.entries()).sort((a, b) => b[1] - a[1])[0]
+      values.set(key, {
+        value: item.incidents,
+        rows: [
+          { label: 'incidents', value: item.incidents.toLocaleString(), color: SERIES_BLUE },
+          { label: 'high or critical', value: item.highPriority.toLocaleString() },
+          { label: 'victims', value: item.victims.toLocaleString() },
+          ...(topType ? [{ label: `most: ${topType[0]}`, value: topType[1].toLocaleString() }] : []),
+        ],
+      })
+    })
+    return values
+  }, [barangayStats])
+
+  const barangayRanking = useMemo<BarItem[]>(
+    () =>
+      Array.from(barangayStats.values())
+        .sort((a, b) => b.incidents - a.incidents || a.name.localeCompare(b.name))
+        .map((item) => ({ label: item.name, value: item.incidents, note: `${item.highPriority} high or critical · ${item.victims} victims` })),
+    [barangayStats],
+  )
+
+  const selectedBarangayKey = selectedBarangay ? normalizeBarangayKey(selectedBarangay) : null
+
+  function handleMapSelect(key: string): void {
+    const match = availableBarangays.find((name) => normalizeBarangayKey(name) === key)
+    if (!match) return
+    setSelectedBarangay((current) => (current === match ? null : match))
+  }
+
+  // Top barangays × incident types.
+  const barangayTypeTable = useMemo(() => {
+    const columns = ANALYTICS_TYPES.filter((type) =>
+      Array.from(barangayStats.values()).some((item) => item.types.has(type.label)),
+    )
+    const top = Array.from(barangayStats.values())
+      .sort((a, b) => b.incidents - a.incidents || a.name.localeCompare(b.name))
+      .slice(0, 10)
+    return {
+      rows: top.map((item) => item.name),
+      columns: columns.map((type) => ({ label: type.label, color: type.color })),
+      cells: top.map((item) => columns.map((type) => item.types.get(type.label) || 0)),
+      shown: top.length,
+      total: barangayStats.size,
+    }
+  }, [barangayStats])
+
+  const incidentTypeBars = useMemo<BarItem[]>(
+    () => disasterTypeData.filter((item) => item.label !== 'Earthquake').map((item) => ({ label: item.label, value: item.value, color: item.color })),
+    [disasterTypeData],
+  )
+
+  const severitySegments = useMemo<ShareSegment[]>(() => {
+    const count = (severity: HazardIncident['severity']) => filteredReports.filter((report) => report.severity === severity).length
+    return [
+      { label: 'Critical', value: count('Critical'), color: STATUS_COLORS.critical },
+      { label: 'High', value: count('High'), color: STATUS_COLORS.serious },
+      { label: 'Moderate', value: count('Moderate'), color: STATUS_COLORS.warning, textColor: '#0b0b0b' },
+      { label: 'Low', value: count('Low'), color: STATUS_COLORS.good },
+    ]
+  }, [filteredReports])
+
+  const severityByType = useMemo(() => {
+    const levels: Array<HazardIncident['severity']> = ['Critical', 'High', 'Moderate', 'Low']
+    return incidentTypeBars.map((type) => {
+      const reportsOfType = filteredReports.filter((report) => getAnalyticsTypeLabel(report) === type.label)
+      return {
+        label: type.label,
+        segments: levels.map((level, index) => ({
+          label: level,
+          value: reportsOfType.filter((report) => report.severity === level).length,
+          color: severitySegments[index].color,
+        })),
+      }
+    })
+  }, [filteredReports, incidentTypeBars, severitySegments])
+
+  const teamScatterPoints = useMemo<ScatterPoint[]>(
+    () =>
+      teamPerformanceData
+        .filter((item) => item.withResponseTimeCount > 0)
+        .map((item) => ({
+          label: item.team,
+          x: item.averageResponseMinutes,
+          y: item.resolutionRate,
+          size: item.assignments,
+          rows: [
+            { label: 'avg response', value: `${item.averageResponseMinutes} min`, color: SERIES_BLUE },
+            { label: 'resolved', value: `${item.resolutionRate}%` },
+            { label: `within ${ON_TIME_MINUTES} min`, value: `${item.onTimeRate}%` },
+            { label: 'reports', value: String(item.assignments) },
+            { label: 'score', value: `${item.performanceScore}/100` },
+          ],
+        })),
+    [teamPerformanceData],
+  )
 
   const handleExport = () => {
     const pdf = new jsPDF({ unit: 'mm', format: 'a4' })
@@ -1775,7 +1619,7 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
   }
 
   return (
-    <section className="mx-auto w-full max-w-[1440px] px-3 py-6 sm:px-5 lg:px-6 lg:py-8">
+    <section className="w-full px-3 pb-8 pt-2 sm:px-6 lg:pb-10">
       <div className="space-y-6">
         <div className={`${glassPanelClass} overflow-hidden p-5 sm:p-6`}>
           <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
@@ -1955,55 +1799,142 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
             ) : null}
           </div>
 
-          <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="mt-6 grid gap-4 sm:grid-cols-3">
             <AnalyticsMetricCard
               accentClass="border-t-blue-600"
-              helper={`${totalIncidentReports} reports + ${earthquakeApiCount} live earthquake events.`}
-              label="Total Records"
-              value={totalRecords}
-            />
-            <AnalyticsMetricCard
-              accentClass="border-t-amber-500"
-              helper={topIncidentType ? `${topIncidentType.value} reports • ${percent(topIncidentType.value, totalIncidentReports)}% of incidents.` : 'No incident reports yet.'}
-              label="Most Frequent Type"
-              value={topIncidentType?.label || 'N/A'}
-            />
-            <AnalyticsMetricCard
-              accentClass="border-t-sky-600"
-              helper={`${percent(roadCrashCount, totalIncidentReports)}% of incident reports are road crashes.`}
-              label="Road Crash Reports"
-              value={roadCrashCount}
+              helper={periodChangeText}
+              label="Incident Reports"
+              value={totalIncidentReports}
             />
             <AnalyticsMetricCard
               accentClass="border-t-red-600"
-              helper={`${percent(fireCount, totalIncidentReports)}% of incident reports are fires.`}
-              label="Fire Reports"
-              value={fireCount}
+              helper={`Persons recorded as victims in ${totalIncidentReports.toLocaleString()} reports.`}
+              label="Victims"
+              value={totalVictimCount.toLocaleString()}
             />
+            <AnalyticsMetricCard
+              accentClass="border-t-orange-600"
+              helper={
+                teamPerformanceSummary.overallMedianResponse === null
+                  ? 'No timed reports in this view.'
+                  : `Incident to filed report • median ${teamPerformanceSummary.overallMedianResponse} min.`
+              }
+              label="Avg Response Time"
+              value={teamPerformanceSummary.overallAvgResponse === null ? 'N/A' : `${teamPerformanceSummary.overallAvgResponse} min`}
+            />
+          </div>
+        </div>
 
-            <AnalyticsMetricCard
-              accentClass="border-t-emerald-600"
-              helper={`${earthquakeApiCount} live API events + ${earthquakeReportCount} report records.`}
-              label="Earthquake Data"
-              value={earthquakeTotalCount}
+        <div className="grid gap-6 xl:grid-cols-2">
+          <div className={`${glassPanelClass} p-5 sm:p-6`}>
+            <SectionHeader
+              badge="What"
+              description="Incident reports per type for the current filters. Earthquakes are counted in their own section below."
+              eyebrow="Incident Types"
+              title={
+                incidentTypeBars[0]
+                  ? `${incidentTypeBars[0].label} is the most reported incident (${percent(incidentTypeBars[0].value, totalIncidentReports)}%)`
+                  : 'Incident types'
+              }
             />
-            <AnalyticsMetricCard
-              accentClass="border-t-violet-600"
-              helper={`${highPriorityCount} high/critical reports • ${totalVictimCount} total victims.`}
-              label="High Priority"
-              value={highPriorityCount}
+            <BarList emptyText="No incident reports for these filters." items={incidentTypeBars} valueLabel="reports" />
+          </div>
+
+          <div className={`${glassPanelClass} p-5 sm:p-6`}>
+            <SectionHeader
+              badge="How serious"
+              description="Share of incident reports at each severity level, from the linked incident."
+              eyebrow="Severity"
+              title={
+                totalIncidentReports > 0
+                  ? `${percent(highPriorityCount, totalIncidentReports)}% of incidents are High or Critical`
+                  : 'Incident severity'
+              }
             />
+            <ShareBar emptyText="No incident reports for these filters." segments={severitySegments} />
+            <p className="mt-3 text-xs leading-relaxed text-slate-500">
+              Average severity {averageSeverity.toFixed(1)} on a 1 (Low) to 4 (Critical) scale.
+            </p>
+            {severityByType.length > 1 ? (
+              <div className="mt-5">
+                <p className="mb-2 text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">Severity mix by incident type</p>
+                <ShareRows
+                  legend={severitySegments.map((segment) => ({ label: segment.label, color: segment.color }))}
+                  rows={severityByType}
+                />
+              </div>
+            ) : null}
           </div>
         </div>
 
         <div className={`${glassPanelClass} p-5 sm:p-6`}>
           <SectionHeader
-            badge="Composition"
-            description="Shows how the current records are distributed across every incident type responders report, plus live earthquake data."
-            eyebrow="Disaster Type Analysis"
-            title="Disaster Type Analysis"
+            badge={frequencyMode === 'daily' && selectedYear && selectedMonth ? 'Daily' : frequencyMode === 'yearly' ? 'Yearly' : 'Monthly'}
+            description="Total incident reports per period, then one small chart per incident type on the same scale so they can be compared. Change the period with Frequency View above."
+            eyebrow="Incidents Over Time"
+            title={trendPeak ? `Reports peaked in ${trendPeak.period} (${trendPeak.value})` : 'Incidents over time'}
           />
-          <DonutChart items={disasterTypeData} total={totalRecords} />
+          <LineChart
+            emptyText="No incident reports for these filters."
+            periods={typeTrend.periods}
+            series={[{ label: 'Incident reports', color: SERIES_BLUE, values: typeTrend.total }]}
+          />
+          {typeTrend.byType.length > 1 ? (
+            <div className="mt-5">
+              <p className="mb-2 text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">By incident type</p>
+              <SmallMultiples periods={typeTrend.periods} series={typeTrend.byType} />
+            </div>
+          ) : null}
+        </div>
+
+        <div className={`${glassPanelClass} p-5 sm:p-6`}>
+          <SectionHeader
+            badge="When"
+            description="Each square is one hour of one weekday, darker where more incidents happened. Use it to plan responder shifts and stand-by teams."
+            eyebrow="Incident Timing"
+            title={busiestSlot ? `${busiestSlot.day} is the busiest day; ${busiestSlot.hour} is the busiest hour` : 'When incidents happen'}
+          />
+          <DayHourGrid counts={dayHourCounts} />
+        </div>
+
+        <div className={`${glassPanelClass} p-5 sm:p-6`}>
+          <SectionHeader
+            badge="Where"
+            description="Darker barangays had more incident reports. Hover for details; click a barangay to filter the whole page to it (click again to clear)."
+            eyebrow="Barangay Risk Map"
+            title={barangayRanking[0] ? `${barangayRanking[0].label} has the most incidents (${barangayRanking[0].value})` : 'Where incidents happen'}
+          />
+          <div className="mx-auto max-w-4xl">
+              {mapStatus === 'loading' ? (
+                <EmptyState message="Loading barangay map..." />
+              ) : mapStatus === 'error' || barangayFeatures.length === 0 ? (
+                <EmptyState message="The barangay map could not be loaded. The table below still shows incidents per barangay." />
+              ) : (
+                <ChoroplethMap
+                  features={barangayFeatures}
+                  metricLabel="Incident reports"
+                  onSelect={handleMapSelect}
+                  selectedKey={selectedBarangayKey}
+                  values={barangayMapValues}
+                />
+              )}
+          </div>
+        </div>
+
+        <div className={`${glassPanelClass} p-5 sm:p-6`}>
+          <SectionHeader
+            badge={barangayTypeTable.total > barangayTypeTable.shown ? `Top ${barangayTypeTable.shown} of ${barangayTypeTable.total}` : 'Barangay × type'}
+            description="Reports for each barangay and incident type. Darker cells mean more reports, so you can see which hazard each barangay needs to prepare for."
+            eyebrow="Barangay Risk Analysis"
+            title="Incident types by barangay"
+          />
+          <HeatTable
+            cells={barangayTypeTable.cells}
+            columns={barangayTypeTable.columns}
+            emptyText="No barangay data for these filters."
+            rowLabel="Barangay"
+            rows={barangayTypeTable.rows}
+          />
         </div>
 
         <div className={`${glassPanelClass} p-5 sm:p-6`}>
@@ -2024,16 +1955,16 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
                   return (
                     <button
                       aria-selected={active}
-                      className={`rounded-full border px-4 py-2 text-sm font-semibold transition ${
-                        active ? 'border-transparent text-white shadow-sm' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                      className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-semibold transition ${
+                        active ? 'border-slate-900 bg-slate-900 text-white shadow-sm' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
                       }`}
                       key={insight.key}
                       onClick={() => setInsightTypeChoice(insight.label)}
                       role="tab"
-                      style={active ? { backgroundColor: insight.color } : undefined}
                       type="button"
                     >
-                      {insight.label} <span className="ml-1 opacity-75">{insight.reports}</span>
+                      <span className="inline-block h-2.5 w-2.5 rounded-[3px]" style={{ backgroundColor: insight.color }} />
+                      {insight.label} <span className="opacity-75">{insight.reports}</span>
                     </button>
                   )
                 })}
@@ -2051,17 +1982,31 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
                     </div>
                   ) : null}
 
-                  <div className="grid gap-5 xl:grid-cols-2">
+                  <div className="grid gap-6 xl:grid-cols-2">
                     {activeInsights.charts.map((chart) => (
                       <div key={chart.title}>
                         <div className="mb-3">
                           <h4 className="text-base font-semibold text-slate-900">{chart.title}</h4>
                           <p className="text-xs text-slate-500">{chart.description}</p>
                         </div>
-                        <HorizontalBarChart
-                          emptyText={`No ${chart.title.toLowerCase()} recorded yet.`}
-                          items={chart.items.map((item) => ({ ...item, color: activeInsights.color }))}
-                        />
+                        {chart.share ? (
+                          <ShareBar
+                            emptyText={`No ${chart.title.toLowerCase()} recorded yet.`}
+                            segments={chart.items.map((item, index) => ({
+                              label: item.label,
+                              value: item.value,
+                              color: SHARE_COLORS[index % SHARE_COLORS.length],
+                              textColor: SHARE_COLORS[index % SHARE_COLORS.length] === '#eda100' ? '#0b0b0b' : undefined,
+                            }))}
+                            unit={chart.title === 'Victim outcomes' || chart.title === 'Helmet / seatbelt use' ? 'persons' : 'reports'}
+                          />
+                        ) : (
+                          <BarList
+                            emptyText={`No ${chart.title.toLowerCase()} recorded yet.`}
+                            items={chart.items.map((item) => ({ label: item.label, value: item.value, color: activeInsights.color, note: item.helper }))}
+                            maxItems={6}
+                          />
+                        )}
                       </div>
                     ))}
                   </div>
@@ -2069,172 +2014,6 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
               )}
             </>
           )}
-        </div>
-
-        <div className={`${glassPanelClass} p-5 sm:p-6`}>
-          <SectionHeader
-            badge={busiestBlock && busiestBlock.value > 0 ? `Peak: ${busiestBlock.label.split(' (')[0]}` : 'Timing'}
-            description="Shows the time of day and day of the week incidents happen most, to help plan responder shifts and stand-by teams."
-            eyebrow="Incident Timing"
-            title="When Incidents Happen"
-          />
-          <div className="grid gap-5 xl:grid-cols-2">
-            <div>
-              <div className="mb-3">
-                <h4 className="text-base font-semibold text-slate-900">Time of day</h4>
-                <p className="text-xs text-slate-500">Based on the time each incident occurred.</p>
-              </div>
-              <HorizontalBarChart emptyText="No incident times available yet." items={timeOfDayData} />
-            </div>
-            <div>
-              <div className="mb-3">
-                <h4 className="text-base font-semibold text-slate-900">Day of the week</h4>
-                <p className="text-xs text-slate-500">
-                  {busiestDay && busiestDay.value > 0 ? `${busiestDay.label} is the busiest day in this view.` : 'Based on the report date.'}
-                </p>
-              </div>
-              <HorizontalBarChart emptyText="No incident dates available yet." items={weekdayData} />
-            </div>
-          </div>
-        </div>
-
-        <div className={`${glassPanelClass} p-5 sm:p-6`}>
-          <SectionHeader
-            badge="Percentage of filtered incidents"
-            description="Each percentage is calculated as that severity count divided by the total number of filtered incident reports, multiplied by 100."
-            eyebrow="Severity Level"
-            title="Incident Severity Distribution"
-          />
-          <HorizontalBarChart
-            emptyText="No incident severity data is available for the current filters."
-            items={severityData}
-          />
-        </div>
-
-        <div className={`${glassPanelClass} p-5 sm:p-6`}>
-          <SectionHeader
-            badge={frequencyMode === 'daily' && selectedYear && selectedMonth ? 'Daily' : frequencyMode === 'yearly' ? 'Yearly' : 'Monthly'}
-            description="Tracks how often incident reports and live earthquake events occur. Use monthly, yearly, or daily analysis for a selected month."
-            eyebrow="Incident Activity Over Time"
-            title="Incident and Earthquake Trend"
-          />
-          <TrendChart points={incidentTrendData} />
-        </div>
-
-        <div className={`${glassPanelClass} p-5 sm:p-6`}>
-          <SectionHeader
-            badge="USGS API"
-            description="Dedicated earthquake analytics from the live earthquake, including magnitude distribution, hotspots, and recent seismic activity."
-            eyebrow="Earthquake Monitoring Analytics"
-            title="Earthquake Monitoring Analytics"
-          />
-
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            <AnalyticsMetricCard
-              accentClass="border-t-emerald-600"
-              helper="Live earthquake events from the API feed."
-              label="Earthquake Events"
-              value={earthquakeAnalytics.total}
-            />
-            <AnalyticsMetricCard
-              accentClass="border-t-teal-600"
-              helper="Average magnitude from API earthquake events."
-              label="Avg Magnitude"
-              value={earthquakeAnalytics.averageMagnitude}
-            />
-            <AnalyticsMetricCard
-              accentClass="border-t-orange-600"
-              helper="Earthquakes detected within the last 30 days."
-              label="Recent 30 Days"
-              value={earthquakeAnalytics.active}
-            />
-            <AnalyticsMetricCard
-              accentClass="border-t-red-600"
-              helper="Magnitude 4.0 and above events."
-              label="Significant EQ"
-              value={earthquakeAnalytics.high}
-            />
-          </div>
-
-          <div className="mt-5 grid gap-5 xl:grid-cols-2">
-            <div>
-              <SectionHeader
-                badge={`Max ${earthquakeAnalytics.maxMagnitude}`}
-                description="Magnitude distribution directly from API earthquake magnitude values."
-                eyebrow="Magnitude Distribution"
-                title="Magnitude Distribution"
-              />
-              <HorizontalBarChart
-                emptyText="No earthquake magnitude data available yet."
-                items={earthquakeAnalytics.magnitudeDistribution}
-              />
-            </div>
-
-            <div>
-              <SectionHeader
-                badge="Hotspots"
-                description="Earthquake locations based on API place values."
-                eyebrow="Earthquake Hotspots"
-                title="Earthquake Hotspots"
-              />
-              <HorizontalBarChart
-                emptyText="No earthquake hotspot data available yet."
-                items={earthquakeAnalytics.hotspots}
-              />
-            </div>
-          </div>
-        </div>
-
-        <div className={`${glassPanelClass} p-5 sm:p-6`}>
-          <SectionHeader
-            badge="Ranking + Radar"
-            description="Compares filtered incident totals by location and ranks the highest-risk barangays using severity, status, response load, and earthquake exposure."
-            eyebrow="Barangay Risk Analysis"
-            title="Barangay Risk Analysis"
-          />
-          <div className="mb-5 grid gap-3 sm:grid-cols-2">
-            <AnalyticsMetricCard
-              accentClass="border-t-blue-600"
-              helper="Total incident reports assigned to the current barangay and other filters."
-              label="Incidents by Barangay"
-              value={filteredReports.length}
-            />
-            <AnalyticsMetricCard
-              accentClass="border-t-red-600"
-              helper="Highest composite location risk in the current filtered dataset."
-              label="Highest-Risk Barangay"
-              value={barangayRiskData[0]?.location || 'N/A'}
-            />
-          </div>
-          <div className="grid gap-5 xl:grid-cols-[1.05fr_0.95fr]">
-            <HorizontalBarChart
-              emptyText="No barangay risk records available yet."
-              items={barangayRiskData.map((item) => ({
-                label: item.location,
-                value: item.score,
-                helper: `${item.incidents} records • ${item.level}`,
-                color:
-                  item.score >= 12
-                    ? '#dc2626'
-                    : item.score >= 8
-                      ? '#f97316'
-                      : item.score >= 4
-                        ? '#f59e0b'
-                        : '#10b981',
-              }))}
-            />
-            <RadarChart axes={radarAxes} />
-          </div>
-        </div>
-
-        <div className={`${glassPanelClass} p-5 sm:p-6`}>
-          <SectionHeader
-            badge="Heat + Risk"
-            description="Combined heat map and risk map showing incident reports and earthquake hotspot areas from the API."
-            eyebrow="Heat Map / Risk Map"
-            title="Heat Map and Risk Map"
-          />
-          <HeatRiskMapGrid locations={barangayRiskData} />
         </div>
 
         <div className={`${glassPanelClass} p-5 sm:p-6`}>
@@ -2252,73 +2031,111 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
             or contained. Score = speed 40% + on-time 20% + resolved 40%; teams with no timed reports are scored on resolved only.
           </p>
 
-          <div className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <AnalyticsMetricCard
-              accentClass="border-t-emerald-600"
-              helper="Highest composite performance score in current filter window."
-              label="Top Team"
-              value={teamPerformanceSummary.topTeam}
-            />
-            <AnalyticsMetricCard
-              accentClass="border-t-blue-600"
-              helper="Composite team performance score out of 100."
-              label="Top Score"
-              value={teamPerformanceSummary.topScore}
-            />
-            <AnalyticsMetricCard
-              accentClass="border-t-orange-600"
-              helper={
-                teamPerformanceSummary.overallMedianResponse === null
-                  ? 'No timed reports in this view.'
-                  : `Median ${teamPerformanceSummary.overallMedianResponse} min • ${teamPerformanceSummary.measured} of ${teamPerformanceSummary.assignments} reports timed.`
-              }
-              label="Avg Response Time"
-              value={teamPerformanceSummary.overallAvgResponse === null ? 'N/A' : `${teamPerformanceSummary.overallAvgResponse} min`}
-            />
-            <AnalyticsMetricCard
-              accentClass="border-t-violet-600"
-              helper={`Reports filed within ${ON_TIME_MINUTES} minutes • ${teamPerformanceSummary.overallResolutionRate}% of incidents resolved.`}
-              label="On-Time Rate"
-              value={teamPerformanceSummary.measured > 0 ? `${teamPerformanceSummary.overallOnTimeRate}%` : 'N/A'}
-            />
+          <p className="mb-6 text-sm text-slate-600">
+            {teamPerformanceSummary.measured > 0 ? (
+              <>
+                Overall: <span className="font-semibold text-slate-900">{teamPerformanceSummary.overallOnTimeRate}%</span> of timed reports filed within{' '}
+                {ON_TIME_MINUTES} minutes, and <span className="font-semibold text-slate-900">{teamPerformanceSummary.overallResolutionRate}%</span> of
+                incidents resolved ({teamPerformanceSummary.measured} of {teamPerformanceSummary.assignments} reports timed).
+              </>
+            ) : (
+              <>
+                Overall: <span className="font-semibold text-slate-900">{teamPerformanceSummary.overallResolutionRate}%</span> of incidents resolved. No
+                reports in this view have a response time.
+              </>
+            )}
+          </p>
+
+          <div className="grid gap-6 xl:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
+            <div>
+              <h4 className="text-base font-semibold text-slate-900">Speed vs. incidents resolved</h4>
+              <p className="mb-3 text-xs text-slate-500">
+                Each dot is a team. Left = faster, higher = more incidents resolved. Teams without timed reports are not shown here.
+              </p>
+              <ScatterPlot
+                emptyText="No team has timed reports for these filters."
+                points={teamScatterPoints}
+                xLabel="Average response time (minutes)"
+                xTarget={ON_TIME_MINUTES}
+                yLabel="Incidents resolved (%)"
+              />
+            </div>
+            <div>
+              <h4 className="text-base font-semibold text-slate-900">Performance score</h4>
+              <p className="mb-3 text-xs text-slate-500">Out of 100, highest first.</p>
+              <BarList
+                emptyText="No response team data for these filters."
+                format={(value) => `${value}`}
+                items={[...teamPerformanceData].sort((a, b) => b.performanceScore - a.performanceScore).map((item) => ({
+                  label: item.team,
+                  value: item.performanceScore,
+                  note: `${item.resolutionRate}% resolved · ${item.withResponseTimeCount > 0 ? `${item.averageResponseMinutes} min avg` : 'no timed reports'} · ${item.assignments} reports`,
+                }))}
+                valueLabel="score"
+              />
+              {severityPerformanceData.length > 0 ? (
+                <div className="mt-6">
+                  <h4 className="text-base font-semibold text-slate-900">Resolved by severity</h4>
+                  <p className="mb-3 text-xs text-slate-500">Share of incidents resolved at each severity level.</p>
+                  <BarList
+                    format={(value) => `${value}%`}
+                    items={severityPerformanceData.map((item) => ({ label: item.label, value: item.value, note: item.helper }))}
+                    valueLabel="resolved"
+                  />
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </div>
+
+        <div className={`${glassPanelClass} p-5 sm:p-6`}>
+          <SectionHeader
+            badge="USGS live feed"
+            description="Earthquakes from the live feed for the selected period: magnitude bands, activity over time, and the places with the most events."
+            eyebrow="Earthquake Monitoring"
+            title={
+              earthquakeAnalytics.total > 0
+                ? `${earthquakeAnalytics.total} earthquakes; strongest M${earthquakeAnalytics.maxMagnitude}`
+                : 'Earthquake monitoring'
+            }
+          />
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <AnalyticsMetricCard accentClass="border-t-teal-600" helper="Average magnitude of these events." label="Avg Magnitude" value={earthquakeAnalytics.averageMagnitude} />
+            <AnalyticsMetricCard accentClass="border-t-orange-600" helper="Events in the last 30 days." label="Recent 30 Days" value={earthquakeAnalytics.active} />
           </div>
 
-          <div className="grid gap-5 xl:grid-cols-2">
+          <div className="mt-6 grid gap-6 xl:grid-cols-2">
             <div>
-              <SectionHeader
-                badge="Score"
-                description="Higher score indicates better speed, resolution output, and on-time response consistency."
-                eyebrow="Composite Ranking"
-                title="Team Performance Score"
-              />
-              <HorizontalBarChart
-                items={teamPerformanceChartData}
-                emptyText="No assigned response team data available yet."
+              <h4 className="text-base font-semibold text-slate-900">Magnitude distribution</h4>
+              <p className="mb-3 text-xs text-slate-500">Number of events in each magnitude band.</p>
+              <Histogram
+                bins={earthquakeAnalytics.magnitudeDistribution.map((item) => ({ label: item.label.replace('Magnitude ', 'M'), value: item.value }))}
+                color={EARTHQUAKE_COLOR}
+                emptyText="No earthquake data available yet."
               />
             </div>
-
             <div>
-              <SectionHeader
-                badge="Minutes"
-                description="Average minutes per team from the time the incident occurred to when the responder filed the report."
-                eyebrow="Speed Breakdown"
-                title="Average Response Time by Team"
+              <h4 className="text-base font-semibold text-slate-900">Earthquakes over time</h4>
+              <p className="mb-3 text-xs text-slate-500">Events per period, using Frequency View above.</p>
+              <LineChart
+                emptyText="No earthquake data available yet."
+                height={200}
+                periods={typeTrend.periods}
+                series={[{ label: 'Earthquakes', color: EARTHQUAKE_COLOR, values: typeTrend.earthquakes }]}
               />
-              <TeamResponseTimeChart items={teamPerformanceData} />
             </div>
           </div>
 
-          {severityPerformanceData.length > 0 ? (
-            <div className="mt-6">
-              <SectionHeader
-                badge="% resolved"
-                description="Share of incidents resolved per severity level, with the average response time."
-                eyebrow="By Severity"
-                title="Performance by Severity"
-              />
-              <HorizontalBarChart emptyText="No severity data available yet." items={severityPerformanceData} />
-            </div>
-          ) : null}
+          <div className="mt-6">
+            <h4 className="text-base font-semibold text-slate-900">Earthquake hotspots</h4>
+            <p className="mb-3 text-xs text-slate-500">Places with the most events in the feed.</p>
+            <BarList
+              emptyText="No earthquake hotspot data available yet."
+              items={earthquakeAnalytics.hotspots.map((item) => ({ label: item.label, value: item.value, color: EARTHQUAKE_COLOR }))}
+              valueLabel="events"
+            />
+          </div>
         </div>
 
       </div>

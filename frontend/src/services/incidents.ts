@@ -403,13 +403,34 @@ export async function getIncidentReports(): Promise<IncidentReport[]> {
       count: number
       next: string | null
       results: IncidentReport[]
-    }>(nextUrl)
+    }>(toApiPath(nextUrl))
 
     reports = [...reports, ...nextResponse.data.results]
     nextUrl = nextResponse.data.next
   }
 
   return reports
+}
+
+/** A paginated `next` link as a path, so it goes through the same host (and cookies) as the first page. */
+function toApiPath(url: string): string {
+  try {
+    const parsed = new URL(url)
+    return `${parsed.pathname}${parsed.search}`
+  } catch {
+    return url
+  }
+}
+
+/** Compile approved incident reports into one accomplishment report. */
+export async function createAccomplishmentReport(reportIds: string[], title = 'Accomplishment Report'): Promise<any> {
+  await ensureCsrfCookie()
+  const response = await api.post('/api/incidents/accomplishment-reports/', {
+    title,
+    status: 'Compiled',
+    reportIds,
+  })
+  return response.data
 }
 
 export async function getAccomplishmentReports(): Promise<any[]> {
@@ -424,7 +445,7 @@ export async function getAccomplishmentReports(): Promise<any[]> {
     let nextUrl = response.data.next
 
     while (nextUrl) {
-      const nextResponse = await api.get<{ count: number; next: string | null; results: any[] }>(nextUrl)
+      const nextResponse = await api.get<{ count: number; next: string | null; results: any[] }>(toApiPath(nextUrl))
       items = [...items, ...nextResponse.data.results]
       nextUrl = nextResponse.data.next
     }

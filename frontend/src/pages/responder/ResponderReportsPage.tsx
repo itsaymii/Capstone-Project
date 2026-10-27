@@ -2,6 +2,9 @@ import { useEffect, useState } from 'react'
 import type { FC } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { MobileNavBar } from '../../components/MobileNavBar'
+import { getCurrentUserProfile } from '../../services/auth'
+import { getAccomplishmentReports } from '../../services/incidents'
+import { getIncidentCategoryKey, getIncidentCategoryMeta } from '../../data/incidentCategories'
 
 interface IndividualReport {
   id: string
@@ -13,6 +16,7 @@ interface IndividualReport {
   actionTaken: string
   victimCount: number
   timeOccurred?: string
+  responderTeam?: string
 }
 
 interface CompiledReport {
@@ -23,6 +27,18 @@ interface CompiledReport {
   totalReports: number
   createdAt: string
   status: string
+  compiledBy?: string | null
+}
+
+const normalizeName = (value?: string | null) => String(value || '').trim().toLowerCase().replace(/\s+/g, ' ')
+
+/** Accomplishment reports this account compiled, or that hold its team's reports. */
+function isOwnCompiledReport(report: CompiledReport): boolean {
+  const profile = getCurrentUserProfile()
+  const username = normalizeName(profile?.username)
+  const team = normalizeName(profile?.fullName)
+  if (username && normalizeName(report.compiledBy) === username) return true
+  return Boolean(team) && (report.reports || []).some((item) => normalizeName(item.responderTeam) === team)
 }
 
 export const ResponderReportsPage: FC = () => {
@@ -33,26 +49,19 @@ export const ResponderReportsPage: FC = () => {
   const [searchQuery, setSearchQuery] = useState('')
   const [sortOrder, setSortOrder] = useState<'newest' | 'oldest'>('newest')
   const [isLoading, setIsLoading] = useState(true)
+  const [loadError, setLoadError] = useState('')
 
   useEffect(() => {
     const fetchCompiledReports = async () => {
       try {
         setIsLoading(true)
 
-        const response = await fetch(
-          'http://127.0.0.1:8000/api/incidents/accomplishment-reports/'
-        )
-
-        if (!response.ok) {
-          throw new Error('Failed to fetch accomplishment reports')
-        }
-
-        const data = await response.json()
-        const reportsData = Array.isArray(data) ? data : data.results || []
-
-        setCompiledReports(reportsData)
+        const reportsData = (await getAccomplishmentReports()) as CompiledReport[]
+        setCompiledReports(reportsData.filter(isOwnCompiledReport))
+        setLoadError('')
       } catch (error) {
         console.error('Error fetching accomplishment reports:', error)
+        setLoadError('Unable to load accomplishment reports. Check your connection and try again.')
       } finally {
         setIsLoading(false)
       }
@@ -78,35 +87,8 @@ export const ResponderReportsPage: FC = () => {
     })
 
   const getIncidentBadgeStyle = (type: string) => {
-    const lower = String(type || '').toLowerCase()
-
-    if (lower.includes('med')) {
-      return 'bg-rose-50 text-rose-700 border-rose-100 ring-rose-500/10'
-    }
-
-    if (lower.includes('fire')) {
-      return 'bg-orange-50 text-orange-700 border-orange-100 ring-orange-500/10'
-    }
-
-    if (
-      lower.includes('rtc') ||
-      lower.includes('rca') ||
-      lower.includes('vehic') ||
-      lower.includes('accident')
-    ) {
-      return 'bg-amber-50 text-amber-700 border-amber-100 ring-amber-500/10'
-    }
-
-    if (
-      lower.includes('hazmat') ||
-      lower.includes('hazard') ||
-      lower.includes('chemical') ||
-      lower.includes('toxic')
-    ) {
-      return 'bg-purple-50 text-purple-700 border-purple-100 ring-purple-500/10'
-    }
-
-    return 'bg-purple-50 text-purple-700 border-purple-100 ring-purple-500/10'
+    const meta = getIncidentCategoryMeta(getIncidentCategoryKey({ incidentType: type }))
+    return { color: meta.color, borderColor: `${meta.color}55`, backgroundColor: `${meta.color}14` }
   }
 
   return (
@@ -189,6 +171,10 @@ export const ResponderReportsPage: FC = () => {
             <p className="text-sm font-semibold text-slate-500">
               Loading accomplishment reports...
             </p>
+          </div>
+        ) : loadError ? (
+          <div className="bg-white rounded-2xl p-12 text-center border border-red-200 shadow-sm">
+            <p className="text-sm font-semibold text-red-700">{loadError}</p>
           </div>
         ) : compiledReports.length === 0 ? (
           <div className="bg-white rounded-2xl p-16 text-center border border-slate-200 shadow-sm transition-all">
@@ -349,7 +335,7 @@ export const ResponderReportsPage: FC = () => {
                         </h4>
                       </div>
 
-                      <span className={`inline-flex items-center self-start sm:self-auto text-[9px] font-extrabold tracking-wider uppercase px-2.5 py-0.5 border rounded-md ring-1 ${getIncidentBadgeStyle(report.incidentType)}`}>
+                      <span style={getIncidentBadgeStyle(report.incidentType)} className="inline-flex items-center self-start sm:self-auto text-[9px] font-extrabold tracking-wider uppercase px-2.5 py-0.5 border rounded-md">
                         {report.incidentType}
                       </span>
                     </div>

@@ -2,6 +2,7 @@ import axios from 'axios'
 import {
   confirmPasswordReset,
   loginAccount,
+  logoutAccount,
   registerAccount,
   requestPasswordReset,
   verifyLoginOtp,
@@ -30,6 +31,7 @@ type LoginPayload = {
 }
 
 type SessionUser = {
+  username?: string
   fullName: string
   email: string
   role?: UserRole
@@ -166,6 +168,7 @@ function persistAuthenticatedSession(user: SessionUser, keepLoggedIn: boolean, s
 
   sessionStore.setItem(AUTH_KEY, 'true')
   writeSessionUser(sessionStore, {
+    username: user.username,
     fullName: user.fullName,
     email: user.email,
     role: user.role,
@@ -267,6 +270,7 @@ export async function verifyRegisterOtpCode(email: string, otp: string): Promise
     if (response.user) {
       persistAuthenticatedSession(
         {
+          username: response.user.username,
           fullName: response.user.fullName,
           email: response.user.email,
           role: response.user.role,
@@ -308,6 +312,7 @@ export async function saveCurrentUserProfileToServer(payload: { fullName?: strin
       const keepLoggedIn = getActiveAuthStore() === localStorage
       persistAuthenticatedSession(
         {
+          username: response.user.username,
           fullName: response.user.fullName,
           email: response.user.email,
           role: response.user.role,
@@ -366,6 +371,7 @@ export async function requestLoginOtp(
     if (shouldBypassOtp && response.user) {
       persistAuthenticatedSession(
         {
+          username: response.user.username,
           fullName: response.user.fullName,
           email: response.user.email,
           role: response.user.role,
@@ -383,6 +389,7 @@ export async function requestLoginOtp(
         otpEmail: response.user.email,
         skipOtp: true,
         user: {
+          username: response.user.username,
           fullName: response.user.fullName,
           email: response.user.email,
           role: response.user.role,
@@ -439,6 +446,7 @@ export async function verifyLoginOtpCode(payload: {
 
     persistAuthenticatedSession(
       {
+        username: response.user.username,
         fullName: response.user.fullName,
         email: response.user.email,
         role: response.user.role,
@@ -454,6 +462,7 @@ export async function verifyLoginOtpCode(payload: {
       success: true,
       message: response.message ?? 'Login successful.',
       user: {
+        username: response.user.username,
         fullName: response.user.fullName,
         email: response.user.email,
         role: response.user.role,
@@ -685,6 +694,8 @@ export function updateCurrentUserPersonalInfo(payload: {
 
 export function logoutUser(): void {
   const currentUser = getCurrentUserProfile()
+  // End the server session too; the local sign-out does not wait for it.
+  void logoutAccount().catch((error) => console.warn('[auth] Server logout failed:', error))
   clearAuthenticatedSession(false)
   addNotification(
     currentUser

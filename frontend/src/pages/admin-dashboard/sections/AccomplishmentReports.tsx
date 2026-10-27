@@ -1,609 +1,546 @@
 import { useEffect, useMemo, useState } from 'react'
 import { getAccomplishmentReports } from '../../../services/incidents'
+import {
+  INCIDENT_CATEGORIES,
+  getIncidentCategoryKey,
+  getIncidentCategoryMeta,
+} from '../../../data/incidentCategories'
 
-type IncidentReport = {
+// Admin view of the accomplishment reports responders compile from their approved incident reports.
+
+type Victim = {
+  id?: string
+  name?: string
+  age?: string | number
+  gender?: string
+  address?: string
+  condition?: string
+}
+
+type IncludedReport = {
   id?: string
   reportCode?: string
-  report_code?: string
   incidentCode?: string
-  incident_code?: string
-  incidentReferenceCode?: string
-  incident_reference_code_readonly?: string
   incidentType?: string
-  incident_type?: string
   responderTeam?: string
-  responder_team?: string
-  responder_username?: string
-  responder?: string
+  createdBy?: string | null
   location?: string
-  description?: string
+  barangayName?: string | null
+  timeOccurred?: string
   actionTaken?: string
-  action_taken?: string
-  report_text?: string
-  status_update?: string
+  description?: string
   victimCount?: number
-  victim_count?: number
-  victims?: {
-    id?: string
-    name?: string
-    age?: string
-    gender?: string
-    address?: string
-    condition?: string
-  }[]
+  victims?: Victim[]
   createdAt?: string
-  created_at?: string
-  report_time?: string
 }
 
 type AccomplishmentItem = {
   id?: string
   compiledCode?: string
   title?: string
-  reports?: IncidentReport[]
+  reports?: IncludedReport[]
   totalReports?: number
   status?: string
-  status_update?: string
-  location?: string
   createdAt?: string
-  created_at?: string
-  report_time?: string
-  reportCode?: string
-  report_code?: string
-  incidentCode?: string
-  incident_code?: string
-  incidentReferenceCode?: string
-  incident_reference_code_readonly?: string
-  incidentType?: string
-  incident_type?: string
+  compiledBy?: string | null
+  compiledByName?: string | null
 }
 
-function getReportCode(item: AccomplishmentItem): string {
-  return item.reportCode || item.report_code || item.id || 'N/A'
+type TypeCount = { key: string; label: string; color: string; count: number }
+
+type Summary = {
+  item: AccomplishmentItem
+  code: string
+  reports: IncludedReport[]
+  teams: string[]
+  teamLabel: string
+  preparedBy: string
+  victims: number
+  barangays: string[]
+  types: TypeCount[]
+  createdAt: Date | null
+  searchText: string
 }
 
-function getIncidentCode(item: AccomplishmentItem): string {
-  return (
-    item.incidentCode ||
-    item.incident_code ||
-    item.incidentReferenceCode ||
-    item.incident_reference_code_readonly ||
-    'N/A'
-  )
+const NO_TEAM = 'Team not recorded'
+
+function clean(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : ''
 }
 
-function getIncidentType(item: AccomplishmentItem): string {
-  return item.incidentType || item.incident_type || 'Incident'
-}
-
-function getResponderTeam(item: IncidentReport): string {
-  return item.responderTeam || item.responder_team || item.responder_username || item.responder || '-'
-}
-
-function getActionTaken(item: IncidentReport): string {
-  return item.actionTaken || item.action_taken || item.report_text || item.description || 'No action details provided.'
-}
-
-function getVictimCount(item: IncidentReport): number {
-  return Number(item.victimCount ?? item.victim_count ?? item.victims?.length ?? 0)
-}
-
-function getAccomplishmentResponderTeam(item: AccomplishmentItem): string {
-  if (!item.reports || item.reports.length === 0) return '-'
-
-  const teams = Array.from(
-    new Set(item.reports.map((report) => getResponderTeam(report)).filter((team) => team && team !== '-')),
-  )
-
-  if (teams.length === 0) return '-'
-  if (teams.length === 1) return teams[0]
-  return teams.join(', ')
-}
-
-function getAccomplishmentVictimCount(item: AccomplishmentItem): number {
-  if (!item.reports || item.reports.length === 0) return 0
-  return item.reports.reduce((sum, report) => sum + getVictimCount(report), 0)
-}
-
-function getAccomplishmentActionTaken(item: AccomplishmentItem): string {
-  if (!item.reports || item.reports.length === 0) return 'No action details provided.'
-
-  const actions = item.reports
-    .map((report) => getActionTaken(report))
-    .filter((text) => text && text !== 'No action details provided.')
-
-  if (actions.length === 0) return 'No action details provided.'
-
-  return actions.join(' / ')
-}
-
-function getAccomplishmentStatus(item: AccomplishmentItem): string {
-  return item.status || 'Compiled'
-}
-
-function getAccomplishmentCreatedAt(item: AccomplishmentItem): string {
-  return item.createdAt || item.created_at || '-'
-}
-
-function getAccomplishmentReportDate(item: AccomplishmentItem): string {
-  const value = getAccomplishmentCreatedAt(item)
-  if (!value || value === '-') return '-'
-
+function toDate(value?: string): Date | null {
+  if (!value) return null
   const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return value
-
-  return date.toLocaleDateString(undefined, {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-  }).toUpperCase()
+  return Number.isNaN(date.getTime()) ? null : date
 }
 
-function getAccomplishmentReportTime(item: AccomplishmentItem): string {
-  const value = getAccomplishmentCreatedAt(item)
-  if (!value || value === '-') return '-'
-
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return '-'
-
-  const hours = date.getHours().toString().padStart(2, '0')
-  const minutes = date.getMinutes().toString().padStart(2, '0')
-  return `${hours}${minutes}H - ${hours}${minutes}H`
+function getVictimCount(report: IncludedReport): number {
+  return Math.max(Number(report.victimCount ?? 0) || 0, report.victims?.length ?? 0)
 }
 
-function getAccomplishmentChecklist(item: AccomplishmentItem): Record<string, boolean> {
-  const types = new Set(
-    item.reports?.map((report) => getIncidentType(report).toLowerCase()) || [],
-  )
+function getBarangay(report: IncludedReport): string {
+  const name = clean(report.barangayName)
+  if (name) return name
+  return clean(report.location).split(',').map((part) => part.trim()).find((part) => /barangay|brgy/i.test(part))?.replace(/^(barangay|brgy\.?)\s*/i, '') || ''
+}
+
+function summarize(item: AccomplishmentItem): Summary {
+  const reports = item.reports ?? []
+  const teams = Array.from(new Set(reports.map((report) => clean(report.responderTeam)).filter(Boolean)))
+  const compiler = clean(item.compiledByName) || clean(item.compiledBy)
+  // Old compilations may have no linked reports; the account that compiled them is then the team.
+  const teamLabel = teams.length > 0 ? teams.join(', ') : compiler || NO_TEAM
+
+  const typeCounts = new Map<string, number>()
+  reports.forEach((report) => {
+    const key = getIncidentCategoryKey({ incidentType: report.incidentType })
+    typeCounts.set(key, (typeCounts.get(key) ?? 0) + 1)
+  })
+  const types = INCIDENT_CATEGORIES.filter((type) => typeCounts.has(type.key)).map((type) => ({
+    key: type.key,
+    label: type.label,
+    color: type.color,
+    count: typeCounts.get(type.key) ?? 0,
+  }))
+
+  const barangays = Array.from(new Set(reports.map(getBarangay).filter(Boolean))).sort()
+  const code = clean(item.compiledCode) || 'Uncoded report'
 
   return {
-    'RCA': [...types].some((text) => text.includes('rca')),
-    'Fire Incident': [...types].some((text) => text.includes('fire')),
-    'Crime Against Person/Property': [...types].some((text) => text.includes('crime')),
-    'Medical Emergency': [...types].some((text) => text.includes('medical') || text.includes('ambulance')),
-    'Ambulance Assistance': [...types].some((text) => text.includes('ambulance') || text.includes('assistance')),
-    'Stand-by Medical Team': [...types].some((text) => text.includes('stand') || text.includes('medical team')),
-    'Drowning': [...types].some((text) => text.includes('drowning')),
+    item,
+    code,
+    reports,
+    teams,
+    teamLabel,
+    preparedBy: compiler,
+    victims: reports.reduce((sum, report) => sum + getVictimCount(report), 0),
+    barangays,
+    types,
+    createdAt: toDate(item.createdAt),
+    searchText: [code, teamLabel, compiler, item.compiledBy, ...barangays, ...types.map((type) => type.label), ...reports.map((report) => `${report.reportCode} ${report.incidentCode} ${report.location}`)]
+      .join(' ')
+      .toLowerCase(),
   }
 }
 
-function getIncidentVictimDetails(report: IncidentReport): string {
-  const victims = report.victims || []
-  if (victims.length === 0) {
-    return '<div>No victims reported.</div>'
-  }
-
-  return victims
-    .map((victim, index) => {
-      const name = victim.name || 'Unknown'
-      const gender = victim.gender ? ` ${victim.gender}` : ''
-      const age = victim.age ? `, ${victim.age}` : ''
-      const condition = victim.condition ? `, ${victim.condition}` : ''
-      const address = victim.address ? ` (${victim.address})` : ''
-      return `<div style="margin-bottom: 4px;">${index + 1}. ${name}${gender}${age}${condition}${address}</div>`
-    })
-    .join('')
+function formatDateTime(date: Date | null): string {
+  if (!date) return '—'
+  return date.toLocaleString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })
 }
 
-function getAccomplishmentVictimDetails(item: AccomplishmentItem): string {
-  if (!item.reports || item.reports.length === 0) return '<div>No victims reported.</div>'
+function formatLongDate(date: Date | null): string {
+  if (!date) return '—'
+  return date.toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })
+}
 
-  return item.reports
-    .map((report) => {
-      const incidentIdentifier =
-        report.incidentCode || report.incident_code || report.incidentReferenceCode || report.incident_reference_code_readonly || report.id || 'Unknown'
-      return `
-        <div style="margin-bottom: 12px;">
-          <div style="font-weight: 700; font-size: 12px; margin-bottom: 4px;">Incident ${incidentIdentifier}</div>
-          ${getIncidentVictimDetails(report)}
+function formatTimeOfDay(value?: string): string {
+  const match = /^(\d{1,2}):(\d{2})/.exec(value || '')
+  if (!match) return '—'
+  const hours = Number(match[1])
+  return `${hours % 12 || 12}:${match[2]} ${hours < 12 ? 'AM' : 'PM'}`
+}
+
+function initials(name: string): string {
+  const letters = name.split(/\s+/).filter(Boolean).slice(0, 2).map((word) => word[0]?.toUpperCase() ?? '')
+  return letters.join('') || '?'
+}
+
+function escapeHtml(value: unknown): string {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+function plural(count: number, one: string, many = `${one}s`): string {
+  return `${count.toLocaleString()} ${count === 1 ? one : many}`
+}
+
+function typeChipStyle(color: string) {
+  return { color, borderColor: `${color}55`, backgroundColor: `${color}14` }
+}
+
+function buildPrintHtml(summary: Summary): string {
+  const respondedTo = INCIDENT_CATEGORIES.filter((type) => type.key !== 'earthquake' && type.key !== 'other')
+  const covered = new Set(summary.types.map((type) => type.key))
+
+  const rows = summary.reports.length
+    ? summary.reports
+        .map((report) => {
+          const date = toDate(report.createdAt)
+          const victims = report.victims ?? []
+          const victimLines = victims.length
+            ? `<div><b>Victims:</b><ol>${victims
+                .map((victim) => {
+                  const details = [victim.gender, victim.age ? `${victim.age} y/o` : '', victim.condition, victim.address].filter(Boolean).join(', ')
+                  return `<li>${escapeHtml(victim.name || 'Unidentified')}${details ? ` — ${escapeHtml(details)}` : ''}</li>`
+                })
+                .join('')}</ol></div>`
+            : getVictimCount(report) > 0
+              ? `<div><b>Victims:</b> ${getVictimCount(report)}</div>`
+              : ''
+          return `<tr>
+            <td>${escapeHtml(formatTimeOfDay(report.timeOccurred))}<div class="muted">${escapeHtml(date ? date.toLocaleDateString() : '')}</div></td>
+            <td>
+              <b>${escapeHtml(getIncidentCategoryMeta(getIncidentCategoryKey({ incidentType: report.incidentType })).label)}</b>
+              <div><b>Location:</b> ${escapeHtml(report.location || '—')}</div>
+              <div><b>A/T:</b> ${escapeHtml(report.actionTaken || report.description || '—')}</div>
+              ${victimLines}
+            </td>
+            <td>${escapeHtml(report.reportCode || '')}<div class="muted">${escapeHtml(report.incidentCode || '')}</div></td>
+          </tr>`
+        })
+        .join('')
+    : '<tr><td colspan="3">No incident reports are linked to this accomplishment report.</td></tr>'
+
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(summary.code)}</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 28px; color: #0f172a; }
+    .top { text-align: center; margin-bottom: 18px; }
+    .top p { margin: 2px 0; font-size: 12px; }
+    h1 { font-size: 18px; margin: 10px 0 0; letter-spacing: .08em; }
+    .meta { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px 24px; font-size: 12px; margin: 16px 0; }
+    .meta b { display: inline-block; min-width: 120px; }
+    .box { border: 1px solid #94a3b8; padding: 10px 12px; margin-bottom: 14px; }
+    .label { font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; margin: 0 0 6px; }
+    .checks { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th, td { border: 1px solid #334155; padding: 8px; vertical-align: top; text-align: left; }
+    th { background: #f1f5f9; text-transform: uppercase; font-size: 11px; letter-spacing: .08em; }
+    ol { margin: 4px 0 0 18px; padding: 0; }
+    .muted { color: #64748b; font-size: 11px; margin-top: 2px; }
+    .sign { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; margin-top: 40px; font-size: 12px; }
+    .line { border-top: 1px solid #0f172a; padding-top: 4px; margin-top: 36px; text-align: center; }
+  </style></head><body>
+  <div class="top">
+    <p>Republic of the Philippines</p>
+    <p><b>City Disaster Risk Reduction and Management Office</b></p>
+    <p>Lucena City</p>
+    <h1>ACCOMPLISHMENT REPORT</h1>
+  </div>
+  <div class="meta">
+    <div><b>Report No.:</b> ${escapeHtml(summary.code)}</div>
+    <div><b>Date compiled:</b> ${escapeHtml(formatLongDate(summary.createdAt))}</div>
+    <div><b>Responding team:</b> ${escapeHtml(summary.teamLabel)}</div>
+    <div><b>Incidents covered:</b> ${summary.reports.length}</div>
+    <div><b>Total victims:</b> ${summary.victims}</div>
+    <div><b>Barangays:</b> ${escapeHtml(summary.barangays.join(', ') || '—')}</div>
+  </div>
+  <div class="box">
+    <p class="label">Responded to</p>
+    <div class="checks">${respondedTo
+      .map((type) => `<span>${covered.has(type.key) ? '&#9745;' : '&#9744;'} ${escapeHtml(type.label)}</span>`)
+      .join('')}</div>
+  </div>
+  <table>
+    <thead><tr><th style="width:16%">Time</th><th>Activity</th><th style="width:18%">Remarks</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>
+  <div class="sign">
+    <div>Prepared by:<div class="line">${escapeHtml(summary.teamLabel)}</div></div>
+    <div>Noted by:<div class="line">CDRRMO Officer</div></div>
+  </div>
+  </body></html>`
+}
+
+function printAccomplishmentReport(summary: Summary): void {
+  const printWindow = window.open('', '_blank')
+  if (!printWindow) return
+  printWindow.document.write(buildPrintHtml(summary))
+  printWindow.document.close()
+  printWindow.focus()
+  printWindow.print()
+}
+
+function StatTile({ label, value, helper }: { label: string; value: string; helper: string }) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+      <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-slate-500 sm:text-xs sm:tracking-[0.16em]">{label}</p>
+      <p className="mt-2 text-3xl font-black text-slate-900">{value}</p>
+      <p className="mt-1 text-xs text-slate-500">{helper}</p>
+    </div>
+  )
+}
+
+function IncludedReportsTable({ reports }: { reports: IncludedReport[] }) {
+  return (
+    <div className="mt-4 overflow-x-auto rounded-2xl border border-slate-200">
+      <table className="min-w-[720px] w-full text-left text-sm">
+        <thead className="bg-slate-50 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-500">
+          <tr>
+            <th className="px-4 py-3">Report</th>
+            <th className="px-4 py-3">Type</th>
+            <th className="px-4 py-3">Time</th>
+            <th className="px-4 py-3">Location</th>
+            <th className="px-4 py-3 text-right">Victims</th>
+            <th className="px-4 py-3">Action taken</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {reports.map((report, index) => {
+            const meta = getIncidentCategoryMeta(getIncidentCategoryKey({ incidentType: report.incidentType }))
+            return (
+              <tr key={report.id || report.reportCode || index} className="align-top">
+                <td className="px-4 py-3">
+                  <p className="font-mono text-xs font-bold text-slate-900">{report.reportCode || '—'}</p>
+                  <p className="font-mono text-[11px] text-slate-400">{report.incidentCode}</p>
+                </td>
+                <td className="px-4 py-3">
+                  <span style={typeChipStyle(meta.color)} className="inline-flex rounded-md border px-2 py-0.5 text-[11px] font-bold">
+                    {meta.key === 'other' && report.incidentType ? report.incidentType : meta.label}
+                  </span>
+                </td>
+                <td className="whitespace-nowrap px-4 py-3 text-slate-700">
+                  {formatTimeOfDay(report.timeOccurred)}
+                  <p className="text-[11px] text-slate-400">{toDate(report.createdAt)?.toLocaleDateString() ?? ''}</p>
+                </td>
+                <td className="px-4 py-3 text-slate-600">{report.location || '—'}</td>
+                <td className="px-4 py-3 text-right font-semibold tabular-nums text-slate-900">{getVictimCount(report)}</td>
+                <td className="max-w-xs px-4 py-3 text-slate-600">{report.actionTaken || report.description || '—'}</td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function AccomplishmentCard({ summary }: { summary: Summary }) {
+  const [isOpen, setIsOpen] = useState(false)
+  const hasReports = summary.reports.length > 0
+  const teamIsFallback = summary.teams.length === 0
+
+  return (
+    <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_10px_24px_rgba(15,23,42,0.06)]" data-testid="accomplishment-card">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex min-w-0 items-start gap-3">
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-blue-600 text-sm font-black text-white" aria-hidden="true">
+            {initials(summary.teamLabel === NO_TEAM ? '' : summary.teamLabel)}
+          </span>
+          <div className="min-w-0">
+            <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-blue-700">Responding Team</p>
+            <h3 className="break-words text-lg font-bold leading-snug text-slate-900" data-testid="card-team">
+              {summary.teamLabel}
+            </h3>
+            <p className="mt-0.5 text-xs text-slate-500">
+              {summary.preparedBy ? <>Compiled by {summary.item.compiledBy ? `@${summary.item.compiledBy}` : summary.preparedBy}</> : 'Compiler not recorded'}
+              {teamIsFallback && summary.preparedBy ? ' · team taken from the compiling account' : ''}
+            </p>
+          </div>
         </div>
-      `
-    })
-    .join('')
-}
 
-function getActivityRows(item: AccomplishmentItem): string {
-  if (!item.reports || item.reports.length === 0) {
-    return `
-      <tr>
-        <td colspan="3" style="padding: 10px; border: 1px solid #cbd5e1;">No report details available.</td>
-      </tr>
-    `
-  }
+        <div className="shrink-0 text-left sm:text-right">
+          <p className="font-mono text-sm font-bold text-slate-900">{summary.code}</p>
+          <p className="mt-0.5 text-xs text-slate-500">{formatDateTime(summary.createdAt)}</p>
+          <span className="mt-2 inline-flex rounded-full bg-emerald-50 px-2.5 py-0.5 text-[11px] font-bold text-emerald-700 ring-1 ring-emerald-100">
+            {summary.item.status || 'Compiled'}
+          </span>
+        </div>
+      </div>
 
-  return item.reports
-    .map((report) => {
-      const time = getAccomplishmentCreatedAt(item)
-      const activityLines = []
+      <dl className="mt-4 grid grid-cols-3 gap-3">
+        <div className="rounded-xl bg-slate-50 px-3 py-2.5">
+          <dt className="text-[11px] font-semibold text-slate-500">Incidents</dt>
+          <dd className="text-xl font-black tabular-nums text-slate-900">{summary.reports.length}</dd>
+        </div>
+        <div className="rounded-xl bg-slate-50 px-3 py-2.5">
+          <dt className="text-[11px] font-semibold text-slate-500">Victims</dt>
+          <dd className="text-xl font-black tabular-nums text-slate-900">{summary.victims}</dd>
+        </div>
+        <div className="rounded-xl bg-slate-50 px-3 py-2.5">
+          <dt className="text-[11px] font-semibold text-slate-500">Barangays</dt>
+          <dd className="text-xl font-black tabular-nums text-slate-900">{summary.barangays.length}</dd>
+        </div>
+      </dl>
 
-      if (report.incidentType || report.incident_type) {
-        activityLines.push(`<strong>${getIncidentType(report)}</strong>`)
-      }
-      if (report.location) {
-        activityLines.push(`<div><strong>Location:</strong> ${report.location}</div>`)
-      }
-      const action = getActionTaken(report)
-      if (action) {
-        activityLines.push(`<div><strong>A/T:</strong> ${action}</div>`)
-      }
-      if (report.victims && report.victims.length > 0) {
-        activityLines.push(`<div><strong>Victims:</strong> ${report.victims.length}</div>`)
-      }
-      if (report.report_code || report.incident_code) {
-        activityLines.push(`<div><strong>Report:</strong> ${getReportCode(report as any)}</div>`)
-      }
+      {summary.types.length > 0 && (
+        <div className="mt-4 flex flex-wrap gap-2">
+          {summary.types.map((type) => (
+            <span key={type.key} style={typeChipStyle(type.color)} className="inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-bold">
+              {type.label}
+              <span className="tabular-nums opacity-80">×{type.count}</span>
+            </span>
+          ))}
+        </div>
+      )}
 
-      return `
-        <tr>
-          <td style="padding: 10px; border: 1px solid #cbd5e1; vertical-align: top; width: 18%;">${time}</td>
-          <td style="padding: 10px; border: 1px solid #cbd5e1; vertical-align: top; width: 64%;">${activityLines.join('')}</td>
-          <td style="padding: 10px; border: 1px solid #cbd5e1; vertical-align: top; width: 18%;"></td>
-        </tr>
-      `
-    })
-    .join('')
-}
+      {summary.barangays.length > 0 && (
+        <p className="mt-3 text-xs text-slate-500">
+          <span className="font-semibold text-slate-600">Barangays: </span>
+          {summary.barangays.join(', ')}
+        </p>
+      )}
 
-function formatDate(value?: string): string {
-  if (!value) return '-'
+      {!hasReports && (
+        <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          No incident reports are linked to this accomplishment report. It was likely compiled before the compile fix, so the responder should compile those reports again.
+        </p>
+      )}
 
-  const parsed = new Date(value)
-  if (Number.isNaN(parsed.getTime())) return value
+      {isOpen && hasReports && <IncludedReportsTable reports={summary.reports} />}
 
-  return parsed.toLocaleString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  })
-}
-
-function getStatusBadgeStyle(status?: string): string {
-  const value = String(status || '').trim().toLowerCase()
-
-  if (value.includes('compiled') || value.includes('approved')) {
-    return 'bg-emerald-50 text-emerald-700 ring-emerald-100'
-  }
-
-  if (value.includes('pending')) {
-    return 'bg-amber-50 text-amber-700 ring-amber-100'
-  }
-
-  return 'bg-slate-50 text-slate-600 ring-slate-100'
+      <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-4">
+        {hasReports && (
+          <button
+            type="button"
+            onClick={() => setIsOpen((open) => !open)}
+            aria-expanded={isOpen}
+            className="rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm font-bold text-slate-700 transition hover:bg-slate-50"
+          >
+            {isOpen ? 'Hide incident reports' : `View ${plural(summary.reports.length, 'incident report')}`}
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={() => printAccomplishmentReport(summary)}
+          className="rounded-xl bg-blue-600 px-3.5 py-2 text-sm font-bold text-white shadow-sm transition hover:bg-blue-700"
+        >
+          Print Report
+        </button>
+      </div>
+    </article>
+  )
 }
 
 export function AccomplishmentReports() {
   const [reports, setReports] = useState<AccomplishmentItem[]>([])
-  const [searchQuery, setSearchQuery] = useState('')
   const [isLoading, setIsLoading] = useState(true)
+  const [loadError, setLoadError] = useState('')
+  const [searchQuery, setSearchQuery] = useState('')
+  const [teamFilter, setTeamFilter] = useState('all')
+  const [sortOrder, setSortOrder] = useState<'newest' | 'oldest'>('newest')
+  const [reloadKey, setReloadKey] = useState(0)
 
   useEffect(() => {
     let isMounted = true
-
-    async function loadAccomplishmentReports() {
-      try {
-        setIsLoading(true)
-        const data = await getAccomplishmentReports()
-
-        if (isMounted) {
-          setReports(Array.isArray(data) ? data : [])
-        }
-      } catch (error) {
+    setIsLoading(true)
+    setLoadError('')
+    getAccomplishmentReports()
+      .then((data) => {
+        if (isMounted) setReports(Array.isArray(data) ? data : [])
+      })
+      .catch((error) => {
         console.error('[AccomplishmentReports] Failed to load reports:', error)
-
-        if (isMounted) {
-          setReports([])
-        }
-      } finally {
-        if (isMounted) {
-          setIsLoading(false)
-        }
-      }
-    }
-
-    void loadAccomplishmentReports()
-
+        if (isMounted) setLoadError('Could not load accomplishment reports. Check the server connection and try again.')
+      })
+      .finally(() => {
+        if (isMounted) setIsLoading(false)
+      })
     return () => {
       isMounted = false
     }
-  }, [])
+  }, [reloadKey])
 
-  const filteredReports = useMemo(() => {
+  const summaries = useMemo(() => reports.map(summarize), [reports])
+
+  const teamOptions = useMemo(
+    () => Array.from(new Set(summaries.flatMap((summary) => (summary.teams.length ? summary.teams : [summary.teamLabel])))).sort(),
+    [summaries],
+  )
+
+  const visible = useMemo(() => {
     const query = searchQuery.trim().toLowerCase()
+    return summaries
+      .filter((summary) => teamFilter === 'all' || summary.teams.includes(teamFilter) || summary.teamLabel === teamFilter)
+      .filter((summary) => !query || summary.searchText.includes(query))
+      .sort((a, b) => {
+        const difference = (a.createdAt?.getTime() ?? 0) - (b.createdAt?.getTime() ?? 0)
+        return sortOrder === 'newest' ? -difference : difference
+      })
+  }, [summaries, searchQuery, teamFilter, sortOrder])
 
-    if (!query) return reports
+  const totals = useMemo(
+    () => ({
+      incidents: visible.reduce((sum, summary) => sum + summary.reports.length, 0),
+      victims: visible.reduce((sum, summary) => sum + summary.victims, 0),
+      teams: new Set(visible.flatMap((summary) => (summary.teams.length ? summary.teams : [summary.teamLabel]))).size,
+    }),
+    [visible],
+  )
 
-    return reports.filter((report) =>
-      [
-        getReportCode(report),
-        getIncidentCode(report),
-        getIncidentType(report),
-        getAccomplishmentResponderTeam(report),
-        report.location,
-        report.status,
-      ]
-        .filter(Boolean)
-        .some((value) => String(value).toLowerCase().includes(query)),
-    )
-  }, [reports, searchQuery])
-
-  const handlePrintAccomplishmentReport = (report: AccomplishmentItem) => {
-    const checklist = getAccomplishmentChecklist(report)
-    const activityRows = getActivityRows(report)
-    const victimDetailsHtml = getAccomplishmentVictimDetails(report)
-
-    const html = `
-      <html>
-        <head>
-          <title>${report.compiledCode || report.id || 'Accomplishment Report'}</title>
-          <style>
-            body { font-family: Arial, sans-serif; margin: 24px; }
-            .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; }
-            .report-title { font-size: 20px; font-weight: 700; margin: 0; }
-            .meta { font-size: 12px; color: #475569; margin-top: 8px; }
-            .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-bottom: 24px; }
-            .box { border: 1px solid #cbd5e1; padding: 12px; border-radius: 10px; background: #f8fafc; }
-            .checkbox-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
-            .checkbox { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
-            .checkbox input { width: 14px; height: 14px; }
-            .victim-details { font-size: 12px; line-height: 1.5; margin-top: 8px; }
-            .victim-details div { margin-bottom: 4px; }
-            table { width: 100%; border-collapse: collapse; margin-top: 16px; }
-            th, td { border: 1px solid #1f2937; padding: 10px; font-size: 12px; }
-            th { background: #f3f4f6; text-transform: uppercase; letter-spacing: 0.08em; }
-            .section-title { font-size: 12px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; margin: 0 0 8px 0; }
-            .footer { margin-top: 24px; display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
-            .signature-box { border-top: 1px solid #1f2937; padding-top: 16px; font-size: 12px; }
-          </style>
-        </head>
-        <body>
-          <div class="header">
-            <div>
-              <p class="report-title">Accomplishment Report</p>
-              <p class="meta">${report.compiledCode || report.id || ''}</p>
-            </div>
-            <div>
-              <p class="meta">Date: ${getAccomplishmentReportDate(report)}</p>
-              <p class="meta">Time: ${getAccomplishmentReportTime(report)}</p>
-            </div>
-          </div>
-
-          <div class="grid">
-            <div class="box">
-              <p class="section-title">Team</p>
-              <p>${getAccomplishmentResponderTeam(report)}</p>
-            </div>
-            <div class="box">
-              <p class="section-title">Total Victims</p>
-              <p>${getAccomplishmentVictimCount(report)}</p>
-            </div>
-            <div class="box">
-              <p class="section-title">Action Taken</p>
-              <p>${getAccomplishmentActionTaken(report)}</p>
-            </div>
-          </div>
-
-          <div class="box">
-            <p class="section-title">Responded To</p>
-            <div class="checkbox-row">
-              <label class="checkbox"><input type="checkbox" ${checklist['RCA'] ? 'checked' : ''} disabled> RCA</label>
-              <label class="checkbox"><input type="checkbox" ${checklist['Fire Incident'] ? 'checked' : ''} disabled> Fire Incident</label>
-              <label class="checkbox"><input type="checkbox" ${checklist['Crime Against Person/Property'] ? 'checked' : ''} disabled> Crime Against Person/Property</label>
-              <label class="checkbox"><input type="checkbox" ${checklist['Medical Emergency'] ? 'checked' : ''} disabled> Medical Emergency</label>
-              <label class="checkbox"><input type="checkbox" ${checklist['Ambulance Assistance'] ? 'checked' : ''} disabled> Ambulance Assistance</label>
-              <label class="checkbox"><input type="checkbox" ${checklist['Stand-by Medical Team'] ? 'checked' : ''} disabled> Stand-by Medical Team</label>
-              <label class="checkbox"><input type="checkbox" ${checklist['Drowning'] ? 'checked' : ''} disabled> Drowning</label>
-            </div>
-          </div>
-
-          <div class="box">
-            <p class="section-title">Victim Details</p>
-            <div class="victim-details">
-              ${victimDetailsHtml}
-            </div>
-          </div>
-
-          <table>
-            <thead>
-              <tr>
-                <th style="width: 18%;">Time</th>
-                <th style="width: 64%;">Activity</th>
-                <th style="width: 18%;">Remarks</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${activityRows}
-            </tbody>
-          </table>
-
-          <div class="footer">
-            <div class="signature-box">
-              <p><strong>Endorsed by Team:</strong></p>
-              <p>________________________</p>
-            </div>
-            <div class="signature-box">
-              <p><strong>Received by Team:</strong></p>
-              <p>________________________</p>
-            </div>
-          </div>
-        </body>
-      </html>
-    `
-
-    const printWindow = window.open('', '_blank')
-    if (!printWindow) return
-    printWindow.document.write(html)
-    printWindow.document.close()
-    printWindow.focus()
-    printWindow.print()
-  }
+  const isFiltered = Boolean(searchQuery.trim()) || teamFilter !== 'all'
 
   return (
     <section className="px-4 pb-10 pt-2 sm:px-6">
       <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_18px_38px_rgba(15,23,42,0.08)]">
-        <div className="flex flex-col gap-4 border-b border-slate-200 pb-5 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-blue-700">
-              Responder Submission
-            </p>
-            <h2 className="mt-2 text-2xl font-bold tracking-tight text-slate-900">
-              Accomplishment Reports
-            </h2>
-            <p className="mt-1 text-sm text-slate-500">
-              Submitted responder accomplishment reports are displayed here for admin review.
-            </p>
-          </div>
+        <div className="border-b border-slate-200 pb-5">
+          <p className="text-sm font-semibold uppercase tracking-[0.18em] text-blue-700">Responder Submission</p>
+          <h2 className="mt-2 text-2xl font-bold tracking-tight text-slate-900">Accomplishment Reports</h2>
+          <p className="mt-1 text-sm text-slate-500">
+            Reports compiled by responding teams from their approved incident reports.
+          </p>
+        </div>
 
-          <div className="flex w-full max-w-md items-center rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+        <div className="mt-5 grid grid-cols-2 gap-3 xl:grid-cols-4">
+          <StatTile label="Accomplishment reports" value={visible.length.toLocaleString()} helper={isFiltered ? `of ${summaries.length} in total` : 'compiled by teams'} />
+          <StatTile label="Incidents covered" value={totals.incidents.toLocaleString()} helper="approved incident reports" />
+          <StatTile label="Victims assisted" value={totals.victims.toLocaleString()} helper="across the included incidents" />
+          <StatTile label="Responding teams" value={totals.teams.toLocaleString()} helper="with at least one report" />
+        </div>
+
+        <div className="mt-5 flex flex-col gap-3 md:flex-row md:items-center">
+          <label className="flex flex-1 items-center rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5">
+            <span className="sr-only">Search</span>
             <input
               className="w-full bg-transparent text-sm text-slate-900 outline-none placeholder:text-slate-400"
               onChange={(event) => setSearchQuery(event.target.value)}
-              placeholder="Search accomplishment reports..."
-              type="text"
+              placeholder="Search report no., team, barangay, incident type…"
+              type="search"
               value={searchQuery}
             />
-          </div>
+          </label>
+          <label className="flex items-center gap-2 text-sm text-slate-600">
+            <span className="shrink-0 font-semibold">Team</span>
+            <select
+              value={teamFilter}
+              onChange={(event) => setTeamFilter(event.target.value)}
+              className="w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-800 outline-none md:w-56"
+              data-testid="team-filter"
+            >
+              <option value="all">All teams</option>
+              {teamOptions.map((team) => (
+                <option key={team} value={team}>{team}</option>
+              ))}
+            </select>
+          </label>
+          <label className="flex items-center gap-2 text-sm text-slate-600">
+            <span className="shrink-0 font-semibold">Sort</span>
+            <select
+              value={sortOrder}
+              onChange={(event) => setSortOrder(event.target.value as 'newest' | 'oldest')}
+              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-800 outline-none md:w-36"
+            >
+              <option value="newest">Newest first</option>
+              <option value="oldest">Oldest first</option>
+            </select>
+          </label>
         </div>
 
-        <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
-              Total Reports
-            </p>
-            <p className="mt-2 text-3xl font-black text-blue-800">{reports.length}</p>
-          </div>
-
-          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
-              With Victims
-            </p>
-            <p className="mt-2 text-3xl font-black text-red-700">
-              {reports.filter((item) => getVictimCount(item) > 0).length}
-            </p>
-          </div>
-
-          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
-              Completed
-            </p>
-            <p className="mt-2 text-3xl font-black text-emerald-700">
-              {
-                reports.filter((item) =>
-                  String(item.status_update || '').toLowerCase().includes('complete'),
-                ).length
-              }
-            </p>
-          </div>
-
-          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
-              Search Result
-            </p>
-            <p className="mt-2 text-3xl font-black text-slate-900">{filteredReports.length}</p>
-          </div>
-        </div>
-
-        <div className="mt-6 grid gap-4">
+        <div className="mt-5 grid gap-4">
           {isLoading ? (
             <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
-              Loading accomplishment reports...
+              Loading accomplishment reports…
             </div>
-          ) : filteredReports.length === 0 ? (
+          ) : loadError ? (
+            <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-6 text-center text-sm text-red-700">
+              <p>{loadError}</p>
+              <button
+                type="button"
+                onClick={() => setReloadKey((key) => key + 1)}
+                className="mt-3 rounded-xl bg-white px-3.5 py-2 text-sm font-bold text-red-700 ring-1 ring-red-200 hover:bg-red-100"
+              >
+                Try again
+              </button>
+            </div>
+          ) : visible.length === 0 ? (
             <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
-              No accomplishment reports found.
+              {isFiltered ? 'No accomplishment reports match your search or team filter.' : 'No accomplishment reports yet. They appear here once a responding team compiles its approved reports.'}
             </div>
           ) : (
-            filteredReports.map((report) => (
-              <article
-                className="rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_10px_24px_rgba(15,23,42,0.06)] transition hover:border-blue-200 hover:shadow-[0_16px_30px_rgba(15,23,42,0.09)]"
-                key={getReportCode(report)}
-              >
-                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                  <div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-blue-800">
-                        {getReportCode(report)}
-                      </span>
-                      <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700">
-                        Incident: {getIncidentCode(report)}
-                      </span>
-                    </div>
-
-                    <h3 className="mt-3 text-lg font-bold text-slate-900">
-                      {getIncidentType(report)}
-                    </h3>
-
-                    <p className="mt-1 text-sm text-slate-500">
-                      {report.location || 'No location provided'}
-                    </p>
-                  </div>
-
-                  <div className="text-left lg:text-right">
-                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
-                      Submitted
-                    </p>
-                    <p className="mt-1 text-sm font-semibold text-slate-700">
-                      {formatDate(report.createdAt || report.created_at || report.report_time)}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="mt-5 grid gap-3 md:grid-cols-3">
-                  <div className="rounded-2xl bg-slate-50 p-4">
-                    <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
-                      Responder Team
-                    </p>
-                    <p className="mt-2 text-sm font-semibold text-slate-800">
-                      {getAccomplishmentResponderTeam(report)}
-                    </p>
-                  </div>
-
-                  <div className="rounded-2xl bg-slate-50 p-4">
-                    <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
-                      Total Victims
-                    </p>
-                    <p className="mt-2 text-3xl font-black text-red-700">
-                      {getAccomplishmentVictimCount(report)}
-                    </p>
-                  </div>
-
-                  <div className="rounded-2xl bg-slate-50 p-4">
-                    <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
-                      Status
-                    </p>
-                    <span className={`mt-2 inline-flex rounded-full border px-3 py-1 text-xs font-bold ${getStatusBadgeStyle(report.status)}`}>
-                      {getAccomplishmentStatus(report)}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                  <div className="flex items-center justify-between gap-4">
-                    <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
-                      Action Taken
-                    </p>
-                    <p className="text-xs text-slate-400">Summary</p>
-                  </div>
-                  <p className="mt-2 text-sm leading-6 text-slate-700">
-                    {getActionTaken(report)}
-                  </p>
-                </div>
-
-                <div className="mt-4 flex flex-wrap items-center gap-3">
-                  <button
-                    className="rounded-2xl bg-blue-600 px-4 py-2 text-sm font-bold text-white shadow-sm transition hover:bg-blue-700"
-                    onClick={() => handlePrintAccomplishmentReport(report)}
-                    type="button"
-                  >
-                    Print Report
-                  </button>
-                  <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700">
-                    Total Reports: {report.totalReports ?? 0}
-                  </span>
-                </div>
-              </article>
-            ))
+            visible.map((summary, index) => <AccomplishmentCard key={summary.item.id || summary.code || index} summary={summary} />)
           )}
         </div>
       </div>

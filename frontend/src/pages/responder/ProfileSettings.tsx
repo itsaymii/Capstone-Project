@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { FC, FormEvent, ChangeEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { getCurrentUserProfile, updateCurrentUserProfile } from '../../services/auth'
+import { getCurrentUserProfile, logoutUser } from '../../services/auth'
 import { MobileNavBar } from '../../components/MobileNavBar'
 
 interface TeamMember {
@@ -67,7 +67,9 @@ const ProfileSettingsPage: FC = () => {
 
   const [profileData, setProfileData] = useState<ProfileData>(() => {
     const stored = loadSavedResponderProfile()
-    return stored ?? defaultProfileData(profile?.fullName)
+    // The name always comes from the account: it is how reports are matched to this team.
+    const accountName = profile?.fullName || stored?.teamLeaderName || 'Team Leader'
+    return { ...(stored ?? defaultProfileData(accountName)), teamLeaderName: accountName }
   })
 
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>(() => {
@@ -101,17 +103,10 @@ const ProfileSettingsPage: FC = () => {
     e.preventDefault()
 
     const savedLocally = saveResponderProfile(profileData, teamMembers)
-    const authSaved = updateCurrentUserProfile(profileData.teamLeaderName)
 
     if (!savedLocally) {
-      setErrorMessage('Unable to save profile locally. Please check your browser settings.')
+      setErrorMessage('Unable to save profile on this device. Please check your browser settings.')
       setStatusMessage('')
-      return
-    }
-
-    if (!authSaved) {
-      setStatusMessage('Profile saved locally. Full name could not be updated in auth storage.')
-      setErrorMessage('')
       return
     }
 
@@ -188,13 +183,9 @@ const ProfileSettingsPage: FC = () => {
   // Functional Log Out Handler
   const handleLogOut = () => {
     if (confirm('Are you sure you want to log out of your session?')) {
-      // Linisin ang user credentials mula sa local at session storage
-      localStorage.removeItem('user')
-      localStorage.removeItem('token')
-      sessionStorage.clear()
-      
-      // I-redirect ang field responder sa landing/login screen
-      navigate('/')
+      // Ends the server session and clears the stored login.
+      logoutUser()
+      navigate('/login', { replace: true })
     }
   }
 
@@ -282,7 +273,8 @@ const ProfileSettingsPage: FC = () => {
               </div>
               <div>
                 <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5">Full Name</label>
-                <input type="text" name="teamLeaderName" value={profileData.teamLeaderName} onChange={handleProfileChange} className="w-full text-sm font-medium border border-slate-200 rounded-xl px-3.5 py-2.5 bg-slate-50/50 outline-none focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/5 transition-all" />
+                <input type="text" name="teamLeaderName" value={profileData.teamLeaderName} readOnly title="Taken from your account. Ask an admin to change it." className="w-full text-sm font-semibold border border-slate-200 rounded-xl px-3.5 py-2.5 bg-slate-100 text-slate-500 cursor-not-allowed" />
+                <p className="mt-1 text-[11px] text-slate-400">From your account. Ask an admin to change it.</p>
               </div>
               <div>
                 <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5">Agency Badge ID</label>

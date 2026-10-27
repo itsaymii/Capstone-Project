@@ -32,17 +32,19 @@ export type AnalyticsTypeMeta = {
   color: string
 }
 
-/** Every incident type the admin pages can show, in display order. */
+// Every incident type the admin pages can show, in display order.
+// Colors are the eight slots of the reference data-viz palette, matched to a meaning where
+// one exists: fire orange, drowning aqua (water), earthquake green.
 export const ANALYTICS_TYPES: AnalyticsTypeMeta[] = [
-  { key: 'rca', label: 'Road Crash (RCA)', color: '#3b82f6' },
-  { key: 'fire', label: 'Fire Incident', color: '#ef4444' },
-  { key: 'medical', label: 'Medical Emergency', color: '#ec4899' },
-  { key: 'ambulance', label: 'Ambulance Assistance', color: '#06b6d4' },
-  { key: 'crime', label: 'Crime Against Person/Property', color: '#8b5cf6' },
-  { key: 'standby', label: 'Stand-by Medical Team', color: '#f59e0b' },
-  { key: 'drowning', label: 'Drowning', color: '#0ea5e9' },
-  { key: 'earthquake', label: 'Earthquake', color: '#10b981' },
-  { key: 'other', label: 'Other', color: '#94a3b8' },
+  { key: 'rca', label: 'Road Crash (RCA)', color: '#2a78d6' },
+  { key: 'fire', label: 'Fire Incident', color: '#eb6834' },
+  { key: 'medical', label: 'Medical Emergency', color: '#e87ba4' },
+  { key: 'ambulance', label: 'Ambulance Assistance', color: '#e34948' },
+  { key: 'crime', label: 'Crime Against Person/Property', color: '#6250d6' },
+  { key: 'standby', label: 'Stand-by Medical Team', color: '#eda100' },
+  { key: 'drowning', label: 'Drowning', color: '#1baf7a' },
+  { key: 'earthquake', label: 'Earthquake', color: '#008300' },
+  { key: 'other', label: 'Other', color: '#898781' },
 ]
 
 const TYPE_BY_KEY = new Map(ANALYTICS_TYPES.map((type) => [type.key, type]))
@@ -201,6 +203,8 @@ export type InsightChart = {
   title: string
   description: string
   items: InsightBar[]
+  /** Parts of a whole in the field's own option order (draw as a 100% bar, colors by position). */
+  share?: boolean
 }
 
 export type InsightKpi = { label: string; value: string; helper: string }
@@ -284,14 +288,14 @@ export function countDetailValues(
     .map((item) => ({ ...item, helper: `${share(item.value, total)} of ${total} with this field` }))
 }
 
-type ChartPlan = { field: string; from: 'report' | 'victim'; title: string; description: string }
+type ChartPlan = { field: string; from: 'report' | 'victim'; title: string; description: string; share?: boolean }
 
 const CHART_PLANS: Partial<Record<AnalyticsTypeKey, ChartPlan[]>> = {
   rca: [
     { field: 'vehicle_types', from: 'report', title: 'Vehicles involved', description: 'Each vehicle type selected on a road crash report.' },
     { field: 'collision_type', from: 'report', title: 'Type of collision', description: 'How the road crashes happened.' },
     { field: 'suspected_cause', from: 'report', title: 'Suspected cause', description: 'Leading causes, useful for road safety campaigns.' },
-    { field: 'protective_gear', from: 'victim', title: 'Helmet / seatbelt use', description: 'Protective gear worn by the persons involved.' },
+    { field: 'protective_gear', from: 'victim', title: 'Helmet / seatbelt use', description: 'Protective gear worn by the persons involved.', share: true },
   ],
   fire: [
     { field: 'suspected_cause', from: 'report', title: 'Suspected cause', description: 'Leading causes of fire, useful for fire prevention.' },
@@ -302,17 +306,17 @@ const CHART_PLANS: Partial<Record<AnalyticsTypeKey, ChartPlan[]>> = {
   crime: [
     { field: 'crime_type', from: 'report', title: 'Type of crime', description: 'Crimes against person or property responded to.' },
     { field: 'weapon', from: 'report', title: 'Weapon involved', description: 'Weapons recorded on the reports.' },
-    { field: 'suspect_status', from: 'report', title: 'Suspect status', description: 'Whether suspects were apprehended.' },
+    { field: 'suspect_status', from: 'report', title: 'Suspect status', description: 'Whether suspects were apprehended.', share: true },
   ],
   medical: [
     { field: 'chief_complaint', from: 'report', title: 'Chief complaint', description: 'Most common medical emergencies.' },
-    { field: 'consciousness', from: 'report', title: 'Level of consciousness', description: 'Patient condition on arrival of the team (AVPU).' },
+    { field: 'consciousness', from: 'report', title: 'Level of consciousness', description: 'Patient condition on arrival of the team (AVPU).', share: true },
     { field: 'hospital', from: 'report', title: 'Receiving hospitals', description: 'Where patients were brought.' },
   ],
   ambulance: [
     { field: 'transport_reason', from: 'report', title: 'Reason for transport', description: 'Why the ambulance was requested.' },
     { field: 'destination_hospital', from: 'report', title: 'Destination hospitals', description: 'Where patients were transported.' },
-    { field: 'condition_on_arrival', from: 'report', title: 'Condition on arrival', description: 'Patient condition when the ambulance arrived.' },
+    { field: 'condition_on_arrival', from: 'report', title: 'Condition on arrival', description: 'Patient condition when the ambulance arrived.', share: true },
   ],
   standby: [
     { field: 'cases_handled', from: 'report', title: 'Cases handled', description: 'Cases the stand-by team attended to.' },
@@ -420,7 +424,7 @@ function drowningOutcomeChart(records: unknown[]): InsightChart {
     { label: 'Fatalities', value: sumField(records, 'fatalities') },
     { label: 'Still missing', value: sumField(records, 'missing') },
   ]
-  return { title: 'Victim outcomes', description: 'What happened to the drowning victims.', items }
+  return { title: 'Victim outcomes', description: 'What happened to the drowning victims.', items, share: true }
 }
 
 /** Insights for one type, built from the records of that type. */
@@ -430,7 +434,7 @@ export function buildTypeInsights(key: AnalyticsTypeKey, records: unknown[]): Ty
   const meta = getAnalyticsTypeMeta(key)
   const withDetails = records.filter((record) => Object.keys(detailsOf(record)).length > 0)
 
-  const charts: InsightChart[] = (CHART_PLANS[key] ?? []).flatMap((plan) => {
+  const charts: InsightChart[] = (CHART_PLANS[key] ?? []).flatMap((plan): InsightChart[] => {
     const specs = plan.from === 'report' ? config.fields : config.victimFields
     const spec = findSpec(specs, plan.field)
     if (!spec) return []
@@ -438,6 +442,15 @@ export function buildTypeInsights(key: AnalyticsTypeKey, records: unknown[]): Ty
       plan.from === 'report'
         ? withDetails.map((record) => detailsOf(record)[plan.field])
         : withDetails.flatMap(victimsOf).map((victim) => victim.details[plan.field])
+    if (plan.share) {
+      // Keep every option, in the field's own order, so each option keeps its color.
+      const counts = countDetailValues(values, spec, spec.choices.length)
+      const items = spec.choices.map((choice) => {
+        const label = formatDetailValue(spec, choice.value)
+        return { label, value: counts.find((item) => item.label === label)?.value ?? 0 }
+      })
+      return [{ title: plan.title, description: plan.description, items, share: true }]
+    }
     return [{ title: plan.title, description: plan.description, items: countDetailValues(values, spec) }]
   })
   if (key === 'drowning') charts.push(drowningOutcomeChart(withDetails))

@@ -141,8 +141,8 @@ class ResponderReportViewSet(viewsets.ModelViewSet):
 
 
 class IncidentReportViewSet(viewsets.ModelViewSet):
-    queryset = IncidentReport.objects.prefetch_related('victims').select_related(
-        'created_by'
+    queryset = IncidentReport.objects.prefetch_related('victims', 'accomplishment_reports').select_related(
+        'created_by', 'barangay'
     ).all()
     serializer_class = IncidentReportSerializer
     authentication_classes = [SessionAuthentication, TokenAuthentication]
@@ -184,6 +184,9 @@ class AccomplishmentReportViewSet(viewsets.ModelViewSet):
     queryset = AccomplishmentReport.objects.prefetch_related(
         'incident_reports',
         'incident_reports__victims',
+        'incident_reports__accomplishment_reports',
+        'incident_reports__created_by__account_profile',
+        'incident_reports__barangay',
     ).select_related('compiled_by').all()
     serializer_class = AccomplishmentReportSerializer
     authentication_classes = [SessionAuthentication, TokenAuthentication]
@@ -195,9 +198,8 @@ class AccomplishmentReportViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         queryset = super().get_queryset()
 
-        # Only include accomplishment reports that originated from the responder
-        # side: either compiled anonymously (compiled_by is NULL) or compiled by
-        # non-dashboard users (exclude admin/staff compiled reports).
+        # Only include accomplishment reports that originated from the responder side.
+        # Responder accounts have the staff role, so only admin-compiled reports are left out.
         from accounts.models import AccountProfile
 
         search = self.request.query_params.get('search')
@@ -207,10 +209,8 @@ class AccomplishmentReportViewSet(viewsets.ModelViewSet):
                 Q(title__icontains=search)
             )
 
-        # Filter to responder-originated reports
-        dashboard_roles = [AccountProfile.ROLE_ADMIN, AccountProfile.ROLE_STAFF]
-        queryset = queryset.filter(
-            Q(compiled_by__isnull=True) | ~Q(compiled_by__account_profile__role__in=dashboard_roles)
+        queryset = queryset.exclude(compiled_by__account_profile__role=AccountProfile.ROLE_ADMIN).exclude(
+            compiled_by__is_superuser=True
         )
 
         ordering = self.request.query_params.get('ordering', '-created_at')

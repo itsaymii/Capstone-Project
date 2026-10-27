@@ -2,8 +2,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { FC } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { MobileNavBar } from '../../components/MobileNavBar'
+import axios from 'axios'
 import { getCurrentUserProfile } from '../../services/auth'
 import { addNotification } from '../../services/notifications'
+import { createAccomplishmentReport, getIncidentReports } from '../../services/incidents'
+import { getIncidentCategoryMeta, getIncidentCategoryKey } from '../../data/incidentCategories'
 
 interface VictimDetails {
   name: string
@@ -39,9 +42,9 @@ interface IncidentReport {
   created_at?: string
   createdBy?: string
   createdByRole?: string
+  /** Accomplishment report code this report is already compiled into. */
+  compiledIn?: string | null
 }
-
-const API_BASE_URL = 'http://127.0.0.1:8000'
 
 function getStatusValue(report: IncidentReport): string {
   return report.status_update || report.status || 'Submitted'
@@ -120,55 +123,44 @@ function getActionTaken(report: IncidentReport): string {
   return report.actionTaken || report.action_taken || ''
 }
 
-type ResponderTeamCode = 'alpha' | 'bravo' | 'charlie' | 'unknown'
-
-function normalizeTeamValue(value?: string): ResponderTeamCode {
-  const normalized = String(value || '').trim().toLowerCase()
-
-  if (normalized.includes('alpha')) return 'alpha'
-  if (normalized.includes('bravo')) return 'bravo'
-  if (normalized.includes('charlie')) return 'charlie'
-
-  return 'unknown'
+function normalizeName(value?: string | null): string {
+  return String(value || '').trim().toLowerCase().replace(/\s+/g, ' ')
 }
 
-function getLoggedInResponderTeam(): ResponderTeamCode {
-  const profile = getCurrentUserProfile() as any
+type CurrentResponder = { username: string; teamName: string }
 
-  return normalizeTeamValue(
-    [
-      profile?.responderTeam,
-      profile?.responder_team,
-      profile?.team,
-      profile?.teamName,
-      profile?.team_name,
-      profile?.username,
-      profile?.fullName,
-      profile?.full_name,
-      profile?.email,
-      profile?.role,
-    ]
-      .filter(Boolean)
-      .join(' '),
-  )
+function getCurrentResponder(): CurrentResponder {
+  const profile = getCurrentUserProfile()
+  return { username: normalizeName(profile?.username), teamName: normalizeName(profile?.fullName) }
 }
 
-function getTeamDisplayName(team: ResponderTeamCode): string {
-  if (team === 'alpha') return 'Alpha'
-  if (team === 'bravo') return 'Bravo'
-  if (team === 'charlie') return 'Charlie'
-
-  return 'Unassigned'
+/**
+ * A report belongs to this account when this account filed it, or when it was filed
+ * under the same responding team name (the team shown on the report).
+ */
+function isOwnReport(report: IncidentReport, me: CurrentResponder): boolean {
+  if (me.username && normalizeName(report.createdBy) === me.username) return true
+  return Boolean(me.teamName) && normalizeName(getResponderTeam(report)) === me.teamName
 }
 
-function isReportOwnedByResponderTeam(report: IncidentReport, team: ResponderTeamCode): boolean {
-  if (team === 'unknown') return false
-  return normalizeTeamValue(getResponderTeam(report)) === team
+function formatTimeOfDay(value: string): string {
+  const match = /^(\d{1,2}):(\d{2})/.exec(value || '')
+  if (!match) return value || 'N/A'
+  const hours = Number(match[1])
+  return `${hours % 12 || 12}:${match[2]} ${hours < 12 ? 'AM' : 'PM'}`
+}
+
+function getServerMessage(error: unknown, fallback: string): string {
+  const data = axios.isAxiosError(error) ? (error.response?.data as Record<string, unknown> | undefined) : undefined
+  if (!data || typeof data !== 'object') return fallback
+  const first = Object.values(data)[0]
+  if (Array.isArray(first)) return first.map(String).join(' ')
+  return typeof first === 'string' ? first : fallback
 }
 
 const IncidentReportPage: FC = () => {
   const navigate = useNavigate()
-  const currentResponderTeam = getLoggedInResponderTeam()
+  const me = getCurrentResponder()
 
   const [reports, setReports] = useState<IncidentReport[]>([])
   const [selectedIds, setSelectedIds] = useState<string[]>([])
@@ -179,26 +171,18 @@ const IncidentReportPage: FC = () => {
   const [hazardFilter, setHazardFilter] = useState('All')
   const [isLoading, setIsLoading] = useState(true)
 
+  const [isCompiling, setIsCompiling] = useState(false)
+
   const fetchReports = useCallback(async (showError = true) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/incidents/incident-reports/`, {
-        credentials: 'include',
-      })
-
-      if (!response.ok) {
-        throw new Error('Failed to fetch incident reports')
-      }
-
-      const data = await response.json()
-      const reportsData: IncidentReport[] = Array.isArray(data) ? data : data.results || []
-
+      const reportsData = (await getIncidentReports()) as IncidentReport[]
       setReports(reportsData)
     } catch (error) {
       console.error('Error fetching incident reports:', error)
-      setReports([])
 
       if (showError) {
-        addNotification('Failed to load real incident reports from backend.')
+        setReports([])
+        addNotification('Failed to load incident reports. Check your connection and try again.')
       }
     } finally {
       setIsLoading(false)
@@ -208,53 +192,27 @@ const IncidentReportPage: FC = () => {
   useEffect(() => {
     void fetchReports()
 
+    // Refresh every 30 seconds while the page is on screen.
     const intervalId = window.setInterval(() => {
-      void fetchReports(false)
-    }, 10000)
+      if (document.visibilityState === 'visible') void fetchReports(false)
+    }, 30000)
 
     return () => window.clearInterval(intervalId)
   }, [fetchReports])
 
 
 
-  const isResponderTeamUnknown = (team: ResponderTeamCode) => team === 'unknown'
-
-  const canSelectReport = (report: IncidentReport): boolean => {
-    if (isResponderTeamUnknown(currentResponderTeam)) {
-      return false
-    }
-
-    const normalized = normalizeStatus(getStatusValue(report))
-    if (normalized !== 'approved') {
-      return false
-    }
-
-    // Disallow selecting reports created by admin or staff accounts.
-    if (report.createdByRole === 'admin' || report.createdByRole === 'staff') {
-      return false
-    }
-
-    return isReportOwnedByResponderTeam(report, currentResponderTeam)
-  }
+  const canSelectReport = (report: IncidentReport): boolean =>
+    normalizeStatus(getStatusValue(report)) === 'approved' &&
+    !report.compiledIn &&
+    report.createdByRole !== 'admin' &&
+    isOwnReport(report, me)
 
   const getSelectionRestrictionMessage = (report: IncidentReport): string => {
-    if (isResponderTeamUnknown(currentResponderTeam)) {
-      return 'Your account has no assigned responder team. Select only your own team reports.'
-    }
-
-    if (report.createdByRole === 'admin' || report.createdByRole === 'staff') {
-      return 'Reports created by admin or staff cannot be selected for responder compilation.'
-    }
-
-    if (!isReportOwnedByResponderTeam(report, currentResponderTeam)) {
-      return `Only ${getTeamDisplayName(currentResponderTeam)} reports can be selected by this account.`
-    }
-
-    const normalized = normalizeStatus(getStatusValue(report))
-    if (normalized !== 'approved') {
-      return 'Only approved incident reports can be selected for compilation.'
-    }
-
+    if (report.compiledIn) return `Already compiled in ${report.compiledIn}.`
+    if (report.createdByRole === 'admin') return 'Reports created by an admin cannot be compiled by responders.'
+    if (!isOwnReport(report, me)) return 'Only reports filed by your team can be selected.'
+    if (normalizeStatus(getStatusValue(report)) !== 'approved') return 'Only approved incident reports can be selected for compilation.'
     return 'Select for accomplishment report'
   }
 
@@ -287,18 +245,8 @@ const IncidentReportPage: FC = () => {
   }, [reports, searchQuery, hazardFilter, sortOrder])
 
   const toggleSelect = (report: IncidentReport) => {
-    if (isResponderTeamUnknown(currentResponderTeam)) {
-      addNotification('Your account has no assigned responder team. Select only your own team reports.')
-      return
-    }
-
-    if (report.createdByRole === 'admin' || report.createdByRole === 'staff') {
-      addNotification('Reports created by admin or staff cannot be selected for responder compilation.')
-      return
-    }
-
-    if (!isReportOwnedByResponderTeam(report, currentResponderTeam)) {
-      addNotification(`Only ${getTeamDisplayName(currentResponderTeam)} reports can be selected by this account.`)
+    if (!canSelectReport(report)) {
+      addNotification(getSelectionRestrictionMessage(report))
       return
     }
 
@@ -310,15 +258,10 @@ const IncidentReportPage: FC = () => {
   }
 
   const toggleSelectAll = () => {
-    if (isResponderTeamUnknown(currentResponderTeam)) {
-      addNotification('Your account has no assigned responder team. Select only your own team reports.')
-      return
-    }
-
     const selectableReports = filteredAndSortedReports.filter((report) => canSelectReport(report))
 
     if (selectableReports.length === 0) {
-      addNotification(`No ${getTeamDisplayName(currentResponderTeam)} reports can be selected.`)
+      addNotification('None of these reports can be selected. Only approved reports filed by your team that are not yet compiled can be selected.')
       return
     }
 
@@ -333,83 +276,28 @@ const IncidentReportPage: FC = () => {
   }
 
   const compileReports = async () => {
-    const selectedReports = reports.filter((report) => selectedIds.includes(report.id))
-
-    if (selectedReports.length === 0) {
+    if (selectedIds.length === 0) {
       addNotification('Please select at least one report.')
       return
     }
 
+    setIsCompiling(true)
     try {
-      const response = await fetch(`${API_BASE_URL}/api/incidents/accomplishment-reports/`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          title: 'Accomplishment Report',
-          status: 'Compiled',
-          report_ids: selectedIds,
-          reportIds: selectedIds,
-        }),
-      })
-      if (!response.ok) {
-        let errText = 'Failed to compile reports'
-        try {
-          const errData = await response.json()
-          console.error('Compile error response:', errData)
-          if (errData && errData.missing_reports) {
-            errText = errData.missing_reports
-          } else if (errData && typeof errData === 'object') {
-            errText = Object.entries(errData)
-              .map(([k, v]) => `${k}: ${JSON.stringify(v)}`)
-              .join(' | ')
-          } else if (typeof errData === 'string') {
-            errText = errData
-          }
-        } catch (e) {
-          console.error('Failed to parse error response', e)
-        }
-
-        throw new Error(errText)
-      }
-
-      addNotification('Reports compiled successfully!')
+      const compiled = await createAccomplishmentReport(selectedIds)
+      addNotification(`Reports compiled successfully${compiled?.compiledCode ? ` as ${compiled.compiledCode}` : ''}.`)
       setSelectedIds([])
       navigate('/responder-reports', { replace: true })
     } catch (error) {
       console.error('Error compiling reports:', error)
-      const message = error instanceof Error ? error.message : 'Failed to compile reports.'
-      addNotification(message)
+      addNotification(getServerMessage(error, 'Failed to compile reports. Please try again.'))
+    } finally {
+      setIsCompiling(false)
     }
   }
 
   const getIncidentBadgeStyle = (type: string) => {
-    const lower = String(type || '').toLowerCase()
-
-    if (lower.includes('med')) return 'bg-rose-50 text-rose-700 border-rose-100 ring-rose-500/10'
-    if (lower.includes('fire')) return 'bg-orange-50 text-orange-700 border-orange-100 ring-orange-500/10'
-
-    if (
-      lower.includes('rtc') ||
-      lower.includes('rca') ||
-      lower.includes('vehic') ||
-      lower.includes('accident')
-    ) {
-      return 'bg-amber-50 text-amber-700 border-amber-100 ring-amber-500/10'
-    }
-
-    if (
-      lower.includes('hazmat') ||
-      lower.includes('hazard') ||
-      lower.includes('chemical') ||
-      lower.includes('toxic')
-    ) {
-      return 'bg-purple-50 text-purple-700 border-purple-100 ring-purple-500/10'
-    }
-
-    return 'bg-purple-50 text-purple-700 border-purple-100 ring-purple-500/10'
+    const color = getIncidentCategoryMeta(getIncidentCategoryKey({ incidentType: type })).color
+    return { color, borderColor: `${color}55`, backgroundColor: `${color}14` }
   }
 
   return (
@@ -443,16 +331,17 @@ const IncidentReportPage: FC = () => {
 
             <div className="flex flex-col justify-between gap-4 border-t border-slate-100 pt-5 sm:flex-row sm:items-center">
               <p className="max-w-lg text-sm font-medium leading-relaxed text-slate-500">
-                Real incident reports from the backend will appear here. No static or mock table data is used.
+                Your team's incident reports. Select approved reports and compile them into an accomplishment report.
               </p>
 
               {selectedIds.length > 0 ? (
                 <button
-                  className="inline-flex items-center justify-center rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-bold text-white shadow-sm transition-all hover:bg-blue-700 active:scale-95"
-                  onClick={compileReports}
+                  className="inline-flex items-center justify-center rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-bold text-white shadow-sm transition-all hover:bg-blue-700 active:scale-95 disabled:opacity-60"
+                  disabled={isCompiling}
+                  onClick={() => void compileReports()}
                   type="button"
                 >
-                  Compile Reports ({selectedIds.length})
+                  {isCompiling ? 'Compiling...' : `Compile Reports (${selectedIds.length})`}
                 </button>
               ) : null}
             </div>
@@ -462,9 +351,7 @@ const IncidentReportPage: FC = () => {
         {!isLoading && reports.length > 0 ? (
           <div className="space-y-3">
             <div className="rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-800">
-              {isResponderTeamUnknown(currentResponderTeam)
-                ? 'Team assignment not detected. You cannot select reports until your account is assigned to a team.'
-                : `Logged-in team: ${getTeamDisplayName(currentResponderTeam)}. You can select only ${getTeamDisplayName(currentResponderTeam)} reports.`}
+              {`Logged in as ${getCurrentUserProfile()?.fullName || 'responder'}. You can compile approved reports filed by your team that are not yet in an accomplishment report.`}
             </div>
 
             <div className="flex flex-col items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:flex-row">
@@ -582,9 +469,9 @@ const IncidentReportPage: FC = () => {
                         <td className="px-6 py-4 font-mono text-sm font-bold tracking-tight text-slate-900 transition-colors group-hover:text-blue-600">
                           <div className="flex items-center gap-2">
                             <span>{getReportCode(report)}</span>
-                            {(report.createdByRole === 'admin' || report.createdByRole === 'staff') && (
-                              <span className={`rounded-md px-2 py-0.5 text-[10px] font-extrabold ${report.createdByRole === 'admin' ? 'bg-red-50 text-red-600 border border-red-100' : 'bg-orange-50 text-orange-700 border border-orange-100'}`}>
-                                {report.createdByRole}
+                            {report.createdByRole === 'admin' && (
+                              <span className="rounded-md border border-red-100 bg-red-50 px-2 py-0.5 text-[10px] font-extrabold text-red-600">
+                                admin
                               </span>
                             )}
                           </div>
@@ -595,7 +482,7 @@ const IncidentReportPage: FC = () => {
                         </td>
 
                         <td className="px-6 py-4">
-                          <span className={`inline-flex rounded-md border px-2.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wider ring-2 ${getIncidentBadgeStyle(getIncidentType(report))}`}>
+                          <span className="inline-flex rounded-md border px-2.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wider" style={getIncidentBadgeStyle(getIncidentType(report))}>
                             {getIncidentType(report)}
                           </span>
                         </td>
@@ -628,9 +515,17 @@ const IncidentReportPage: FC = () => {
                             <span className="rounded-md border border-emerald-100 bg-emerald-50 px-2 py-1 text-[10px] font-bold text-emerald-700">
                               Available
                             </span>
+                          ) : report.compiledIn ? (
+                            <span className="rounded-md border border-blue-100 bg-blue-50 px-2 py-1 text-[10px] font-bold text-blue-700" title={`Compiled in ${report.compiledIn}`}>
+                              Compiled
+                            </span>
+                          ) : !isOwnReport(report, me) || report.createdByRole === 'admin' ? (
+                            <span className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-[10px] font-bold text-slate-500">
+                              Other team
+                            </span>
                           ) : (
-                            <span className="rounded-md border border-red-100 bg-red-50 px-2 py-1 text-[10px] font-bold text-red-600">
-                              Team Locked
+                            <span className="rounded-md border border-amber-100 bg-amber-50 px-2 py-1 text-[10px] font-bold text-amber-700">
+                              Awaiting approval
                             </span>
                           )}
                         </td>
@@ -653,7 +548,7 @@ const IncidentReportPage: FC = () => {
                   <h2 className="font-mono text-lg font-black tracking-tight text-slate-900">
                     {getReportCode(detailsReport)}
                   </h2>
-                  <span className={`inline-flex rounded-md border px-2 py-0.5 text-[9px] font-extrabold uppercase tracking-wider ring-1 ${getIncidentBadgeStyle(getIncidentType(detailsReport))}`}>
+                  <span className="inline-flex rounded-md border px-2 py-0.5 text-[9px] font-extrabold uppercase tracking-wider" style={getIncidentBadgeStyle(getIncidentType(detailsReport))}>
                     {getIncidentType(detailsReport)}
                   </span>
                 </div>
@@ -675,7 +570,7 @@ const IncidentReportPage: FC = () => {
             <div className="space-y-6 overflow-y-auto p-6 text-slate-700">
               <div className="grid grid-cols-1 gap-x-6 gap-y-4 rounded-xl border border-slate-100 bg-slate-50/60 p-4 sm:grid-cols-2">
                 <DetailItem label="Incident Identifier Code" value={getIncidentCode(detailsReport)} isMono />
-                <DetailItem label="Time of Occurrence" value={getTimeOccurred(detailsReport)} />
+                <DetailItem label="Time of Occurrence" value={formatTimeOfDay(getTimeOccurred(detailsReport))} />
                 <DetailItem label="Assigned Field Responders" value={getResponderTeam(detailsReport)} />
                 <DetailItem label="Operation Live Status" value={getStatusValue(detailsReport)} isStatus />
               </div>
@@ -817,14 +712,7 @@ const DetailItem = ({
   isMono?: boolean
   isStatus?: boolean
 }) => {
-  let displayValue: string | number = value
-
-  if (label.toLowerCase().includes('time') && value && typeof value === 'string') {
-    const date = new Date(value)
-    if (isNaN(date.getTime())) {
-      displayValue = 'N/A'
-    }
-  }
+  const displayValue: string | number = value
 
   return (
     <div className="space-y-0.5">

@@ -18,8 +18,9 @@ def predict_top_hazard(barangay_id, days=90, start_date=None, end_date=None):
         return {
             'hazard': None,
             'hazard_id': None,
-            'probability': 0.0, # ✅ Changed from 'confidence': 'Low'
-            'reason': 'No recent incidents to base prediction on.',
+            'probability': 0.0,
+            'confidence': 'None',
+            'reason': 'No incidents in this period to base a prediction on.',
             'driver': 'N/A',
             'prediction_window_days': 30
         }
@@ -42,10 +43,28 @@ def predict_top_hazard(barangay_id, days=90, start_date=None, end_date=None):
     else:
         probability = 0.0
     
+    # Confidence grows with both the hazard's share of the risk and how many incidents back it.
+    frequency = top_data['frequency']
+    if probability >= 60 and frequency >= 5:
+        confidence = 'High'
+    elif probability >= 35 and frequency >= 3:
+        confidence = 'Medium'
+    else:
+        confidence = 'Low'
+
+    others = len(sorted_hazards) - 1
+    reason = (
+        f"{top_hazard_name} accounts for {probability}% of this barangay's weighted incident risk "
+        f"({frequency} incident{'s' if frequency != 1 else ''}, average severity {top_data['severity_weight']} of 4)"
+        + (f", ahead of {others} other hazard type{'s' if others != 1 else ''}." if others else ', the only hazard recorded.')
+    )
+
     return {
         'hazard': top_hazard_name,
         'hazard_id': top_data.get('id'),
-        'probability': probability, # ✅ Returns a float like 75.5 instead of 'High'
-        'driver': f"{top_data['frequency']} incidents (avg severity: {top_data['severity_weight']})",
+        'probability': probability,
+        'confidence': confidence,
+        'reason': reason,
+        'driver': f"{frequency} incidents (avg severity: {top_data['severity_weight']})",
         'prediction_window_days': 30
     }
