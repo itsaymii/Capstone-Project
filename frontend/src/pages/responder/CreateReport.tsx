@@ -1,10 +1,11 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { FC, FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { MobileNavBar } from "../../components/MobileNavBar";
 import { addNotification } from "../../services/notifications";
-import { getCurrentUserDisplayName } from "../../services/auth";
+import { AUTH_CHANGED_EVENT, getCurrentUserProfile } from "../../services/auth";
+import { getCurrentUserProfile as fetchAccountProfile } from "../../services/api";
 import { createIncidentReport } from "../../services/incidents";
 import {
   cleanDetailValues,
@@ -153,13 +154,21 @@ const LUCENA_BARANGAYS = [
   "Talao-Talao",
 ] as const;
 
+// The responding team is the logged-in responder account (its full name, or username if it has none).
+function getAccountTeam(): { team: string; username: string } {
+  const profile = getCurrentUserProfile();
+  const username = profile?.username?.trim() || "";
+  return { team: profile?.fullName?.trim() || username, username };
+}
+
 export const CreateReport: FC = () => {
   const navigate = useNavigate();
+  const [account, setAccount] = useState(getAccountTeam);
 
   const [formData, setFormData] = useState<IncidentReportForm>({
     timeOccurred: new Date().toTimeString().slice(0, 5),
     incidentType: "",
-    responderTeam: getCurrentUserDisplayName() || "",
+    responderTeam: getAccountTeam().team,
     description: "",
     barangay: "",
     latitude: "",
@@ -168,6 +177,34 @@ export const CreateReport: FC = () => {
     victims: [],
     actionTaken: "",
   });
+
+  // Keep the team in step with the account: on login changes, and from the server once on open.
+  useEffect(() => {
+    let cancelled = false;
+    const applyAccount = (next: { team: string; username: string }) => {
+      if (cancelled || !next.team) return;
+      setAccount(next);
+      setFormData((prev) => (prev.responderTeam === next.team ? prev : { ...prev, responderTeam: next.team }));
+    };
+    const onAuthChanged = () => applyAccount(getAccountTeam());
+
+    fetchAccountProfile()
+      .then((response) => {
+        const user = response?.user;
+        if (!user) return;
+        const username = user.username?.trim() || "";
+        applyAccount({ team: user.fullName?.trim() || username, username });
+      })
+      .catch(() => {
+        // Offline or session check failed: keep the team from the stored login.
+      });
+
+    window.addEventListener(AUTH_CHANGED_EVENT, onAuthChanged);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(AUTH_CHANGED_EVENT, onAuthChanged);
+    };
+  }, []);
 
   const [isLoading, setIsLoading] = useState(false);
   const [isGettingLocation, setIsGettingLocation] = useState(false);
@@ -750,6 +787,17 @@ export const CreateReport: FC = () => {
                 Document emergency response operations and victim assessments
                 for synchronization with central command.
               </p>
+              <div className="mt-3 inline-flex max-w-full items-center gap-2.5 rounded-xl border border-white/15 bg-white/10 px-3 py-2">
+                <svg className="h-5 w-5 shrink-0 text-blue-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M18 18.72a9.094 9.094 0 003.741-.479 3 3 0 00-4.682-2.72m.94 3.198l.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0112 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 016 18.719m12 0a5.971 5.971 0 00-.941-3.197m0 0A5.995 5.995 0 0012 12.75a5.995 5.995 0 00-5.058 2.772m0 0a3 3 0 00-4.681 2.72 8.986 8.986 0 003.74.477m.94-3.197a5.971 5.971 0 00-.94 3.197M15 6.75a3 3 0 11-6 0 3 3 0 016 0zm6 3a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0zm-13.5 0a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0z" />
+                </svg>
+                <span className="min-w-0">
+                  <span className="block text-[10px] font-bold uppercase tracking-widest text-blue-300">Responding Team</span>
+                  <span className="block break-words text-sm font-bold leading-snug text-white" data-testid="header-team">
+                    {formData.responderTeam || "Not set"}
+                  </span>
+                </span>
+              </div>
             </div>
 
             <button
@@ -942,10 +990,16 @@ export const CreateReport: FC = () => {
                   name="responderTeam"
                   value={formData.responderTeam}
                   readOnly
-                  placeholder="Responding team is set from your logged-in account"
-                  className="w-full text-sm border border-slate-200 rounded-xl px-3.5 py-2.5 bg-slate-100 text-slate-600 cursor-not-allowed transition-all outline-none font-medium"
+                  aria-readonly="true"
+                  placeholder="Log in with your team account to fill this in"
+                  className="w-full text-sm border border-blue-200 rounded-xl px-3.5 py-2.5 bg-blue-50 text-slate-900 font-bold outline-none"
                   required
                 />
+                <p className="mt-1 text-[11px] text-slate-500">
+                  {formData.responderTeam
+                    ? `From your account${account.username ? ` (@${account.username})` : ""}. Ask an admin to change the team name.`
+                    : "Your account has no team name. Log out and log in again, or ask an admin."}
+                </p>
               </div>
             </div>
 

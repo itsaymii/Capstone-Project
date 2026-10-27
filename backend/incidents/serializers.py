@@ -432,7 +432,7 @@ class IncidentReportSerializer(serializers.ModelSerializer):
     incidentCode = serializers.CharField(source='incident_code', read_only=True)
     timeOccurred = serializers.TimeField(source='time_occurred')
     incidentType = serializers.CharField(source='incident_type')
-    responderTeam = serializers.CharField(source='responder_team')
+    responderTeam = serializers.CharField(source='responder_team', required=False, allow_blank=True)
     victimCount = serializers.IntegerField(source='victim_count', required=False)
     actionTaken = serializers.CharField(source='action_taken')
     latitude = serializers.DecimalField(max_digits=9, decimal_places=6, required=True)
@@ -523,6 +523,11 @@ class IncidentReportSerializer(serializers.ModelSerializer):
 
         if request and request.user and request.user.is_authenticated:
             validated_data['created_by'] = request.user
+            # The responding team is the logged-in account, whatever the form sent.
+            full_name = f"{request.user.first_name} {request.user.last_name}".strip()
+            validated_data['responder_team'] = (full_name or request.user.username)[:100]
+        elif not (validated_data.get('responder_team') or '').strip():
+            raise serializers.ValidationError({'responderTeam': 'Responding team is required.'})
 
         incoming_victim_count = validated_data.pop('victim_count', None)
         if incoming_victim_count is None:
