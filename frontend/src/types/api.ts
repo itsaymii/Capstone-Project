@@ -155,12 +155,20 @@ export interface BarangayRiskScoreResponse {
   risk_score: {
     score: number
     breakdown: BarangayRiskScoreBreakdown
+    explanation?: {
+      total_incidents: number
+      average_severity_weight: number
+      recent_incidents_30_days: number
+      calculation_details: string
+    }
   }
   hazard_prediction: {
     hazard: string | null
     hazard_id: string | null
-    confidence: string
-    reason: string
+    /** Top hazard's share of the barangay's weighted incident risk, 0-100. */
+    probability?: number
+    confidence?: string
+    reason?: string
     driver: string
     prediction_window_days: number
   }
@@ -181,6 +189,38 @@ export interface HazardInsightResponse {
   }
   raw_stats: Record<string, unknown>
   ai_insight: string
+  ai_insight_sections?: HazardInsightSections
+}
+
+export interface HazardInsightSections {
+  headline: string
+  summary: string
+  findings: string[]
+  recommendations: string[]
+  stats?: {
+    total: number
+    monthly_average: number
+    critical_high: number
+    by_severity: Record<string, number>
+    hotspots: string[]
+    timeframe: string
+  }
+  source?: 'gemini' | 'template'
+}
+
+export interface BarangayRiskRankingItem {
+  barangay_id: string
+  barangay_name: string
+  score: number
+  breakdown: BarangayRiskScoreBreakdown
+  total_incidents: number
+}
+
+export interface BarangayRiskRankingResponse {
+  timeframe_days: number | null
+  start_date: string | null
+  end_date: string | null
+  results: BarangayRiskRankingItem[]
 }
 
 export interface DashboardCreateAccountPayload {
