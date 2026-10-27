@@ -1098,7 +1098,7 @@ export function RiskScoringSection() {
   )
 
   return (
-    <section className="mx-auto w-full max-w-[1440px] px-3 pb-8 sm:px-5 lg:px-6 lg:pb-10">
+    <section className="w-full px-3 pb-8 sm:px-6 lg:pb-10">
       <div className="grid gap-4">
         <div className={`${glassPanelClass} p-5 sm:p-6`}>
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Risk scoring</p>

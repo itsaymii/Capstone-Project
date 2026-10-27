@@ -1775,7 +1775,7 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
   }
 
   return (
-    <section className="mx-auto w-full max-w-[1440px] px-3 py-6 sm:px-5 lg:px-6 lg:py-8">
+    <section className="w-full px-3 pb-8 pt-2 sm:px-6 lg:pb-10">
       <div className="space-y-6">
         <div className={`${glassPanelClass} overflow-hidden p-5 sm:p-6`}>
           <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
