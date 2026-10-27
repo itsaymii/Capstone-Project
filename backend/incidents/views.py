@@ -184,6 +184,9 @@ class AccomplishmentReportViewSet(viewsets.ModelViewSet):
     queryset = AccomplishmentReport.objects.prefetch_related(
         'incident_reports',
         'incident_reports__victims',
+        'incident_reports__accomplishment_reports',
+        'incident_reports__created_by__account_profile',
+        'incident_reports__barangay',
     ).select_related('compiled_by').all()
     serializer_class = AccomplishmentReportSerializer
     authentication_classes = [SessionAuthentication, TokenAuthentication]

@@ -684,6 +684,7 @@ class AccomplishmentReportSerializer(serializers.ModelSerializer):
     totalReports = serializers.IntegerField(source='total_reports', read_only=True)
     createdAt = serializers.DateTimeField(source='created_at', read_only=True)
     compiledBy = serializers.CharField(source='compiled_by.username', read_only=True, default=None)
+    compiledByName = serializers.SerializerMethodField()
 
     class Meta:
         model = AccomplishmentReport
@@ -697,8 +698,15 @@ class AccomplishmentReportSerializer(serializers.ModelSerializer):
             'status',
             'createdAt',
             'compiledBy',
+            'compiledByName',
         ]
-        read_only_fields = ['id', 'compiledCode', 'reports', 'totalReports', 'createdAt', 'compiledBy']
+        read_only_fields = ['id', 'compiledCode', 'reports', 'totalReports', 'createdAt', 'compiledBy', 'compiledByName']
+
+    def get_compiledByName(self, obj):
+        user = obj.compiled_by
+        if not user:
+            return None
+        return f"{user.first_name} {user.last_name}".strip() or user.username
 
     def create(self, validated_data):
         report_ids = validated_data.pop('reportIds', [])
@@ -739,9 +747,16 @@ class AccomplishmentReportSerializer(serializers.ModelSerializer):
                 ]
             })
 
-        eligible_reports = requested_reports.exclude(
-            created_by__account_profile__role__in=[AccountProfile.ROLE_ADMIN, AccountProfile.ROLE_STAFF]
-        )
+        # Responders file reports while logged in (staff role), so those must be included.
+        # Only approved reports count, and reports an admin filed stay out.
+        eligible_reports = requested_reports.filter(status__iexact='Approved').exclude(
+            created_by__account_profile__role=AccountProfile.ROLE_ADMIN
+        ).exclude(created_by__is_superuser=True)
+
+        if not eligible_reports.exists():
+            raise serializers.ValidationError({
+                'reportIds': ['None of the selected reports can be compiled. Only approved reports filed by responders can be compiled.']
+            })
 
         # Build sets of found identifiers for clearer diagnostics
         found_uuid_set = set(str(r.id) for r in eligible_reports)
@@ -755,7 +770,7 @@ class AccomplishmentReportSerializer(serializers.ModelSerializer):
         # Determine which requested ids did not match any eligible report
         missing = []
         for rid in report_ids:
-            if rid in found_uuid_set or str(rid).strip() in found_code_set:
+            if str(rid) in found_uuid_set or str(rid).strip() in found_code_set:
                 continue
             missing.append(rid)
 
