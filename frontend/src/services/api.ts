@@ -197,6 +197,12 @@ export async function loginAccount(payload: LoginApiPayload): Promise<AuthApiRes
   return data
 }
 
+/** End the server session. */
+export async function logoutAccount(): Promise<void> {
+  await ensureCsrfCookie()
+  await api.post('/accounts/auth/logout/')
+}
+
 export async function verifyLoginOtp(payload: VerifyOtpPayload): Promise<AuthApiResponse> {
   const { data } = await api.post<AuthApiResponse>('/accounts/auth/login/verify-otp/', payload)
   return data
