@@ -97,6 +97,28 @@ def map_incident_type_to_severity(incident_type, victim_count):
     return 'low'
 
 
+def _barangay_key(name):
+    """'Barangay 10 (Pob.)' and 'Barangay 10' -> 'barangay10'; 'Gulang-Gulang' -> 'gulanggulang'."""
+    return re.sub(r'[^a-z0-9]', '', re.sub(r'\(pob\.?\)', '', (name or '').lower()))
+
+
+def match_report_barangay(location, latitude=None, longitude=None):
+    """The Barangay a report is in: by the name the responder picked, else the nearest one."""
+    from locations.models import Barangay
+
+    picked = _barangay_key((location or '').split(',')[0])
+    if picked:
+        for barangay in Barangay.objects.only('id', 'name'):
+            if _barangay_key(barangay.name) == picked:
+                return barangay
+    if latitude is not None and longitude is not None:
+        try:
+            return get_nearest_barangay(float(latitude), float(longitude))
+        except Exception:
+            return None
+    return None
+
+
 def validate_lucena_coordinates(latitude, longitude):
     if latitude is None or longitude is None:
         raise serializers.ValidationError({
@@ -425,6 +447,8 @@ class IncidentReportSerializer(serializers.ModelSerializer):
     createdByRole = serializers.SerializerMethodField()
     # Barangay name for filters on the admin map (None when the report has no barangay).
     barangayName = serializers.CharField(source='barangay.name', read_only=True, default=None)
+    # Code of the accomplishment report this report was compiled into, or None.
+    compiledIn = serializers.SerializerMethodField()
 
     class Meta:
         model = IncidentReport
@@ -437,6 +461,7 @@ class IncidentReportSerializer(serializers.ModelSerializer):
             'responderTeam',
             'location',
             'barangayName',
+            'compiledIn',
             'latitude',
             'longitude',
             'coordinates',
@@ -451,6 +476,10 @@ class IncidentReportSerializer(serializers.ModelSerializer):
             'createdByRole',
         ]
         read_only_fields = ['id', 'reportCode', 'createdAt']
+
+    def get_compiledIn(self, obj):
+        compiled = obj.accomplishment_reports.all()
+        return compiled[0].compiled_code if compiled else None
 
     def get_coordinates(self, obj):
         return {
@@ -500,6 +529,13 @@ class IncidentReportSerializer(serializers.ModelSerializer):
             validated_data['victim_count'] = len(victims_data)
         else:
             validated_data['victim_count'] = max(int(incoming_victim_count), len(victims_data))
+
+        if not validated_data.get('barangay'):
+            validated_data['barangay'] = match_report_barangay(
+                validated_data.get('location', ''),
+                validated_data.get('latitude'),
+                validated_data.get('longitude'),
+            )
 
         incident_report = IncidentReport.objects.create(**validated_data)
 
@@ -642,6 +678,7 @@ class AccomplishmentReportSerializer(serializers.ModelSerializer):
     compiledCode = serializers.CharField(source='compiled_code', read_only=True)
     totalReports = serializers.IntegerField(source='total_reports', read_only=True)
     createdAt = serializers.DateTimeField(source='created_at', read_only=True)
+    compiledBy = serializers.CharField(source='compiled_by.username', read_only=True, default=None)
 
     class Meta:
         model = AccomplishmentReport
@@ -654,8 +691,9 @@ class AccomplishmentReportSerializer(serializers.ModelSerializer):
             'totalReports',
             'status',
             'createdAt',
+            'compiledBy',
         ]
-        read_only_fields = ['id', 'compiledCode', 'reports', 'totalReports', 'createdAt']
+        read_only_fields = ['id', 'compiledCode', 'reports', 'totalReports', 'createdAt', 'compiledBy']
 
     def create(self, validated_data):
         report_ids = validated_data.pop('reportIds', [])

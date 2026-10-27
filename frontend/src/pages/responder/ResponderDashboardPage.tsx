@@ -4,10 +4,12 @@ import { useNavigate } from 'react-router-dom'
 import { MobileNavBar } from '../../components/MobileNavBar'
 import { getCurrentUserProfile } from '../../services/auth'
 import { getIncidentReports } from '../../services/incidents'
+import { getIncidentCategoryKey, getIncidentCategoryMeta } from '../../data/incidentCategories'
 
 interface Incident {
   id: string
-  type: 'Medical' | 'RTC' | 'Fire' | 'Hazmat'
+  type: string
+  typeColor: string
   location: string
   timeOccurred: string
   status: 'Pending Report' | 'Completed'
@@ -18,37 +20,20 @@ interface Incident {
   victims?: any[]
 }
 
-const mapIncidentType = (type: string): Incident['type'] => {
-  const lowerType = String(type || '').toLowerCase()
-
-  if (lowerType.includes('medical') || lowerType.includes('ambulance') || lowerType.includes('health')) {
-    return 'Medical'
-  }
-
-  if (lowerType.includes('fire')) {
-    return 'Fire'
-  }
-
-  if (
-    lowerType.includes('rtc') ||
-    lowerType.includes('rca') ||
-    lowerType.includes('vehicular') ||
-    lowerType.includes('accident')
-  ) {
-    return 'RTC'
-  }
-
-  if (
-    lowerType.includes('hazmat') ||
-    lowerType.includes('hazard') ||
-    lowerType.includes('chemical') ||
-    lowerType.includes('toxic')
-  ) {
-    return 'Hazmat'
-  }
-
-  return 'Hazmat'
+// Same type names and colors as Create Report and the admin pages.
+const mapIncidentType = (type: string) => {
+  const meta = getIncidentCategoryMeta(getIncidentCategoryKey({ incidentType: type }))
+  return { type: meta.key === 'other' && type ? type : meta.label, typeColor: meta.color }
 }
+
+const formatTimeOfDay = (value: string) => {
+  const match = /^(\d{1,2}):(\d{2})/.exec(value || '')
+  if (!match) return value || 'N/A'
+  const hours = Number(match[1])
+  return `${hours % 12 || 12}:${match[2]} ${hours < 12 ? 'AM' : 'PM'}`
+}
+
+const casualtyLabel = (count: number) => `${count} ${count === 1 ? 'Casualty' : 'Casualties'}`
 
 export const ResponderDashboardPage: FC = () => {
   const navigate = useNavigate()
@@ -71,9 +56,9 @@ export const ResponderDashboardPage: FC = () => {
 
           return {
             id: report.incidentCode || report.reportCode || report.id,
-            type: mapIncidentType(report.incidentType || report.incident_type || ''),
+            ...mapIncidentType(report.incidentType || report.incident_type || ''),
             location: report.location || 'Unknown location',
-            timeOccurred: report.timeOccurred || report.time_occurred || 'N/A',
+            timeOccurred: formatTimeOfDay(report.timeOccurred || report.time_occurred || ''),
             status: isApproved ? 'Completed' : 'Pending Report',
             victimCount: report.victimCount || report.victim_count || report.victims?.length || 0,
             description: report.description,
@@ -111,7 +96,7 @@ export const ResponderDashboardPage: FC = () => {
   }
 
   const renderIncidentRow = (incident: Incident) => {
-    const typeStyle = getIncidentTypeConfig(incident.type)
+    const typeStyle = getIncidentTypeStyle(incident.typeColor)
 
     return (
       <div
@@ -123,9 +108,9 @@ export const ResponderDashboardPage: FC = () => {
         className="flex flex-col sm:flex-row sm:items-center justify-between p-5 px-6 gap-4 hover:bg-slate-50/50 transition-colors cursor-pointer focus:bg-slate-50/80 focus:outline-none group"
       >
         <div className="flex-1 min-w-0 flex items-start gap-3.5">
-          <div className={`p-2.5 rounded-xl border shrink-0 mt-0.5 ring-2 ${typeStyle?.wrapper}`}>
+          <div style={typeStyle} className="p-2.5 rounded-xl border shrink-0 mt-0.5">
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-              {typeStyle?.icon}
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
             </svg>
           </div>
           <div className="min-w-0">
@@ -135,7 +120,7 @@ export const ResponderDashboardPage: FC = () => {
               <p className="text-xs font-semibold text-slate-400">{incident.timeOccurred}</p>
               {incident.victimCount > 0 && (
                 <span className="text-[9px] font-extrabold bg-rose-50 border border-rose-100 text-rose-600 px-1.5 py-0.5 rounded uppercase tracking-wider">
-                  {incident.victimCount} Casualties
+                  {casualtyLabel(incident.victimCount)}
                 </span>
               )}
             </div>
@@ -144,7 +129,7 @@ export const ResponderDashboardPage: FC = () => {
         </div>
 
         <div className="flex items-center justify-between sm:justify-end gap-6 border-t border-slate-50 sm:border-t-0 pt-3 sm:pt-0">
-          <span className={`inline-flex items-center text-[9px] font-extrabold tracking-wider uppercase px-2.5 py-0.5 border rounded-md ring-2 ${typeStyle?.wrapper}`}>
+          <span style={typeStyle} className="inline-flex items-center text-[9px] font-extrabold tracking-wider uppercase px-2.5 py-0.5 border rounded-md">
             {incident.type}
           </span>
 
@@ -173,30 +158,7 @@ export const ResponderDashboardPage: FC = () => {
     )
   }
 
-  const getIncidentTypeConfig = (type: Incident['type']) => {
-    switch (type) {
-      case 'Medical':
-        return {
-          wrapper: 'bg-rose-50 text-rose-700 border-rose-100 ring-rose-500/10',
-          icon: <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />,
-        }
-      case 'RTC':
-        return {
-          wrapper: 'bg-amber-50 text-amber-700 border-amber-100 ring-amber-500/10',
-          icon: <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />,
-        }
-      case 'Fire':
-        return {
-          wrapper: 'bg-orange-50 text-orange-700 border-orange-100 ring-orange-500/10',
-          icon: <path strokeLinecap="round" strokeLinejoin="round" d="M15.362 5.214A8.252 8.252 0 0112 21 8.25 8.25 0 016.038 7.048 8.287 8.287 0 009 9.6a8.983 8.983 0 013.361-6.867 8.21 8.21 0 003 2.48z" />,
-        }
-      case 'Hazmat':
-        return {
-          wrapper: 'bg-purple-50 text-purple-700 border-purple-100 ring-purple-500/10',
-          icon: <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 9.75l4.5 4.5m0-4.5l-4.5 4.5M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />,
-        }
-    }
-  }
+  const getIncidentTypeStyle = (color: string) => ({ color, borderColor: `${color}55`, backgroundColor: `${color}14` })
 
   return (
     <div className="min-h-screen bg-slate-100 pb-28 sm:pb-12 pt-6 antialiased text-slate-800">
@@ -219,10 +181,10 @@ export const ResponderDashboardPage: FC = () => {
               Primary Dispatch Action
             </span>
             <h2 className="text-2xl sm:text-3xl font-black tracking-tight mt-2.5">
-              Create Accomplishment Report
+              Create Incident Report
             </h2>
             <p className="text-sm text-slate-400 leading-relaxed font-medium pt-0.5">
-              Welcome back, Commander {firstName}. Log new tactical data files, ongoing intake streams, or file your sector summary briefs.
+              Welcome back, Commander {firstName}. File a new incident report from the field. Once it is approved, you can compile it into an accomplishment report.
             </p>
           </div>
 
@@ -310,7 +272,7 @@ export const ResponderDashboardPage: FC = () => {
               <div className="space-y-1">
                 <div className="flex items-center gap-2">
                   <h2 className="text-lg font-black text-slate-900 tracking-tight font-mono">{selectedIncident.id}</h2>
-                  <span className={`inline-flex items-center text-[9px] font-extrabold tracking-wider uppercase px-2 py-0.5 border rounded-md ring-1 ${getIncidentTypeConfig(selectedIncident.type)?.wrapper}`}>
+                  <span style={getIncidentTypeStyle(selectedIncident.typeColor)} className="inline-flex items-center text-[9px] font-extrabold tracking-wider uppercase px-2 py-0.5 border rounded-md">
                     {selectedIncident.type}
                   </span>
                 </div>
@@ -343,7 +305,7 @@ export const ResponderDashboardPage: FC = () => {
                 <div>
                   <span className="text-slate-400 block font-bold uppercase tracking-wider text-[9px]">Victims Count</span>
                   <span className={`font-semibold text-sm mt-0.5 block ${selectedIncident.victimCount > 0 ? 'text-rose-600 font-bold' : 'text-slate-600'}`}>
-                    {selectedIncident.victimCount} {selectedIncident.victimCount === 1 ? 'Casualty' : 'Casualties'}
+                    {casualtyLabel(selectedIncident.victimCount)}
                   </span>
                 </div>
                 <div>

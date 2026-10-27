@@ -1,6 +1,6 @@
 import random
 from datetime import timedelta
-from django.contrib.auth import authenticate, login
+from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
 from django.core.mail import send_mail
@@ -69,6 +69,8 @@ def _serialize_user(user: User, fallback_identifier: str = '') -> dict:
 		phone_number = None
 	verification = ResidencyVerification.objects.filter(user=user).first()
 	return {
+		'id': user.id,
+		'username': user.username,
 		'fullName': _get_user_full_name(user),
 		'email': contact_value,
 		'role': role,
@@ -695,6 +697,14 @@ def verify_login_otp(request):
 	response = _build_login_success_response(request, user, email)
 	response.status_code = status.HTTP_200_OK
 	return response
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def logout_user(request):
+	"""End the server session (the frontend also clears its stored user)."""
+	logout(request)
+	return Response({'message': 'Logged out.'}, status=status.HTTP_200_OK)
 
 
 @api_view(['POST'])
