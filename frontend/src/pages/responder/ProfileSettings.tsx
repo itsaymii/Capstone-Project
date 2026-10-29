@@ -3,6 +3,7 @@ import type { FC, FormEvent, ChangeEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { getCurrentUserProfile, logoutUser } from '../../services/auth'
 import { MobileNavBar } from '../../components/MobileNavBar'
+import { toTeamName } from '../../data/teams'
 
 interface TeamMember {
   id: string
@@ -25,7 +26,8 @@ const RESPONDER_TEAM_STORAGE_KEY = 'responderTeamMembers'
 
 const defaultProfileData = (profileFullName?: string): ProfileData => ({
   teamLeaderName: profileFullName || 'Team Leader',
-  teamName: 'Alpha Responder Squad',
+  // The account's team, e.g. "Alpha" for the account "Team Alpha".
+  teamName: toTeamName(profileFullName) || 'Alpha',
   badgeId: 'RES-2026-0982',
   contactNumber: '09123456789',
   stationAddress: 'Zone 4, Lucena City Command Center',

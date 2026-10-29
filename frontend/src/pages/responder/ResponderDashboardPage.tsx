@@ -5,6 +5,7 @@ import { MobileNavBar } from '../../components/MobileNavBar'
 import { getCurrentUserProfile } from '../../services/auth'
 import { getIncidentReports } from '../../services/incidents'
 import { getIncidentCategoryKey, getIncidentCategoryMeta } from '../../data/incidentCategories'
+import { toTeamName } from '../../data/teams'
 
 interface Incident {
   id: string
@@ -62,7 +63,7 @@ export const ResponderDashboardPage: FC = () => {
             status: isApproved ? 'Completed' : 'Pending Report',
             victimCount: report.victimCount || report.victim_count || report.victims?.length || 0,
             description: report.description,
-            responderTeam: report.responderTeam || report.responder_team,
+            responderTeam: toTeamName(report.responderTeam || report.responder_team),
             actionTaken: report.actionTaken || report.action_taken || '',
             victims: report.victims || [],
           }
@@ -80,8 +81,9 @@ export const ResponderDashboardPage: FC = () => {
     void loadIncidentReports()
   }, [])
 
+  // "Team Alpha" is greeted as "Alpha", not "Team".
   const firstName =
-    profile?.fullName?.trim().split(/\s+/).filter(Boolean)[0] || 'Responder'
+    toTeamName(profile?.fullName).split(/\s+/).filter(Boolean)[0] || 'Responder'
 
   // Refactored row activation logic to open details seamlessly
   const handleRowActivation = (incident: Incident) => {

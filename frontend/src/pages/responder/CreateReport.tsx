@@ -17,6 +17,7 @@ import {
   type IncidentTypeConfig,
 } from "../../data/incidentTypeFields";
 import { LUCENA_BARANGAYS } from "../../data/barangays";
+import { toTeamName } from "../../data/teams";
 
 interface VictimDetails {
   name: string;
@@ -124,7 +125,7 @@ const VICTIM_FIELD_LABELS: Record<Exclude<keyof VictimDetails, "details">, strin
 function getAccountTeam(): { team: string; username: string } {
   const profile = getCurrentUserProfile();
   const username = profile?.username?.trim() || "";
-  return { team: profile?.fullName?.trim() || username, username };
+  return { team: toTeamName(profile?.fullName) || username, username };
 }
 
 export const CreateReport: FC = () => {
@@ -159,7 +160,7 @@ export const CreateReport: FC = () => {
         const user = response?.user;
         if (!user) return;
         const username = user.username?.trim() || "";
-        applyAccount({ team: user.fullName?.trim() || username, username });
+        applyAccount({ team: toTeamName(user.fullName) || username, username });
       })
       .catch(() => {
         // Offline or session check failed: keep the team from the stored login.

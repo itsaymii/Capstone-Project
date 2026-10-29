@@ -36,6 +36,7 @@ import {
   type ScatterPoint,
   type ShareSegment,
 } from './analyticsCharts'
+import { toTeamName } from '../../../data/teams'
 
 type AnalyticsSectionProps = {
   reports: HazardIncident[]
@@ -275,7 +276,7 @@ function getResponseTeamName(report: HazardIncident): string {
     'responder',
   ])
 
-  return value || 'Unassigned team'
+  return toTeamName(value) || 'Unassigned team'
 }
 
 function getReportStartDateTime(report: HazardIncident): Date | null {
