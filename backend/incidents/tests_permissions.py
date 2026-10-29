@@ -100,11 +100,51 @@ class IncidentReportAccessTests(AccessTestCase):
 
 
 class PersonalDataAccessTests(AccessTestCase):
-    def test_volunteers_and_responder_reports_need_a_dashboard_account(self):
-        for url in ('/api/resources/volunteers/', '/api/incidents/responder-reports/'):
-            self.assertEqual(self.client_for().get(url).status_code, 403, url)
-            self.assertEqual(self.client_for(self.citizen).get(url).status_code, 403, url)
-            self.assertEqual(self.client_for(self.responder).get(url).status_code, 200, url)
+    def test_responder_reports_need_a_dashboard_account(self):
+        url = '/api/incidents/responder-reports/'
+        self.assertEqual(self.client_for().get(url).status_code, 403)
+        self.assertEqual(self.client_for(self.citizen).get(url).status_code, 403)
+        self.assertEqual(self.client_for(self.responder).get(url).status_code, 200)
+
+    def test_volunteers_are_admin_only(self):
+        url = '/api/resources/volunteers/'
+        for user in (None, self.citizen, self.responder):
+            self.assertEqual(self.client_for(user).get(url).status_code, 403, user)
+        self.assertEqual(self.client_for(self.admin).get(url).status_code, 200)
+
+
+class AdminDataTests(AccessTestCase):
+    """Barangays, evacuation centers, supplies, hazard types and incidents: anyone reads, only admins change."""
+
+    def setUp(self):
+        super().setUp()
+        from locations.models import Barangay
+        from resources.models import EvacuationCenter
+        self.barangay = Barangay.objects.create(name='Cotta', population=1000)
+        self.center = EvacuationCenter.objects.create(
+            name='Cotta Covered Court', latitude=Decimal('13.92'), longitude=Decimal('121.60'), address='Cotta',
+        )
+
+    def test_public_pages_can_still_read(self):
+        for url in ('/api/locations/barangays/', '/api/resources/evacuation-centers/', '/api/incidents/hazard-types/'):
+            self.assertEqual(self.client_for().get(url).status_code, 200, url)
+
+    def test_responders_and_citizens_cannot_change_admin_data(self):
+        for user in (self.responder, self.citizen):
+            client = self.client_for(user)
+            self.assertEqual(client.patch(f'/api/locations/barangays/{self.barangay.id}/', {'population': 1}, format='json').status_code, 403)
+            self.assertEqual(client.delete(f'/api/resources/evacuation-centers/{self.center.id}/').status_code, 403)
+            self.assertEqual(client.post('/api/resources/supply-categories/', {'name': 'Food'}, format='json').status_code, 403)
+            self.assertEqual(client.post('/api/incidents/hazard-types/', {'name': 'Fake'}, format='json').status_code, 403)
+        self.barangay.refresh_from_db()
+        self.assertEqual(self.barangay.population, 1000)
+        self.assertTrue(type(self.center).objects.filter(pk=self.center.pk).exists())
+
+    def test_admin_can_change_admin_data(self):
+        client = self.client_for(self.admin)
+        self.assertEqual(client.patch(f'/api/locations/barangays/{self.barangay.id}/', {'population': 1200}, format='json').status_code, 200)
+        self.assertEqual(client.post('/api/resources/supply-categories/', {'name': 'Food'}, format='json').status_code, 201)
+        self.assertEqual(client.delete(f'/api/resources/evacuation-centers/{self.center.id}/').status_code, 204)
 
 
 class AccountManagementAccessTests(AccessTestCase):

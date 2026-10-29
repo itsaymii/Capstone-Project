@@ -13,7 +13,7 @@ from .serializers import (
     EquipmentSerializer,
     VolunteerSerializer,
 )
-from accounts.permissions import IsDashboardUser, IsStaffOrReadOnly
+from accounts.permissions import IsDashboardAdmin, IsDashboardAdminOrReadOnly
 from io import TextIOWrapper
 from decimal import Decimal, InvalidOperation
 import csv
@@ -31,7 +31,7 @@ class SupplyCategoryViewSet(viewsets.ModelViewSet):
     queryset = SupplyCategory.objects.all()
     serializer_class = SupplyCategorySerializer
     authentication_classes = [SessionAuthentication, TokenAuthentication]
-    permission_classes = [IsStaffOrReadOnly]
+    permission_classes = [IsDashboardAdminOrReadOnly]
     search_fields = ['name', 'description']
 
 
@@ -39,7 +39,7 @@ class SupplyViewSet(viewsets.ModelViewSet):
     queryset = Supply.objects.select_related('category').all()
     serializer_class = SupplySerializer
     authentication_classes = [SessionAuthentication, TokenAuthentication]
-    permission_classes = [IsStaffOrReadOnly]
+    permission_classes = [IsDashboardAdminOrReadOnly]
     search_fields = ['name', 'storage_location']
     ordering_fields = ['name', 'quantity', 'created_at']
 
@@ -61,7 +61,7 @@ class EvacuationCenterViewSet(viewsets.ModelViewSet):
     queryset = EvacuationCenter.objects.select_related('barangay').all()
     serializer_class = EvacuationCenterSerializer
     authentication_classes = [SessionAuthentication, TokenAuthentication]
-    permission_classes = [IsStaffOrReadOnly]
+    permission_classes = [IsDashboardAdminOrReadOnly]
     search_fields = ['name', 'address']
 
     @action(
@@ -205,7 +205,7 @@ class EquipmentViewSet(viewsets.ModelViewSet):
     queryset = Equipment.objects.all()
     serializer_class = EquipmentSerializer
     authentication_classes = [SessionAuthentication, TokenAuthentication]
-    permission_classes = [IsStaffOrReadOnly]
+    permission_classes = [IsDashboardAdminOrReadOnly]
     search_fields = ['name', 'serial_number', 'asset_number']
     ordering_fields = ['name', 'equipment_type', 'status']
 
@@ -227,8 +227,8 @@ class VolunteerViewSet(viewsets.ModelViewSet):
     queryset = Volunteer.objects.select_related('barangay').all()
     serializer_class = VolunteerSerializer
     authentication_classes = [SessionAuthentication, TokenAuthentication]
-    # Volunteers' contact details are personal data, so even reads need a dashboard account.
-    permission_classes = [IsDashboardUser]
+    # Volunteers' contact details are personal data: admin accounts only.
+    permission_classes = [IsDashboardAdmin]
     search_fields = ['full_name', 'contact_number', 'email']
     ordering_fields = ['full_name', 'created_at']
 
@@ -287,7 +287,7 @@ class ResourcesSummaryViewSet(viewsets.ViewSet):
 
 
 @api_view(['POST'])
-@permission_classes([IsStaffOrReadOnly])
+@permission_classes([IsDashboardAdminOrReadOnly])
 def import_evacuation_centers_csv(request):
     if 'file' not in request.FILES:
         return Response({"error": "No file uploaded."}, status=status.HTTP_400_BAD_REQUEST)
