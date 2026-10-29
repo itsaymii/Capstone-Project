@@ -19,7 +19,7 @@ import CreateReport from '../pages/responder/CreateReport'
 import ProfileSettingsPage from '../pages/responder/ProfileSettings'
 
 import { AUTH_CHANGED_EVENT, syncAuthWithServer, watchAuthAcrossTabs } from '../services/auth'
-import { ProtectedRoute } from './ProtectedRoute'
+import { CitizenRoute, ProtectedRoute } from './ProtectedRoute'
 
 
 // How long the first page load waits for the server to say who is logged in.
@@ -55,10 +55,10 @@ export function AppRouter() {
   return (
     <Routes>
       {/* Public Routes */}
-      <Route path="/" element={<LandingPage />} />
-      <Route path="/landing" element={<LandingPage />} />
+      <Route path="/" element={<CitizenRoute element={<LandingPage />} />} />
+      <Route path="/landing" element={<CitizenRoute element={<LandingPage />} />} />
       <Route path="/login" element={<LoginPage />} />
-      <Route path="/register" element={<RegisterPage />} />
+      <Route path="/register" element={<CitizenRoute element={<RegisterPage />} />} />
 
       {/* Admin Routes */}
       <Route path="/admin-page" element={<Navigate replace to="/login" />} />
@@ -92,10 +92,10 @@ export function AppRouter() {
       <Route path="/profile-settings" element={<ProtectedRoute element={<ProfileSettingsPage />} requiredRole="staff" requireDashboardAccess redirectTo="/login" />} />
 
       {/* Shared / Feature Routes */}
-      <Route path="/disaster-map" element={<DisasterMapPage />} />
-      <Route path="/evacuation" element={<EvacuationPage />} />
-      <Route path="/emergency-hotlines" element={<EmergencyHotlinesPage />} />
-      <Route path="/simulation" element={<SimulationPage />} />
+      <Route path="/disaster-map" element={<CitizenRoute element={<DisasterMapPage />} />} />
+      <Route path="/evacuation" element={<CitizenRoute element={<EvacuationPage />} />} />
+      <Route path="/emergency-hotlines" element={<CitizenRoute element={<EmergencyHotlinesPage />} />} />
+      <Route path="/simulation" element={<CitizenRoute element={<SimulationPage />} />} />
 
       {/* Fallback */}
       <Route path="*" element={<Navigate to="/" replace />} />
