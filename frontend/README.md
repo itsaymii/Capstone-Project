@@ -131,10 +131,9 @@ Admins and staff log in at `/login` without an OTP. Citizens receive an OTP by e
 |---|---|
 | Barangays | `python manage.py import_barangays ../lucena_barangays.geojson` |
 | Evacuation centers | Admin Dashboard → Resources → Upload CSV, using `backend/evacuations_centers.csv`. Optional columns: `capacity`, `current_occupancy`, `status` |
-| Sample incident reports | `python manage.py generate_accomplishment_reports --count 200 --approved` |
+| Sample incident reports | `python manage.py generate_accomplishment_reports --count 200 --approved` (the reports are spread over the existing responder accounts) |
 | Fill Incidents, Accomplishment, and Scoring pages from existing data | `python manage.py prepare_dashboard_data` (add `--shift-dates` to move old sample data up to today) |
 | Recalculate risk scores | `python manage.py calculate_risk_scores --days 365` |
-| Sample responder accounts | `python manage.py create_sample_staff_accounts` |
 
 ## Tests
 
