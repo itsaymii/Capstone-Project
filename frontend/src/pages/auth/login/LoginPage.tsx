@@ -15,6 +15,7 @@ import {
 import { 
   confirmPasswordResetWithOtp, 
   getCurrentUserProfile, 
+  isAuthenticated,
   requestLoginOtp, 
   requestPasswordResetOtp, 
   verifyLoginOtpCode 
@@ -62,6 +63,13 @@ export function LoginPage({ onRequestRegister, onRequestAdminLogin: _onRequestAd
   const [forgotPasswordCooldownRemaining, setForgotPasswordCooldownRemaining] = useState(0)
   const [isForgotPasswordSubmitting, setIsForgotPasswordSubmitting] = useState(false)
   const [otpShakeActive, setOtpShakeActive] = useState(false)
+  // Only one account per browser: someone already logged in goes to their own page instead.
+  const [alreadyLoggedIn] = useState(() => !modalMode && isAuthenticated())
+
+  useEffect(() => {
+    if (alreadyLoggedIn) navigate(getPostLoginPath(), { replace: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [alreadyLoggedIn])
 
   useEffect(() => {
     const navState = location.state as { registrationSuccessMessage?: string } | null

@@ -49,11 +49,13 @@ export interface LoginApiPayload {
   email: string
   password: string
   forceOtp?: boolean
+  keepLoggedIn?: boolean
 }
 
 export interface VerifyOtpPayload {
   email: string
   otp: string
+  keepLoggedIn?: boolean
 }
 
 export interface UserProfileUpdatePayload {

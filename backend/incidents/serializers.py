@@ -672,6 +672,40 @@ class IncidentReportSerializer(serializers.ModelSerializer):
         return incident
 
 
+class PublicIncidentReportSerializer(serializers.ModelSerializer):
+    """
+    What the public Landing page and Disaster Map may see of an approved report.
+    No victims, descriptions, type details or account names.
+    """
+    reportCode = serializers.CharField(source='report_code', read_only=True)
+    incidentCode = serializers.CharField(source='incident_code', read_only=True)
+    timeOccurred = serializers.TimeField(source='time_occurred', read_only=True)
+    incidentType = serializers.CharField(source='incident_type', read_only=True)
+    responderTeam = serializers.CharField(source='responder_team', read_only=True)
+    victimCount = serializers.IntegerField(source='victim_count', read_only=True)
+    barangayName = serializers.CharField(source='barangay.name', read_only=True, default=None)
+    createdAt = serializers.DateTimeField(source='created_at', read_only=True)
+
+    class Meta:
+        model = IncidentReport
+        fields = [
+            'id',
+            'reportCode',
+            'incidentCode',
+            'timeOccurred',
+            'incidentType',
+            'responderTeam',
+            'location',
+            'barangayName',
+            'latitude',
+            'longitude',
+            'victimCount',
+            'status',
+            'createdAt',
+        ]
+        read_only_fields = fields
+
+
 class AccomplishmentReportSerializer(serializers.ModelSerializer):
     reports = IncidentReportSerializer(source='incident_reports', many=True, read_only=True)
     reportIds = serializers.ListField(

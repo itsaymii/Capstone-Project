@@ -1,3 +1,5 @@
+import secrets
+
 from django.core.management.base import BaseCommand
 from django.contrib.auth.models import User
 from accounts.models import AccountProfile
@@ -9,13 +11,13 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument('email', type=str, help='Email address for the staff user')
         parser.add_argument('--username', type=str, default=None, help='Username (defaults to email)')
-        parser.add_argument('--password', type=str, default='password123', help='Password for the user')
+        parser.add_argument('--password', type=str, default=None, help='Password for the user (random if left out)')
         parser.add_argument('--name', type=str, default='Responder', help='Full name')
 
     def handle(self, *args, **options):
         email = options['email'].strip().lower()
         username = options.get('username') or email
-        password = options['password']
+        password = options['password'] or secrets.token_urlsafe(12)
         full_name = options['name']
 
         # Check if user already exists

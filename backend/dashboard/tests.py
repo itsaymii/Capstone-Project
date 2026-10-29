@@ -23,6 +23,7 @@ class DashboardViewsTests(TestCase):
 
     def test_admin_summary_returns_expected_shape(self):
         admin_user = User.objects.create_user(username='admin-user', password='secret123', is_staff=True)
+        AccountProfile.objects.update_or_create(user=admin_user, defaults={'role': AccountProfile.ROLE_ADMIN})
         self.client.force_login(admin_user)
 
         response = self.client.get(reverse('admin-dashboard-summary'))

@@ -14,7 +14,7 @@ import { AdminSidebar } from '../../components/AdminSidebar'
 import { NavigationBar } from '../../components/NavigationBar'
 import { useNavigate } from 'react-router-dom'
 import { isAuthenticated } from '../../services/auth'
-import { getIncidentReports } from '../../services/incidents'
+import { getIncidentReports, getPublicIncidentReports } from '../../services/incidents'
 import {
   type EarthquakeEvent,
   type FaultLineFeatureCollection,
@@ -465,7 +465,8 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
 
   const loadIncidentReports = useCallback(async () => {
     try {
-      const reports = await getIncidentReports()
+      // The public map only gets approved reports, without personal details.
+      const reports = isAdminVariant ? await getIncidentReports() : await getPublicIncidentReports()
       const mappedReports = reports.map(mapIncidentReportToMapIncident)
 
       setBackendIncidents(mappedReports)
@@ -473,7 +474,7 @@ export function DisasterMapPage({ variant = 'public' }: { variant?: 'public' | '
       console.error('[DisasterMapPage] Failed to load incident reports:', error)
       setBackendIncidents([])
     }
-  }, [])
+  }, [isAdminVariant])
 
   const loadEarthquakes = useCallback(async (silent = false) => {
     if (!silent) {

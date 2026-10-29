@@ -412,6 +412,15 @@ export async function getIncidentReports(): Promise<IncidentReport[]> {
   return reports
 }
 
+/**
+ * Approved reports for public pages (Landing, Disaster Map). Works without login and
+ * leaves out victims, descriptions and other personal details.
+ */
+export async function getPublicIncidentReports(): Promise<IncidentReport[]> {
+  const response = await api.get<IncidentReport[]>('/api/incidents/incident-reports/public/')
+  return response.data
+}
+
 /** A paginated `next` link as a path, so it goes through the same host (and cookies) as the first page. */
 function toApiPath(url: string): string {
   try {

@@ -2,7 +2,6 @@ from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.authentication import TokenAuthentication, SessionAuthentication
-from rest_framework.permissions import AllowAny
 from django.db.models import Count, Q
 from django.core.exceptions import ValidationError as DjangoValidationError
 
@@ -22,9 +21,11 @@ from .serializers import (
     ResponderReportSerializer,
     IncidentReportSerializer,
     AccomplishmentReportSerializer,
+    PublicIncidentReportSerializer,
 )
 
-from accounts.permissions import IsStaffOrReadOnly
+from accounts.models import AccountProfile, get_user_role
+from accounts.permissions import IsDashboardUser, IsDashboardUserCreateAdminChange, IsStaffOrReadOnly
 
 
 class HazardTypeViewSet(viewsets.ModelViewSet):
@@ -134,7 +135,7 @@ class ResponderReportViewSet(viewsets.ModelViewSet):
     ).all().order_by('-report_time')
     serializer_class = ResponderReportSerializer
     authentication_classes = [SessionAuthentication, TokenAuthentication]
-    permission_classes = [IsStaffOrReadOnly]
+    permission_classes = [IsDashboardUser]
 
     def perform_create(self, serializer):
         serializer.save(responder=self.request.user)
@@ -147,9 +148,8 @@ class IncidentReportViewSet(viewsets.ModelViewSet):
     serializer_class = IncidentReportSerializer
     authentication_classes = [SessionAuthentication, TokenAuthentication]
 
-    # Temporary for frontend testing.
-    # Later, change this back to [IsStaffOrReadOnly] once token auth is connected.
-    permission_classes = [AllowAny]
+    # Responders (staff) and admins only. Only admins may edit, approve or delete.
+    permission_classes = [IsDashboardUserCreateAdminChange]
 
     def get_queryset(self):
         queryset = super().get_queryset()
@@ -179,6 +179,25 @@ class IncidentReportViewSet(viewsets.ModelViewSet):
         ordering = self.request.query_params.get('ordering', '-created_at')
         return queryset.order_by(ordering)
 
+    def perform_create(self, serializer):
+        # Only an admin can approve, so a responder cannot file a report as already approved.
+        if get_user_role(self.request.user) != AccountProfile.ROLE_ADMIN:
+            requested = str(serializer.validated_data.get('status') or '').lower()
+            if requested == 'approved':
+                serializer.save(status='Pending')
+                return
+        serializer.save()
+
+    @action(detail=False, methods=['get'], permission_classes=[permissions.AllowAny], url_path='public')
+    def public(self, request):
+        """Approved reports for the public Landing page and Disaster Map, without personal data."""
+        reports = (
+            IncidentReport.objects.select_related('barangay')
+            .filter(status__iexact='approved')
+            .order_by('-created_at')[:500]
+        )
+        return Response(PublicIncidentReportSerializer(reports, many=True).data)
+
 
 class AccomplishmentReportViewSet(viewsets.ModelViewSet):
     queryset = AccomplishmentReport.objects.prefetch_related(
@@ -191,17 +210,14 @@ class AccomplishmentReportViewSet(viewsets.ModelViewSet):
     serializer_class = AccomplishmentReportSerializer
     authentication_classes = [SessionAuthentication, TokenAuthentication]
 
-    # Temporary for frontend testing.
-    # Later, change this back to [IsStaffOrReadOnly] once token auth is connected.
-    permission_classes = [AllowAny]
+    # Responders (staff) and admins only. Only admins may edit, approve or delete.
+    permission_classes = [IsDashboardUserCreateAdminChange]
 
     def get_queryset(self):
         queryset = super().get_queryset()
 
         # Only include accomplishment reports that originated from the responder side.
         # Responder accounts have the staff role, so only admin-compiled reports are left out.
-        from accounts.models import AccountProfile
-
         search = self.request.query_params.get('search')
         if search:
             queryset = queryset.filter(

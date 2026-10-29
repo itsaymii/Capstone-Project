@@ -3,6 +3,8 @@ Management command to create sample staff responder accounts for testing.
 Run with: python manage.py create_sample_staff_accounts
 """
 
+import secrets
+
 from django.core.management.base import BaseCommand
 from django.contrib.auth.models import User
 from accounts.models import AccountProfile
@@ -18,28 +20,26 @@ class Command(BaseCommand):
                 'email': 'staff@responder.com',
                 'first_name': 'John',
                 'last_name': 'Responder',
-                'password': 'Responder@123',
             },
             {
                 'username': 'fire_team_lead',
                 'email': 'maria.santos@fire.com',
                 'first_name': 'Maria',
                 'last_name': 'Santos',
-                'password': 'FireTeam@123',
             },
             {
                 'username': 'medical_responder',
                 'email': 'carlos.cruz@ems.com',
                 'first_name': 'Carlos',
                 'last_name': 'Cruz',
-                'password': 'Medical@123',
             },
         ]
 
         created_count = 0
         for account in staff_accounts:
             username = account['username']
-            password = account.pop('password')
+            # A new random password each run, so no shared password lives in the repo.
+            password = secrets.token_urlsafe(12)
             
             # Check if user already exists
             if User.objects.filter(username=username).exists():
@@ -49,7 +49,7 @@ class Command(BaseCommand):
                 continue
             
             # Create user
-            user = User.objects.create_user(**account)
+            user = User.objects.create_user(password=password, **account)
             user.is_staff = True
             user.save()
             
@@ -70,7 +70,7 @@ class Command(BaseCommand):
         )
         self.stdout.write(
             self.style.WARNING(
-                '\n⚠️  IMPORTANT: Change these passwords in production!\n'
-                'These are sample credentials for development/testing only.'
+                '\nThe passwords above are random and shown only once. Save them now.\n'
+                'These are sample accounts for development/testing only.'
             )
         )

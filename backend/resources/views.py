@@ -13,7 +13,7 @@ from .serializers import (
     EquipmentSerializer,
     VolunteerSerializer,
 )
-from accounts.permissions import IsStaffOrReadOnly
+from accounts.permissions import IsDashboardUser, IsStaffOrReadOnly
 from io import TextIOWrapper
 from decimal import Decimal, InvalidOperation
 import csv
@@ -227,7 +227,8 @@ class VolunteerViewSet(viewsets.ModelViewSet):
     queryset = Volunteer.objects.select_related('barangay').all()
     serializer_class = VolunteerSerializer
     authentication_classes = [SessionAuthentication, TokenAuthentication]
-    permission_classes = [IsStaffOrReadOnly]
+    # Volunteers' contact details are personal data, so even reads need a dashboard account.
+    permission_classes = [IsDashboardUser]
     search_fields = ['full_name', 'contact_number', 'email']
     ordering_fields = ['full_name', 'created_at']
 

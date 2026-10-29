@@ -7,6 +7,7 @@ import {
   requestPasswordReset,
   verifyLoginOtp,
   verifyRegisterOtp,
+  getCurrentUserProfile as fetchServerProfile,
   updateCurrentUserProfile as patchCurrentUserProfile,
 } from './api'
 import { addNotification } from './notifications'
@@ -363,7 +364,7 @@ export async function requestLoginOtp(
   }
 
   try {
-    const response = await loginAccount({ email: normalizedEmail, password, forceOtp })
+    const response = await loginAccount({ email: normalizedEmail, password, forceOtp, keepLoggedIn })
 
     const hasUserPayload = Boolean(response.user)
     const shouldBypassOtp = Boolean(response.skipOtp || hasUserPayload)
@@ -438,7 +439,7 @@ export async function verifyLoginOtpCode(payload: {
   }
 
   try {
-    const response = await verifyLoginOtp({ email: normalizedEmail, otp: trimmedOtp })
+    const response = await verifyLoginOtp({ email: normalizedEmail, otp: trimmedOtp, keepLoggedIn: payload.keepLoggedIn })
 
     if (!response.user) {
       return { success: false, error: 'Unable to complete login right now.' }
@@ -531,6 +532,61 @@ export async function confirmPasswordResetWithOtp(payload: {
       success: false,
       error: parsedError.message,
     }
+  }
+}
+
+/**
+ * The server session (one cookie for the whole browser) decides who is logged in. Copy it
+ * into this tab, so every tab shows the same account, or clear this tab if it has ended.
+ */
+export async function syncAuthWithServer(): Promise<void> {
+  try {
+    const response = await fetchServerProfile()
+    const user = response.user
+    if (!user) return
+
+    const local = getCurrentUserProfile()
+    if (isAuthenticated() && local?.email === user.email && local?.role === user.role) return
+
+    persistAuthenticatedSession(
+      {
+        username: user.username,
+        fullName: user.fullName,
+        email: user.email,
+        role: user.role,
+        isAdmin: user.isAdmin,
+        isStaff: user.isStaff,
+        hasDashboardAccess: user.hasDashboardAccess,
+      },
+      getActiveAuthStore() === localStorage,
+    )
+  } catch (error) {
+    // 401/403: nobody is logged in on the server. Network errors leave this tab as it is.
+    const status = axios.isAxiosError(error) ? error.response?.status : undefined
+    if ((status === 401 || status === 403) && getActiveAuthStore()) {
+      clearAuthenticatedSession()
+    }
+  }
+}
+
+/** Re-check the server session when the user comes back to this tab. Returns a cleanup function. */
+export function watchAuthAcrossTabs(): () => void {
+  const onVisible = () => {
+    if (document.visibilityState === 'visible') void syncAuthWithServer()
+  }
+  const onStorage = (event: StorageEvent) => {
+    if (event.key === null || event.key === AUTH_KEY || event.key === SESSION_USER_KEY) {
+      void syncAuthWithServer()
+    }
+  }
+
+  window.addEventListener('focus', onVisible)
+  document.addEventListener('visibilitychange', onVisible)
+  window.addEventListener('storage', onStorage)
+  return () => {
+    window.removeEventListener('focus', onVisible)
+    document.removeEventListener('visibilitychange', onVisible)
+    window.removeEventListener('storage', onStorage)
   }
 }
 

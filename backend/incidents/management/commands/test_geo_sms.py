@@ -1,3 +1,5 @@
+import secrets
+
 from django.core.management.base import BaseCommand
 from django.contrib.auth.models import User
 from accounts.models import AccountProfile, ResidencyVerification
@@ -25,7 +27,7 @@ class Command(BaseCommand):
             defaults={'email': 'test@sms.com', 'first_name': 'Test', 'last_name': 'User'}
         )
         if created:
-            user.set_password('TestPass123!')
+            user.set_password(secrets.token_urlsafe(12))
             user.save()
             self.stdout.write('👤 Created test user.')
         else:

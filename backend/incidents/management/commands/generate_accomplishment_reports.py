@@ -1,4 +1,5 @@
 import random
+import secrets
 from datetime import timedelta
 
 from django.contrib.auth import get_user_model
@@ -385,10 +386,11 @@ class Command(BaseCommand):
         User = get_user_model()
         responders = list(User.objects.filter(is_staff=True, is_superuser=False)) or list(User.objects.filter(is_staff=True))
         if not responders:
+            demo_password = secrets.token_urlsafe(12)
             responders = [User.objects.create_user(
-                username='field_responder', email='responder@example.com', password='Demo1234!', is_staff=True,
+                username='field_responder', email='responder@example.com', password=demo_password, is_staff=True,
             )]
-            self.stdout.write(self.style.WARNING('No staff accounts found: created field_responder / Demo1234!'))
+            self.stdout.write(self.style.WARNING(f'No staff accounts found: created field_responder / {demo_password}'))
 
         if options['clear']:
             self.stdout.write(self.style.WARNING('Clearing existing reports...'))

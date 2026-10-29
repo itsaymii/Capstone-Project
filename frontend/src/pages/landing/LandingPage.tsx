@@ -6,7 +6,7 @@ import { RegisterPage } from '../auth/register/RegisterPage'
 import { NavigationBar } from '../../components/NavigationBar'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { getCurrentUserProfile, isAuthenticated } from '../../services/auth'
-import { getIncidentReports } from '../../services/incidents'
+import { getPublicIncidentReports } from '../../services/incidents'
 import { hazardIncidents, type HazardIncident } from '../../data/adminOperations'
 import landingPageImage from '../../images/LandingPage.jpg'
 import earthquakeIcon from '../../images/earthquake.png'
@@ -199,7 +199,7 @@ export function LandingPage() {
   useEffect(() => {
     let active = true
 
-    void getIncidentReports()
+    void getPublicIncidentReports()
       .then((reports) => {
         if (!active) return
 
