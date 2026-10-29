@@ -25,14 +25,14 @@ from .serializers import (
 )
 
 from accounts.models import AccountProfile, get_user_role
-from accounts.permissions import IsDashboardUser, IsDashboardUserCreateAdminChange, IsStaffOrReadOnly
+from accounts.permissions import IsDashboardAdminOrReadOnly, IsDashboardUser, IsDashboardUserCreateAdminChange
 
 
 class HazardTypeViewSet(viewsets.ModelViewSet):
     queryset = HazardType.objects.all()
     serializer_class = HazardTypeSerializer
     authentication_classes = [SessionAuthentication, TokenAuthentication]
-    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    permission_classes = [IsDashboardAdminOrReadOnly]
     search_fields = ['name', 'description']
     ordering_fields = ['name']
 
@@ -40,7 +40,7 @@ class HazardTypeViewSet(viewsets.ModelViewSet):
 class IncidentViewSet(viewsets.ModelViewSet):
     serializer_class = IncidentSerializer
     authentication_classes = [SessionAuthentication, TokenAuthentication]
-    permission_classes = [IsStaffOrReadOnly]
+    permission_classes = [IsDashboardAdminOrReadOnly]
     search_fields = ['description', 'address', 'hazard_type__name', 'reference_code']
     ordering_fields = ['incident_datetime', 'severity_level', 'status']
 
@@ -116,7 +116,7 @@ class AlertViewSet(viewsets.ModelViewSet):
     queryset = Alert.objects.select_related('incident').filter(is_active=True).all()
     serializer_class = AlertSerializer
     authentication_classes = [SessionAuthentication, TokenAuthentication]
-    permission_classes = [IsStaffOrReadOnly]
+    permission_classes = [IsDashboardAdminOrReadOnly]
 
     def get_queryset(self):
         queryset = super().get_queryset()

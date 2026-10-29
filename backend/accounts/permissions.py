@@ -2,39 +2,6 @@ from rest_framework import permissions
 from .models import AccountProfile, get_user_role, user_has_dashboard_access
 
 
-class IsAdminOrReadOnly(permissions.BasePermission):
-    """
-    Custom permission to only allow admins to edit objects.
-    """
-    def has_permission(self, request, view):
-        # Read permissions are allowed to any request
-        if request.method in permissions.SAFE_METHODS:
-            return True
-        
-        # Write permissions are only allowed to admins
-        return request.user and request.user.is_superuser
-
-
-class IsStaffOrReadOnly(permissions.BasePermission):
-    """
-    Custom permission to only allow staff/admin to edit objects.
-    """
-    def has_permission(self, request, view):
-        # Read permissions are allowed to any request
-        if request.method in permissions.SAFE_METHODS:
-            return True
-        
-        # Write permissions are only allowed to staff/admin
-        if not request.user or not request.user.is_authenticated:
-            return False
-        
-        try:
-            profile = AccountProfile.objects.get(user=request.user)
-            return profile.role in [AccountProfile.ROLE_ADMIN, AccountProfile.ROLE_STAFF]
-        except:
-            return False
-
-
 class IsAdminOrStaff(permissions.BasePermission):
     """
     Custom permission to only allow admins and staff.
@@ -80,3 +47,16 @@ class IsDashboardUserCreateAdminChange(permissions.BasePermission):
             return True
 
         return get_user_role(user) == AccountProfile.ROLE_ADMIN
+
+
+class IsDashboardAdminOrReadOnly(permissions.BasePermission):
+    """
+    Anyone may read (public pages show evacuation centers, barangays, hazard types).
+    Only admin accounts may add, edit or delete. Responders (staff) stay on the responder side.
+    """
+    def has_permission(self, request, view):
+        if request.method in permissions.SAFE_METHODS:
+            return True
+
+        user = request.user
+        return bool(user and user.is_authenticated and get_user_role(user) == AccountProfile.ROLE_ADMIN)

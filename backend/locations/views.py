@@ -8,7 +8,7 @@ from .serializers import (
     LocationSerializer, PopulationDensitySerializer,
     EarthquakeFaultLineSerializer
 )
-from accounts.permissions import IsStaffOrReadOnly
+from accounts.permissions import IsDashboardAdminOrReadOnly
 
 
 class BarangayViewSet(viewsets.ModelViewSet):
@@ -20,7 +20,7 @@ class BarangayViewSet(viewsets.ModelViewSet):
     queryset = Barangay.objects.all()
     serializer_class = BarangaySerializer
     authentication_classes = [SessionAuthentication, TokenAuthentication]
-    permission_classes = [IsStaffOrReadOnly]
+    permission_classes = [IsDashboardAdminOrReadOnly]
     search_fields = ['name', 'city', 'province']
     ordering_fields = ['name', 'province', 'city']
     
@@ -40,7 +40,7 @@ class LocationViewSet(viewsets.ModelViewSet):
     queryset = Location.objects.all()
     serializer_class = LocationSerializer
     authentication_classes = [SessionAuthentication, TokenAuthentication]
-    permission_classes = [IsStaffOrReadOnly]
+    permission_classes = [IsDashboardAdminOrReadOnly]
     search_fields = ['address', 'barangay__name']
     ordering_fields = ['created_at', 'address']
 
@@ -50,7 +50,7 @@ class PopulationDensityViewSet(viewsets.ModelViewSet):
     queryset = PopulationDensity.objects.all()
     serializer_class = PopulationDensitySerializer
     authentication_classes = [SessionAuthentication, TokenAuthentication]
-    permission_classes = [IsStaffOrReadOnly]
+    permission_classes = [IsDashboardAdminOrReadOnly]
 
 
 class EarthquakeFaultLineViewSet(viewsets.ModelViewSet):
@@ -58,4 +58,4 @@ class EarthquakeFaultLineViewSet(viewsets.ModelViewSet):
     queryset = EarthquakeFaultLine.objects.all()
     serializer_class = EarthquakeFaultLineSerializer
     authentication_classes = [SessionAuthentication, TokenAuthentication]
-    permission_classes = [IsStaffOrReadOnly]
+    permission_classes = [IsDashboardAdminOrReadOnly]
