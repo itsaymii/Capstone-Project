@@ -112,6 +112,9 @@ const hazardTypeMeta: Record<HazardType, { label: string; color: string; descrip
 
 const hazardTabOrder: HazardType[] = ['FR', 'AC', 'EQ']
 
+// Report cards shown at first in the side list; scrolling down adds this many more.
+const LIST_PAGE_SIZE = 10
+
 const mapLegendItems = [
   { label: 'Philippine Fault Zone', color: '#dc2626' },
   { label: 'Valley Fault System', color: '#3b82f6' },
@@ -700,6 +703,38 @@ export function AdminIncidentMapPanel({
     () => plottableMapIncidents.filter(matchesSearch).sort(sortNewestFirst),
     [matchesSearch, plottableMapIncidents],
   )
+
+  // The side list shows LIST_PAGE_SIZE cards at first and adds more as the user scrolls,
+  // so long lists do not slow the page down.
+  const sideListIncidents = sideTab === 'review' ? reviewIncidents : onMapListIncidents
+  const [visibleListCount, setVisibleListCount] = useState(LIST_PAGE_SIZE)
+  const sideListRef = useRef<HTMLDivElement | null>(null)
+  const sideListEndRef = useRef<HTMLDivElement | null>(null)
+  const hasMoreListItems = visibleListCount < sideListIncidents.length
+
+  // Back to the first page (and the top) when the list changes to other reports.
+  useEffect(() => {
+    setVisibleListCount(LIST_PAGE_SIZE)
+    sideListRef.current?.scrollTo({ top: 0 })
+  }, [sideTab, selectedType, listSearch, selectedYear, selectedMonth, typeFilter, barangayFilter, severityFilter])
+
+  // Load the next page when the end of the list scrolls into view.
+  useEffect(() => {
+    const root = sideListRef.current
+    const end = sideListEndRef.current
+    if (!root || !end || !hasMoreListItems) return
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setVisibleListCount((count) => count + LIST_PAGE_SIZE)
+        }
+      },
+      { root, rootMargin: '0px 0px 120px 0px' },
+    )
+    observer.observe(end)
+    return () => observer.disconnect()
+  }, [hasMoreListItems, visibleListCount])
 
   const filteredEarthquakeEvents = useMemo(
     () => earthquakeEvents.filter((event) => matchesDate(new Date(event.rawTimestamp))),
@@ -1727,8 +1762,8 @@ export function AdminIncidentMapPanel({
                 </div>
               ) : null}
 
-              <div className="mt-4 min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
-                {(sideTab === 'review' ? reviewIncidents : onMapListIncidents).map((incident) => (
+              <div className="mt-4 min-h-0 flex-1 space-y-3 overflow-y-auto pr-1" ref={sideListRef}>
+                {sideListIncidents.slice(0, visibleListCount).map((incident) => (
                   <article
                     className="rounded-2xl border border-slate-200 bg-[#fbfdff] p-4 shadow-[0_8px_20px_rgba(15,23,42,0.05)]"
                     key={incident.id}
@@ -1801,7 +1836,15 @@ export function AdminIncidentMapPanel({
                   </article>
                 ))}
 
-                {(sideTab === 'review' ? reviewIncidents : onMapListIncidents).length === 0 ? (
+                {sideListIncidents.length > LIST_PAGE_SIZE ? (
+                  <div className="py-2 text-center text-[11px] font-semibold text-slate-400" ref={sideListEndRef}>
+                    {hasMoreListItems
+                      ? `Showing ${visibleListCount} of ${sideListIncidents.length}. Scroll for more...`
+                      : `All ${sideListIncidents.length} reports shown`}
+                  </div>
+                ) : null}
+
+                {sideListIncidents.length === 0 ? (
                   <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-5 text-center">
                     <p className="text-sm font-semibold text-slate-700">
                       {reportsLoading && rawReports.length === 0
