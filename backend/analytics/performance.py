@@ -154,6 +154,26 @@ def build_performance(rows):
 # Database part
 # ---------------------------------------------------------------------------
 
+def _barangay_filter(barangay):
+    """
+    Reports in one barangay. The frontend sends names like "Barangay 1", "Domoit" or
+    "Barangay Domoit"; the database has "Barangay 1 (Pob.)" and "Domoit". "Barangay 1"
+    must not match "Barangay 10" or "Barangay 11".
+    """
+    import re
+    from django.db.models import Q
+
+    name = re.sub(r'\s*\(pob\.?\)\s*', ' ', barangay, flags=re.IGNORECASE).strip()
+    short = name[len('barangay '):].strip() if name.lower().startswith('barangay ') else name
+    is_numbered = short.isdigit()
+    full = f'Barangay {short}' if is_numbered else short
+
+    matches = Q(barangay__name__iexact=full) | Q(barangay__name__iexact=f'{full} (Pob.)')
+    # Older reports without a saved barangay: the name as a whole word in the location.
+    pattern = r'(^|[^0-9a-z])' + re.escape(full.lower()) + r'([^0-9a-z]|$)'
+    return matches | Q(barangay__isnull=True, location__iregex=pattern)
+
+
 def _approved_reports(filters):
     from django.db.models import Q
     from incidents.models import IncidentReport
@@ -169,8 +189,7 @@ def _approved_reports(filters):
 
     barangay = (filters.get('barangay') or '').strip()
     if barangay:
-        name = barangay[len('barangay '):] if barangay.lower().startswith('barangay ') else barangay
-        queryset = queryset.filter(Q(barangay__name__iexact=name) | Q(location__icontains=name))
+        queryset = queryset.filter(_barangay_filter(barangay))
 
     incident_types = [value.strip() for value in (filters.get('incident_type') or '').split(',') if value.strip()]
     if incident_types:

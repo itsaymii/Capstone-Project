@@ -8,19 +8,9 @@ import {
   updateCurrentUserPersonalInfo,
   saveCurrentUserProfileToServer,
 } from '../../services/auth'
+import { LUCENA_BARANGAYS } from '../../data/barangays'
 
-const barangayOptions = [
-  'Barangay 1',
-  'Barangay 2',
-  'Barangay 3',
-  'Barangay 4',
-  'Barangay 5',
-  'Barangay 6',
-  'Barangay 7',
-  'Barangay 8',
-  'Barangay 9',
-  'Barangay 10',
-]
+const barangayOptions = LUCENA_BARANGAYS
 
 const cityOptions = ['Lucena City', 'Tayabas City', 'Sariaya', 'Candelaria', 'Pagbilao']
 
