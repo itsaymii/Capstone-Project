@@ -128,6 +128,16 @@ if DjangoTestCase is not None:
             self.assertIn(top_barangay('Fire Incident'), {'Ibabang Dupay', 'Barangay 1'})
             self.assertTrue(IncidentReport.objects.filter(location__startswith='Diversion Road, Stone Gate area').exists())
 
+        def test_every_barangay_gets_reports_and_clear_replaces_old_data(self):
+            self.run_command('--count', '150', '--approved', '--seed', '8')
+            output = self.run_command('--count', '200', '--approved', '--clear', '--seed', '9')
+
+            self.assertEqual(IncidentReport.objects.count(), 200)
+            self.assertEqual(Incident.objects.count(), 200)
+            for name in BARANGAY_NAMES:
+                self.assertGreaterEqual(IncidentReport.objects.filter(barangay__name=name).count(), 3, name)
+            self.assertIn('33 of 33 barangays have data', output)
+
         def test_reports_use_the_responder_account_as_team(self):
             self.run_command('--count', '20', '--seed', '2')
             self.assertEqual(set(IncidentReport.objects.values_list('responder_team', flat=True)), {'responder_a'})

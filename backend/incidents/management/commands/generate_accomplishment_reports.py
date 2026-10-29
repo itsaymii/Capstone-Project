@@ -1,5 +1,6 @@
 import random
 import secrets
+from collections import Counter
 from datetime import timedelta
 
 from django.contrib.auth import get_user_model
@@ -296,6 +297,30 @@ def get_place_for_incident(rng, incident_type):
         return rng.choice(hotspots)
     return rng.choice(BARANGAY_NAMES), None, None
 
+def plan_places(rng, incident_types, min_per_barangay):
+    """
+    A place for each report, making sure every barangay gets at least `min_per_barangay`
+    reports. Barangays that came up short take reports from the most-used barangays;
+    hotspot reports are never moved.
+    """
+    places = [get_place_for_incident(rng, incident_type) for incident_type in incident_types]
+    counts = Counter(place[0] for place in places)
+
+    for name in rng.sample(BARANGAY_NAMES, len(BARANGAY_NAMES)):
+        while counts[name] < min_per_barangay:
+            movable = [
+                index for index, (barangay, landmark, _) in enumerate(places)
+                if landmark is None and counts[barangay] > min_per_barangay
+            ]
+            if not movable:
+                break  # too few reports to give every barangay the minimum
+            index = max(movable, key=lambda i: (counts[places[i][0]], rng.random()))
+            counts[places[index][0]] -= 1
+            places[index] = (name, None, None)
+            counts[name] += 1
+
+    return places
+
 
 # How often each incident type appears in the sample data (roughly like a city DRRMO's mix).
 TYPE_WEIGHTS = {
@@ -391,6 +416,9 @@ class Command(BaseCommand):
         parser.add_argument('--also-create-incidents', action='store_true',
                             help='With pending reports, still create Incident rows directly.')
         parser.add_argument('--seed', type=int, default=None, help='Use the same seed to get the same data again.')
+        parser.add_argument('--min-per-barangay', type=int, default=None,
+                            help='Every barangay gets at least this many reports '
+                                 '(default 3, or fewer when --count is too small for 3 each).')
         parser.add_argument('--clear', action='store_true',
                             help='Delete ALL incident reports, victims, and accomplishment reports first '
                                  '(and ALL incidents when used with --approved or --also-create-incidents).')
@@ -408,6 +436,22 @@ class Command(BaseCommand):
             raise CommandError('start-year must not be after end-year.')
         if not 0 <= recent_share <= 1:
             raise CommandError('recent-share must be between 0 and 1.')
+        min_per_barangay = options['min_per_barangay']
+        if min_per_barangay is None:
+            min_per_barangay = min(3, count // len(BARANGAY_NAMES))
+        if min_per_barangay < 0:
+            raise CommandError('min-per-barangay must be 0 or higher.')
+        if count < min_per_barangay * len(BARANGAY_NAMES):
+            raise CommandError(
+                f'count must be at least {min_per_barangay * len(BARANGAY_NAMES)} so each of the '
+                f'{len(BARANGAY_NAMES)} barangays gets {min_per_barangay} reports (or lower --min-per-barangay).'
+            )
+        missing_in_database = [name for name in BARANGAY_NAMES if find_barangay(name) is None]
+        if missing_in_database:
+            raise CommandError(
+                f'These barangays are not in the database: {", ".join(missing_in_database)}. '
+                'Run: python manage.py import_barangays ../lucena_barangays.geojson'
+            )
         if Barangay is None or not has_model_field(IncidentReport, 'barangay'):
             raise CommandError('Barangays are not available. Run: python manage.py import_barangays ../lucena_barangays.geojson')
 
@@ -426,14 +470,6 @@ class Command(BaseCommand):
             )]
             self.stdout.write(self.style.WARNING(f'No staff accounts found: created field_responder / {demo_password}'))
 
-        if options['clear']:
-            self.stdout.write(self.style.WARNING('Clearing existing reports...'))
-            AccomplishmentReport.objects.all().delete()
-            VictimDetail.objects.all().delete()
-            IncidentReport.objects.all().delete()
-            if (approved or also_create_incidents) and Incident is not None:
-                Incident.objects.all().delete()
-
         now = timezone.localtime()
         types = list(TYPE_WEIGHTS)
         plans = []
@@ -446,16 +482,27 @@ class Command(BaseCommand):
             ]
             plans.append((reported_at, rng.choices(types, weights=weights)[0]))
         plans.sort(key=lambda plan: plan[0])  # codes go up with the date, like real reports
+        places = plan_places(rng, [incident_type for _, incident_type in plans], min_per_barangay)
 
-        next_incident = next_code_numbers('INC-{year}-')
-        next_report = next_code_numbers('IR-{year}-')
         summary = {incident_type: 0 for incident_type in types}
         victims_total = 0
         missing_barangays = set()
+        per_barangay = Counter()
 
+        # Clearing and creating happen together: if anything fails, the old data is kept.
         with transaction.atomic():
-            for reported_at, incident_type in plans:
-                barangay_name, landmark, water_body = get_place_for_incident(rng, incident_type)
+            if options['clear']:
+                self.stdout.write(self.style.WARNING('Clearing existing reports...'))
+                AccomplishmentReport.objects.all().delete()
+                VictimDetail.objects.all().delete()
+                IncidentReport.objects.all().delete()
+                if (approved or also_create_incidents) and Incident is not None:
+                    Incident.objects.all().delete()
+
+            next_incident = next_code_numbers('INC-{year}-')
+            next_report = next_code_numbers('IR-{year}-')
+
+            for (reported_at, incident_type), (barangay_name, landmark, water_body) in zip(plans, places):
                 barangay = find_barangay(barangay_name)
                 if barangay is None:
                     missing_barangays.add(barangay_name)
@@ -546,6 +593,7 @@ class Command(BaseCommand):
                     set_created_at(Incident, incident.id, reported_at)
 
                 summary[incident_type] += 1
+                per_barangay[barangay_name] += 1
 
         if missing_barangays:
             self.stdout.write(self.style.WARNING(
@@ -554,6 +602,12 @@ class Command(BaseCommand):
             ))
 
         created = sum(summary.values())
+        if created:
+            fewest = min(per_barangay[name] for name in BARANGAY_NAMES)
+            self.stdout.write(
+                f'Every barangay has at least {fewest} new reports '
+                f'({sum(1 for name in BARANGAY_NAMES if per_barangay[name])} of {len(BARANGAY_NAMES)} barangays have data).'
+            )
         self.stdout.write(self.style.SUCCESS(
             f'Created {created} {"approved" if approved else "pending"} reports '
             f'({start_year}-{end_year}, {victims_total} victims).'
