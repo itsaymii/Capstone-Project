@@ -3,6 +3,8 @@ import { getIncidentReports, type IncidentReport } from '../../../services/incid
 import { LUCENA_BARANGAYS, toLucenaBarangay } from '../../../data/barangays'
 import { ANALYTICS_TYPES, getIncidentCategoryKey, type AnalyticsTypeKey } from '../../../data/incidentCategories'
 import { TEAM_NAMES, toTeamName } from '../../../data/teams'
+import { TablePagination } from '../../../components/TablePagination'
+import { PAGE_SIZE_OPTIONS, clampPage } from '../../../components/pagination'
 
 type ReportStatus = 'pending' | 'approved'
 type DateGrouping = 'weekly' | 'monthly' | 'yearly'
@@ -20,8 +22,6 @@ type Filters = {
 }
 
 const EMPTY_FILTERS: Filters = { search: '', type: 'all', barangay: 'all', team: 'all', victims: 'all', from: '', to: '' }
-
-const PAGE_SIZE_OPTIONS = [10, 25, 50]
 
 // Same look as the filters on the other admin pages (Accomplishment, Scoring, Mapping).
 const filterLabelClass = 'text-[11px] font-semibold uppercase tracking-[0.13em] text-slate-500'
@@ -145,20 +145,6 @@ function compareResponderTeams(left: string, right: string): number {
   return leftRank - rightRank || normalizedLeft.localeCompare(normalizedRight, undefined, { sensitivity: 'base' })
 }
 
-/** Page numbers to show, with null for a gap: 1 … 4 5 6 … 15. */
-function getPageNumbers(current: number, total: number): Array<number | null> {
-  if (total <= 7) return Array.from({ length: total }, (_, index) => index + 1)
-
-  const pages = new Set([1, total, current - 1, current, current + 1])
-  const sorted = Array.from(pages).filter((page) => page >= 1 && page <= total).sort((a, b) => a - b)
-  const result: Array<number | null> = []
-  sorted.forEach((page, index) => {
-    if (index > 0 && page - sorted[index - 1] > 1) result.push(null)
-    result.push(page)
-  })
-  return result
-}
-
 export function IncidentReports() {
   const [reports, setReports] = useState<IncidentReport[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -272,8 +258,7 @@ export function IncidentReports() {
     })
   }, [reports, filters, sortOrder])
 
-  const totalPages = Math.max(1, Math.ceil(filteredReports.length / pageSize))
-  const currentPage = Math.min(page, totalPages)
+  const currentPage = clampPage(page, filteredReports.length, pageSize)
   const pageStart = (currentPage - 1) * pageSize
   const pageReports = useMemo(
     () => filteredReports.slice(pageStart, pageStart + pageSize),
@@ -816,69 +801,14 @@ export function IncidentReports() {
             </table>
           </div>
 
-          {filteredReports.length > 0 ? (
-            <nav
-              aria-label="Incident report pages"
-              className="flex flex-col gap-3 border-t border-slate-200 bg-slate-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
-            >
-              <div className="flex flex-wrap items-center gap-3 text-sm text-slate-600">
-                <span>
-                  Showing <strong className="text-slate-900">{pageStart + 1}–{pageStart + pageReports.length}</strong> of{' '}
-                  <strong className="text-slate-900">{filteredReports.length}</strong>
-                </span>
-                <label className="flex items-center gap-2">
-                  <span className="text-xs font-semibold text-slate-500">Rows per page</span>
-                  <select
-                    className="rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-sm font-medium text-slate-800 outline-none transition hover:border-slate-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                    onChange={(event) => { setPageSize(Number(event.target.value)); setPage(1) }}
-                    value={pageSize}
-                  >
-                    {PAGE_SIZE_OPTIONS.map((size) => (
-                      <option key={size} value={size}>{size}</option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-1">
-                <button
-                  className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
-                  disabled={currentPage === 1}
-                  onClick={() => setPage(currentPage - 1)}
-                  type="button"
-                >
-                  Previous
-                </button>
-                {getPageNumbers(currentPage, totalPages).map((number, index) =>
-                  number === null ? (
-                    <span className="px-1.5 text-sm text-slate-400" key={`gap-${index}`}>…</span>
-                  ) : (
-                    <button
-                      aria-current={number === currentPage ? 'page' : undefined}
-                      className={`min-w-9 rounded-lg px-2.5 py-1.5 text-sm font-semibold transition ${
-                        number === currentPage
-                          ? 'bg-blue-600 text-white shadow-sm'
-                          : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-100'
-                      }`}
-                      key={number}
-                      onClick={() => setPage(number)}
-                      type="button"
-                    >
-                      {number}
-                    </button>
-                  ),
-                )}
-                <button
-                  className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
-                  disabled={currentPage === totalPages}
-                  onClick={() => setPage(currentPage + 1)}
-                  type="button"
-                >
-                  Next
-                </button>
-              </div>
-            </nav>
-          ) : null}
+          <TablePagination
+            label="Incident report pages"
+            onPageChange={setPage}
+            onPageSizeChange={(size) => { setPageSize(size); setPage(1) }}
+            page={currentPage}
+            pageSize={pageSize}
+            totalItems={filteredReports.length}
+          />
         </div>
       </div>
     </section>

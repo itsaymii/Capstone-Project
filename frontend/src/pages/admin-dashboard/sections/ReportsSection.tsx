@@ -1,4 +1,6 @@
 import { useMemo, useState } from 'react'
+import { TablePagination } from '../../../components/TablePagination'
+import { PAGE_SIZE_OPTIONS, clampPage } from '../../../components/pagination'
 import { jsPDF } from 'jspdf'
 import type { HazardIncident } from '../../../data/adminOperations'
 import type { EarthquakeEvent } from '../../../services/earthquakes'
@@ -362,6 +364,31 @@ export function ReportsSection({
     ],
   )
 
+  // The table shows one page at a time; Save PDF, Print and CSV still use every matching row.
+  // A change to any filter (or the dashboard search) starts again at page 1.
+  const filterKey = [
+    reportHazardFilter,
+    normalizedReportLocationFilter,
+    normalizedDashboardSearchQuery,
+    reportStartDate,
+    reportEndDate,
+  ].join('|')
+  const [pageState, setPageState] = useState({ filterKey, page: 1 })
+  const [pageSize, setPageSize] = useState(PAGE_SIZE_OPTIONS[0])
+  const currentPage = clampPage(
+    pageState.filterKey === filterKey ? pageState.page : 1,
+    filteredUnifiedHazardReportRows.length,
+    pageSize,
+  )
+  const pageRows = useMemo(
+    () => filteredUnifiedHazardReportRows.slice((currentPage - 1) * pageSize, currentPage * pageSize),
+    [filteredUnifiedHazardReportRows, currentPage, pageSize],
+  )
+
+  function goToPage(page: number): void {
+    setPageState({ filterKey, page })
+  }
+
   function resetReportFilters(): void {
     setReportStartDate('')
     setReportEndDate('')
@@ -635,11 +662,13 @@ export function ReportsSection({
     description: string
     columns: ReportTableColumn<T>[]
     rows: T[]
+    pageRows: T[]
     emptyMessage: string
     exportFileName: string
     rowKey: (row: T, index: number) => string
   }) {
-    const { title, description, columns, rows, emptyMessage, exportFileName, rowKey } = options
+    // rows: every matching row, for Save PDF, Print and CSV. pageRows: the rows on the current page.
+    const { title, description, columns, rows, pageRows, emptyMessage, exportFileName, rowKey } = options
 
     return (
       <article className={`${glassPanelSoftClass} overflow-hidden p-0`}>
@@ -698,8 +727,8 @@ export function ReportsSection({
             </thead>
 
             <tbody className="divide-y divide-slate-200 bg-white">
-              {rows.length > 0 ? (
-                rows.map((row, index) => (
+              {pageRows.length > 0 ? (
+                pageRows.map((row, index) => (
                   <tr className="transition hover:bg-slate-50/80" key={rowKey(row, index)}>
                     {columns.map((column) => (
                       <td
@@ -727,6 +756,18 @@ export function ReportsSection({
             </tbody>
           </table>
         </div>
+
+        <TablePagination
+          label={`${title} pages`}
+          onPageChange={goToPage}
+          onPageSizeChange={(size) => {
+            setPageSize(size)
+            goToPage(1)
+          }}
+          page={currentPage}
+          pageSize={pageSize}
+          totalItems={rows.length}
+        />
       </article>
     )
   }
@@ -834,9 +875,10 @@ export function ReportsSection({
           description: 'Combined admin report table for earthquake, fire, accident, and responder-submitted records with print and export support.',
           columns: unifiedHazardReportColumns,
           rows: filteredUnifiedHazardReportRows,
+          pageRows,
           emptyMessage: 'No hazard report rows match the current filters.',
           exportFileName: 'hazard-incident-master-report',
-          rowKey: (row, index) => `${row.reportId}-${index}`,
+          rowKey: (row, index) => `${row.reportId}-${(currentPage - 1) * pageSize + index}`,
         })}
       </div>
     </section>
