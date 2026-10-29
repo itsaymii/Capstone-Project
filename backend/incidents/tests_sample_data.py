@@ -114,3 +114,27 @@ if DjangoTestCase is not None:
             self.assertEqual(Incident.objects.count(), 0)
             codes = list(IncidentReport.objects.values_list('incident_code', flat=True))
             self.assertEqual(len(codes), len(set(codes)))
+
+        def test_hotspots_get_the_most_reports_of_their_type(self):
+            self.run_command('--count', '400', '--seed', '11')
+
+            def top_barangay(incident_type):
+                names = IncidentReport.objects.filter(incident_type=incident_type).values_list('barangay__name', flat=True)
+                return max(set(names), key=list(names).count)
+
+            self.assertEqual(top_barangay('RCA'), 'Domoit')
+            self.assertEqual(top_barangay('Drowning'), 'Talao-Talao')
+            self.assertEqual(top_barangay('Crime Against Person/Property'), 'Ibabang Dupay')
+            self.assertIn(top_barangay('Fire Incident'), {'Ibabang Dupay', 'Barangay 1'})
+            self.assertTrue(IncidentReport.objects.filter(location__startswith='Diversion Road, Stone Gate area').exists())
+
+        def test_reports_use_the_responder_account_as_team(self):
+            self.run_command('--count', '20', '--seed', '2')
+            self.assertEqual(set(IncidentReport.objects.values_list('responder_team', flat=True)), {'responder_a'})
+
+        def test_points_land_inside_the_barangay_boundary(self):
+            square = [[121.60, 13.93], [121.61, 13.93], [121.61, 13.94], [121.60, 13.94], [121.60, 13.93]]
+            Barangay.objects.filter(name='Domoit').update(boundary={'type': 'Polygon', 'coordinates': [square]})
+            self.run_command('--count', '200', '--seed', '5')
+            for report in IncidentReport.objects.filter(barangay__name='Domoit'):
+                self.assertTrue(13.93 <= report.latitude <= 13.94 and 121.60 <= report.longitude <= 121.61)

@@ -53,8 +53,8 @@ class Command(BaseCommand):
             user.is_staff = True
             user.save()
             
-            # Create account profile with staff role
-            AccountProfile.objects.create(user=user, role='staff')
+            # Give the account the staff role (a profile may already exist for new users).
+            AccountProfile.objects.update_or_create(user=user, defaults={'role': AccountProfile.ROLE_STAFF})
             
             self.stdout.write(
                 self.style.SUCCESS(

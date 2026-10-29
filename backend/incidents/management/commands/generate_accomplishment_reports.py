@@ -44,8 +44,6 @@ INCIDENT_TYPES = [
     'Drowning',
 ]
 
-TEAMS = ['Alpha', 'Bravo', 'Charlie']
-
 BARANGAY_NAMES = [
     'Barangay 1', 'Barangay 2', 'Barangay 3', 'Barangay 4', 'Barangay 5',
     'Barangay 6', 'Barangay 7', 'Barangay 8', 'Barangay 9', 'Barangay 10',
@@ -56,22 +54,34 @@ BARANGAY_NAMES = [
     'Mayao Silangan', 'Ransohan', 'Salinas', 'Talao-Talao',
 ]
 
-# Special list for Fire Incident
-# Fire is more likely in three hotspots, but may still occur in all barangays.
-FIRE_INCIDENT_BARANGAYS = (
-    ['Barangay 1'] * 8 +
-    ['Barangay 9'] * 8 +
-    ['Market View'] * 8 +
-    [barangay for barangay in BARANGAY_NAMES if barangay not in {'Barangay 1', 'Barangay 9', 'Market View'}]
-)
+# Places in Lucena with documented incidents of each type (the team's research, Oct 2026).
+# Each entry: (barangay, landmark used in the report location, water body for drownings).
+HOTSPOTS = {
+    # NDRRMC accident report, 2024
+    'RCA': [('Domoit', 'Diversion Road, Stone Gate area', None)],
+    'Fire Incident': [
+        ('Ibabang Dupay', 'Alpsville 3 Subdivision', None),  # fire report, 2025 (Brigada News)
+        ('Barangay 1', 'residential apartment area', None),  # fire reports, 2024 (Inquirer)
+    ],
+    'Drowning': [
+        ('Talao-Talao', 'Purok Spillway, Talao-talao River', 'river'),  # NDRRMC report, 2024
+        ('Talao-Talao', 'coastal resort area', 'sea'),  # local drowning reports, 2021 and 2024
+    ],
+    # MSEUF research on burglary, theft and victimization
+    'Crime Against Person/Property': [('Ibabang Dupay', 'University Site Village', None)],
+}
 
-# Weighted list for RCA (Accident) - Mas madalas sa Gulang-Gulang at Domoit
-# (8x more likely to be picked compared to other barangays)
-RCA_BARANGAYS = (
-    ['Gulang-Gulang'] * 8 +
-    ['Domoit'] * 8 +
-    BARANGAY_NAMES
-)
+# Share of each type's reports placed at its hotspots; the rest are spread over all barangays.
+HOTSPOT_SHARE = {
+    'RCA': 0.45,
+    'Fire Incident': 0.5,
+    'Drowning': 0.6,
+    'Crime Against Person/Property': 0.3,
+}
+
+# PNP reported more property crimes from December 2024 into January 2025.
+PROPERTY_CRIME_SURGE_MONTHS = {(2024, 12), (2025, 1)}
+PROPERTY_CRIME_SURGE_WEIGHT = 3
 
 BARANGAY_COORDINATES = {
     'Barangay 1': (13.9389702, 121.6124776), 'Barangay 2': (13.939363479614258, 121.6145248413086),
@@ -207,6 +217,36 @@ def get_randomized_coordinates(barangay_name):
     longitude = round(base_lng + random.uniform(-0.0018, 0.0018), 6)
     return min(max(latitude, 13.89), 13.98), min(max(longitude, 121.57), 121.69)
 
+def _boundary_rings(boundary):
+    """Outer rings of a GeoJSON Polygon/MultiPolygon, as lists of (lng, lat)."""
+    geometry_type = (boundary or {}).get('type')
+    coordinates = (boundary or {}).get('coordinates') or []
+    if geometry_type == 'Polygon':
+        return [coordinates[0]] if coordinates else []
+    if geometry_type == 'MultiPolygon':
+        return [polygon[0] for polygon in coordinates if polygon]
+    return []
+
+def _inside_ring(lng, lat, ring):
+    inside = False
+    for (x1, y1), (x2, y2) in zip(ring, ring[1:] + ring[:1]):
+        if (y1 > lat) != (y2 > lat) and lng < (x2 - x1) * (lat - y1) / (y2 - y1) + x1:
+            inside = not inside
+    return inside
+
+def get_point_in_barangay(rng, barangay, barangay_name):
+    """A random point inside the barangay's boundary, so map markers land in the right barangay."""
+    rings = _boundary_rings(getattr(barangay, 'boundary', None))
+    if rings:
+        points = [point for ring in rings for point in ring]
+        min_lng, max_lng = min(p[0] for p in points), max(p[0] for p in points)
+        min_lat, max_lat = min(p[1] for p in points), max(p[1] for p in points)
+        for _ in range(200):
+            lng, lat = rng.uniform(min_lng, max_lng), rng.uniform(min_lat, max_lat)
+            if any(_inside_ring(lng, lat, ring) for ring in rings):
+                return round(lat, 6), round(lng, 6)
+    return get_randomized_coordinates(barangay_name)
+
 def get_incident_description(incident_type, location):
     descriptions = INCIDENT_DESCRIPTIONS.get(incident_type, ['Incident reported in the area. Responders conducted assessment and provided necessary emergency assistance.'])
     return f'{random.choice(descriptions)} Location: {location}.'
@@ -232,7 +272,7 @@ def get_severity_and_impact(incident_type, barangay_name, victim_count):
     if 'fire' in lower:
         return 'critical', 'major'
     if 'rca' in lower or 'vehicular' in lower or 'accident' in lower:
-        if barangay_name in ['Gulang-Gulang', 'Domoit']:
+        if barangay_name in {name for name, _, _ in HOTSPOTS['RCA']}:
             return 'high', 'major'
         return ('high', 'major') if victim_count >= 2 else ('moderate', 'minor')
     if 'crime' in lower or 'drowning' in lower:
@@ -246,21 +286,15 @@ def set_created_at(model, object_id, created_at):
     if model is not None and has_model_field(model, 'created_at'):
         model.objects.filter(id=object_id).update(created_at=created_at)
 
-def get_barangay_for_incident(incident_type):
+def get_place_for_incident(rng, incident_type):
     """
-    Returns a random barangay based on incident type.
-    - Fire Incident: weighted toward Fire-specific barangays but can occur in other barangays too
-    - RCA (Accident): moderately weighted towards Gulang-Gulang and Domoit
-    - Other incidents: All 33 barangays
+    (barangay, landmark, water body) for one report. A share of each type goes to its
+    documented hotspots (HOTSPOTS); everything else is spread over all 33 barangays.
     """
-    if incident_type == 'Fire Incident':
-        if random.random() < 0.5:
-            return random.choice(FIRE_INCIDENT_BARANGAYS)
-        return random.choice(BARANGAY_NAMES)
-    elif incident_type == 'RCA':
-        return random.choice(RCA_BARANGAYS)
-    else:
-        return random.choice(BARANGAY_NAMES)
+    hotspots = HOTSPOTS.get(incident_type)
+    if hotspots and rng.random() < HOTSPOT_SHARE.get(incident_type, 0):
+        return rng.choice(hotspots)
+    return rng.choice(BARANGAY_NAMES), None, None
 
 
 # How often each incident type appears in the sample data (roughly like a city DRRMO's mix).
@@ -405,7 +439,12 @@ class Command(BaseCommand):
         plans = []
         for _ in range(count):
             reported_at = sample_report_datetime(rng, start_year, end_year, now, recent_share=recent_share)
-            plans.append((reported_at, rng.choices(types, weights=[TYPE_WEIGHTS[t] for t in types])[0]))
+            surge = (reported_at.year, reported_at.month) in PROPERTY_CRIME_SURGE_MONTHS
+            weights = [
+                TYPE_WEIGHTS[t] * (PROPERTY_CRIME_SURGE_WEIGHT if surge and t == 'Crime Against Person/Property' else 1)
+                for t in types
+            ]
+            plans.append((reported_at, rng.choices(types, weights=weights)[0]))
         plans.sort(key=lambda plan: plan[0])  # codes go up with the date, like real reports
 
         next_incident = next_code_numbers('INC-{year}-')
@@ -416,7 +455,7 @@ class Command(BaseCommand):
 
         with transaction.atomic():
             for reported_at, incident_type in plans:
-                barangay_name = get_barangay_for_incident(incident_type)
+                barangay_name, landmark, water_body = get_place_for_incident(rng, incident_type)
                 barangay = find_barangay(barangay_name)
                 if barangay is None:
                     missing_barangays.add(barangay_name)
@@ -427,10 +466,21 @@ class Command(BaseCommand):
                 next_incident[year] = next_incident.get(year, 0) + 1
                 next_report[reported_at.year] = next_report.get(reported_at.year, 0) + 1
 
-                location = f'{barangay_name}, Lucena City'
-                latitude, longitude = get_randomized_coordinates(barangay_name)
+                location = f'{landmark}, {barangay_name}, Lucena City' if landmark else f'{barangay_name}, Lucena City'
+                latitude, longitude = get_point_in_barangay(rng, barangay, barangay_name)
                 victim_count = victim_count_for(rng, incident_type)
                 details = sample_details(rng, incident_type, victim_count, occurred_at, barangay_name)
+                if water_body:
+                    details['water_body'] = water_body
+                if (
+                    incident_type == 'Crime Against Person/Property'
+                    and (reported_at.year, reported_at.month) in PROPERTY_CRIME_SURGE_MONTHS
+                    and rng.random() < 0.7
+                ):
+                    # The PNP-reported rise was in property crimes: theft and robbery.
+                    details['crime_type'] = rng.choice(['theft', 'theft', 'robbery'])
+                    if details['crime_type'] == 'theft':
+                        details['weapon'] = 'none'
                 victims = [sample_victim_details(rng, incident_type, details) for _ in range(victim_count)]
 
                 cleaned, victim_details, errors = validate_report_details(
@@ -440,12 +490,15 @@ class Command(BaseCommand):
                     raise CommandError(f'Sample data failed validation for {incident_type}: {errors}')
 
                 responder = rng.choice(responders)
+                # Real reports use the logged-in responder account as the team (see the serializer),
+                # so the responder pages and team performance charts can match them.
+                responder_team = (f'{responder.first_name} {responder.last_name}'.strip() or responder.username)[:100]
                 report = IncidentReport.objects.create(
                     report_code=f'IR-{reported_at.year}-{next_report[reported_at.year]:05d}',
                     incident_code=f'INC-{year}-{next_incident[year]:05d}',
                     time_occurred=occurred_at.time().replace(second=0, microsecond=0),
                     incident_type=incident_type,
-                    responder_team=rng.choice(TEAMS),
+                    responder_team=responder_team,
                     location=location,
                     barangay=barangay,
                     latitude=latitude,
@@ -465,7 +518,8 @@ class Command(BaseCommand):
                         name=fake.name(),
                         age=str(rng.randint(5, 80)),
                         gender=rng.choice(['M', 'F']),
-                        address=f'{rng.choice(BARANGAY_NAMES)}, Lucena City',
+                        # Most victims live in the barangay where it happened.
+                        address=f'{barangay_name if rng.random() < 0.7 else rng.choice(BARANGAY_NAMES)}, Lucena City',
                         condition=rng.choice(CONDITIONS),
                         details=extra,
                     )
