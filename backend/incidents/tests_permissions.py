@@ -125,6 +125,48 @@ class AccountManagementAccessTests(AccessTestCase):
         self.assertEqual(self.client_for(self.admin).get('/dashboard/admin/accounts/').status_code, 200)
 
 
+class OneAccountPerBrowserTests(AccessTestCase):
+    LOGIN_URL = '/accounts/auth/login/'
+
+    def login(self, client, email, **extra):
+        return client.post(self.LOGIN_URL, {'email': email, 'password': 'Pass12345', **extra}, content_type='application/json')
+
+    def test_another_account_cannot_log_in_until_the_first_logs_out(self):
+        browser = self.client  # one Django test client = one browser with one session cookie
+        self.assertEqual(self.login(browser, 'boss@test.local').status_code, 200)
+
+        for email in ('cit@test.local', 'resp@test.local'):
+            response = self.login(browser, email)
+            self.assertEqual(response.status_code, 409, email)
+            self.assertEqual(response.json()['code'], 'another_account_logged_in')
+
+        # The same account may log in again, and after logging out anyone may.
+        self.assertEqual(self.login(browser, 'boss@test.local').status_code, 200)
+        browser.post('/accounts/auth/logout/')
+        self.assertEqual(self.login(browser, 'resp@test.local').status_code, 200)
+
+    def test_otp_step_also_refuses_a_second_account(self):
+        browser = self.client
+        self.login(browser, 'boss@test.local')
+        OneTimePassword.objects.create(
+            email='cit@test.local', purpose=OneTimePassword.PURPOSE_LOGIN, code_hash=make_password('123456'),
+            payload={'userId': self.citizen.id}, expires_at=timezone.now() + timezone.timedelta(minutes=3),
+        )
+        response = browser.post(
+            '/accounts/auth/login/verify-otp/', {'email': 'cit@test.local', 'otp': '123456'},
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 409)
+
+    def test_session_ends_with_the_browser_unless_keep_logged_in(self):
+        self.login(self.client, 'boss@test.local')
+        self.assertTrue(self.client.session.get_expire_at_browser_close())
+
+        browser = self.client_class()
+        self.login(browser, 'boss@test.local', keepLoggedIn=True)
+        self.assertFalse(browser.session.get_expire_at_browser_close())
+
+
 class OtpAttemptTests(AccessTestCase):
     URL = '/accounts/auth/login/verify-otp/'
 

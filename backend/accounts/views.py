@@ -1,6 +1,6 @@
 import secrets
 from datetime import timedelta
-from django.contrib.auth import authenticate, login, logout
+from django.contrib.auth import authenticate, get_user, login, logout
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
 from django.core.mail import send_mail
@@ -96,6 +96,42 @@ def _serialize_user(user: User, fallback_identifier: str = '') -> dict:
 		'barangay': verification.barangay_name if verification else None,
 		'residencyRejectionReason': verification.rejection_reason if verification else '',
 	}
+
+
+def _get_browser_session_user(request) -> User | None:
+	"""The account already logged in on this browser (Django session cookie), if any."""
+	# These views skip DRF authentication (request.user is always anonymous there),
+	# so read the account straight from the session.
+	session_user = get_user(getattr(request, '_request', request))
+	return session_user if session_user.is_authenticated else None
+
+
+def _other_account_logged_in_response(request, user: User | None = None) -> Response | None:
+	"""
+	Only one account may be logged in per browser. Return a 409 response when a different
+	account (citizen, responder or admin) is still logged in, so it must log out first.
+	"""
+	session_user = _get_browser_session_user(request)
+	if session_user is None or (user is not None and session_user.id == user.id):
+		return None
+
+	return Response(
+		{
+			'error': (
+				f'{_get_user_full_name(session_user)} is still logged in on this browser. '
+				'Log out first before signing in with another account.'
+			),
+			'code': 'another_account_logged_in',
+		},
+		status=status.HTTP_409_CONFLICT,
+	)
+
+
+def _log_in(request, user: User) -> None:
+	"""Start the session. Without "keep me logged in" it ends when the browser closes."""
+	login(request, user)
+	if not _coerce_bool(request.data.get('keepLoggedIn'), default=False):
+		request.session.set_expiry(0)
 
 
 def _build_login_success_response(request, user: User, fallback_identifier: str) -> Response:
@@ -309,6 +345,10 @@ def issue_csrf_cookie(request):
 def register_user(request):
 	# """Start registration by validating input and emailing a verification OTP."""
 	"""Start registration by validating input and emailing a verification OTP."""
+	blocked = _other_account_logged_in_response(request)
+	if blocked:
+		return blocked
+
 	full_name = (request.data.get('fullName') or '').strip()
 	email = (request.data.get('email') or '').strip().lower()
 	username = (request.data.get('username') or '').strip().lower()
@@ -455,6 +495,10 @@ def verify_register_otp(request):
 
 	if User.objects.filter(email__iexact=email).exists():
 		return Response({'error': 'This email is already registered.'}, status=status.HTTP_400_BAD_REQUEST)
+
+	blocked = _other_account_logged_in_response(request)
+	if blocked:
+		return blocked
 
 	full_name = otp_record.payload.get('fullName', '')
 	username = (otp_record.payload.get('username') or '').strip().lower()
@@ -604,6 +648,10 @@ def login_user(request):
 			status=status.HTTP_403_FORBIDDEN,
 		)
 
+	blocked = _other_account_logged_in_response(request, user)
+	if blocked:
+		return blocked
+
 	# Ensure role/profile exists before checking OTP bypass rules.
 	# Staff/admin may be created outside the registration flow, so the OneToOne profile
 	# might not exist yet.
@@ -614,7 +662,7 @@ def login_user(request):
 		pass
 
 	if user_bypasses_login_otp(user):
-		login(request, user)
+		_log_in(request, user)
 		response = _build_login_success_response(request, user, identifier)
 		response.data['skipOtp'] = True
 		response.status_code = status.HTTP_200_OK
@@ -624,7 +672,7 @@ def login_user(request):
 		return Response({'error': 'OTP bypass is only allowed for staff and admin accounts.'}, status=status.HTTP_403_FORBIDDEN)
 
 	if _has_recent_verified_login_otp(email=account.email, user_id=user.id):
-		login(request, user)
+		_log_in(request, user)
 		response = _build_login_success_response(request, user, identifier)
 		response.data['skipOtp'] = True
 		response.status_code = status.HTTP_200_OK
@@ -722,10 +770,14 @@ def verify_login_otp(request):
 			status=status.HTTP_403_FORBIDDEN,
 		)
 
+	blocked = _other_account_logged_in_response(request, user)
+	if blocked:
+		return blocked
+
 	# A verified OTP should only be accepted once.
 	otp_record.is_used = True
 	otp_record.save(update_fields=['is_used'])
-	login(request, user)
+	_log_in(request, user)
 
 	response = _build_login_success_response(request, user, email)
 	response.status_code = status.HTTP_200_OK

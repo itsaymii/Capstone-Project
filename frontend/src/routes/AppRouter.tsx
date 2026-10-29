@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 
 // ✅ Public/Auth pages (named exports - OK)
@@ -17,10 +18,40 @@ import ResponderReportsPage from '../pages/responder/ResponderReportsPage'
 import CreateReport from '../pages/responder/CreateReport'
 import ProfileSettingsPage from '../pages/responder/ProfileSettings'
 
+import { AUTH_CHANGED_EVENT, syncAuthWithServer, watchAuthAcrossTabs } from '../services/auth'
 import { ProtectedRoute } from './ProtectedRoute'
 
 
+// How long the first page load waits for the server to say who is logged in.
+const INITIAL_AUTH_CHECK_TIMEOUT_MS = 3000
+
 export function AppRouter() {
+  const [authChecked, setAuthChecked] = useState(false)
+  const [, setAuthVersion] = useState(0)
+
+  useEffect(() => {
+    // Only one account is logged in per browser: the server session decides which,
+    // so check it before the protected routes run, and again when the user returns to a tab.
+    let active = true
+    const timeout = new Promise((resolve) => window.setTimeout(resolve, INITIAL_AUTH_CHECK_TIMEOUT_MS))
+    void Promise.race([syncAuthWithServer(), timeout]).finally(() => {
+      if (active) setAuthChecked(true)
+    })
+
+    // Re-render the routes when the account changes, so a page for the old account redirects.
+    const onAuthChanged = () => setAuthVersion((version) => version + 1)
+    window.addEventListener(AUTH_CHANGED_EVENT, onAuthChanged)
+    const stopWatching = watchAuthAcrossTabs()
+
+    return () => {
+      active = false
+      window.removeEventListener(AUTH_CHANGED_EVENT, onAuthChanged)
+      stopWatching()
+    }
+  }, [])
+
+  if (!authChecked) return null
+
   return (
     <Routes>
       {/* Public Routes */}
