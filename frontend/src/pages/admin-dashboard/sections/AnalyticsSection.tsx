@@ -3,6 +3,7 @@ import { jsPDF } from 'jspdf'
 import type { HazardIncident, IncidentStatus } from '../../../data/adminOperations'
 import type { EarthquakeEvent } from '../../../services/earthquakes'
 import { glassPanelClass, glassPanelSoftClass } from './constants'
+import { toLucenaBarangay, withAllBarangays } from '../../../data/barangays'
 import { INCIDENT_TYPE_CONFIGS } from '../../../data/incidentTypeFields'
 import { getResponsePerformance, type ResponsePerformanceResponse } from '../../../services/api'
 import {
@@ -166,6 +167,10 @@ function getLocationName(location: string): string {
     return 'Unspecified Location'
   }
 
+  // One of the 33 barangays, even when the location starts with a landmark.
+  const barangay = toLucenaBarangay(location)
+  if (barangay) return barangay
+
   const barangayMatch = location.match(/(?:barangay|brgy\.?|bgy\.?)\s+([^,]+)/i)
 
   if (barangayMatch?.[1]) {
@@ -202,6 +207,11 @@ function getLocationName(location: string): string {
     .filter((part) => part && !/lucena city/i.test(part))
 
   return parts[0] || location
+}
+
+/** The report's barangay: its saved barangay if it has one, otherwise read from the location. */
+function getReportBarangay(report: HazardIncident): string {
+  return toLucenaBarangay((report as HazardIncident & { barangayName?: string | null }).barangayName) ?? getLocationName(report.location)
 }
 
 function getReportDate(report: HazardIncident): Date {
@@ -560,7 +570,8 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
   }, [analyticsReports, earthquakeEvents, selectedYear])
 
   const availableBarangays = useMemo(
-    () => Array.from(new Set(analyticsReports.map((report) => getLocationName(report.location)))).sort(),
+    // All 33 barangays, even those without reports yet.
+    () => withAllBarangays(analyticsReports.map((report) => getReportBarangay(report))),
     [analyticsReports],
   )
 
@@ -578,7 +589,7 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
     let result = analyticsReports
 
     if (selectedBarangay) {
-      result = result.filter((report) => getLocationName(report.location) === selectedBarangay)
+      result = result.filter((report) => getReportBarangay(report) === selectedBarangay)
     }
 
     if (selectedDisasterType) {
@@ -967,7 +978,7 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
     const map = new Map<string, RiskLocation>()
 
     filteredReports.forEach((report) => {
-      const location = getLocationName(report.location)
+      const location = getReportBarangay(report)
       const current = map.get(location) || emptyRiskLocation(location)
 
       const severityScore = getSeverityWeight(report.severity) * 2
@@ -1208,8 +1219,7 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
   const barangayStats = useMemo(() => {
     const stats = new Map<string, { name: string; incidents: number; victims: number; highPriority: number; types: Map<string, number> }>()
     filteredReports.forEach((report) => {
-      const record = report as HazardIncident & { barangayName?: string | null }
-      const name = record.barangayName ? `Barangay ${record.barangayName}`.replace(/^Barangay Barangay /, 'Barangay ') : getLocationName(report.location)
+      const name = getReportBarangay(report)
       const key = normalizeBarangayKey(name)
       if (!key || key === 'unspecifiedlocation') return
       const current = stats.get(key) || { name, incidents: 0, victims: 0, highPriority: 0, types: new Map<string, number>() }
@@ -1601,7 +1611,7 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
     table(
       ['Date', 'Type', 'Severity', 'Barangay', 'Report'],
       filteredReports.length > 0
-        ? filteredReports.map((report) => [getReportDate(report).toLocaleDateString(), getAnalyticsTypeLabel(report), report.severity, getLocationName(report.location), report.title])
+        ? filteredReports.map((report) => [getReportDate(report).toLocaleDateString(), getAnalyticsTypeLabel(report), report.severity, getReportBarangay(report), report.title])
         : [['-', '-', '-', '-', 'No incident reports match the selected filters.']],
       [25, 30, 28, 48, contentWidth - 131],
     )

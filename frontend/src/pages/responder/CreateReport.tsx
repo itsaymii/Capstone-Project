@@ -16,6 +16,7 @@ import {
   type DetailValues,
   type IncidentTypeConfig,
 } from "../../data/incidentTypeFields";
+import { LUCENA_BARANGAYS } from "../../data/barangays";
 
 interface VictimDetails {
   name: string;
@@ -118,41 +119,6 @@ const VICTIM_FIELD_LABELS: Record<Exclude<keyof VictimDetails, "details">, strin
   condition: "Physical condition",
 };
 
-const LUCENA_BARANGAYS = [
-  "Barangay 1",
-  "Barangay 2",
-  "Barangay 3",
-  "Barangay 4",
-  "Barangay 5",
-  "Barangay 6",
-  "Barangay 7",
-  "Barangay 8",
-  "Barangay 9",
-  "Barangay 10",
-  "Barangay 11",
-  "Barra",
-  "Bocohan",
-  "Cotta",
-  "Dalahican",
-  "Domoit",
-  "Gulang-Gulang",
-  "Ibabang Dupay",
-  "Ibabang Iyam",
-  "Ibabang Talim",
-  "Ilayang Dupay",
-  "Ilayang Iyam",
-  "Ilayang Talim",
-  "Isabang",
-  "Market View",
-  "Mayao Castillo",
-  "Mayao Crossing",
-  "Mayao Kanluran",
-  "Mayao Parada",
-  "Mayao Silangan",
-  "Ransohan",
-  "Salinas",
-  "Talao-Talao",
-] as const;
 
 // The responding team is the logged-in responder account (its full name, or username if it has none).
 function getAccountTeam(): { team: string; username: string } {

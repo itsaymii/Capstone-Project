@@ -33,6 +33,7 @@ import {
   INCIDENT_CATEGORIES,
   sortIncidentCategoryLabels,
 } from '../../data/incidentCategories'
+import { toLucenaBarangay, withAllBarangays } from '../../data/barangays'
 
 type WorkspaceSection =
   | 'overview'
@@ -364,6 +365,13 @@ function toTitleCase(value: string): string {
 }
 
 function getDashboardBarangay(record: any): string {
+  // One of the 33 barangays when the record names one (saved barangay or location).
+  const knownBarangay =
+    toLucenaBarangay(getRecordValue(record?.barangay ?? {}, 'name', 'barangay_name', 'brgy_name', 'title')) ??
+    toLucenaBarangay(getRecordValue(record, 'barangay_name', 'barangay', 'brgy', 'barangayName', 'barangayLabel')) ??
+    toLucenaBarangay(getDashboardLocation(record))
+  if (knownBarangay) return knownBarangay
+
   const barangayObject = record?.barangay
 
   if (barangayObject && typeof barangayObject === 'object') {
@@ -1703,7 +1711,8 @@ export function AdminDashboardPage() {
       .filter((record) => !isPlaceholderLocation(getDashboardLocation(record)))
       .map((record) => getDashboardBarangay(record))
 
-    return Array.from(new Set(items)).sort((left, right) => left.localeCompare(right))
+    // All 33 barangays, even those without incidents yet.
+    return withAllBarangays(items)
   }, [dashboardIncidentRecords, distributionYear])
 
   useEffect(() => {

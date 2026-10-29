@@ -127,3 +127,16 @@ if DjangoTestCase is not None:
 
             bad = self.client.get('/api/analytics/performance/', {'month': '13', 'year': '2026'})
             self.assertEqual(bad.status_code, 400)
+
+        def test_numbered_barangay_filter_does_not_match_barangay_10_or_11(self):
+            now = timezone.localtime().replace(second=0, microsecond=0)
+            standby = {'event_name': 'Fiesta', 'venue': 'Plaza', 'persons_assisted': 3}
+            for team, name in [('One', 'Barangay 1 (Pob.)'), ('Ten', 'Barangay 10 (Pob.)'), ('Eleven', 'Barangay 11 (Pob.)')]:
+                self.make_report(team, 'Stand-by Medical Team', now, 20, Barangay.objects.create(name=name), details=standby)
+
+            for value in ('Barangay 1', 'Barangay 1 (Pob.)', '1'):
+                data = self.client.get('/api/analytics/performance/', {'barangay': value}).json()
+                self.assertEqual([team['team'] for team in data['teams']], ['One'], value)
+
+            cotta = self.client.get('/api/analytics/performance/', {'barangay': 'Cotta'}).json()
+            self.assertEqual(cotta['teams'], [])

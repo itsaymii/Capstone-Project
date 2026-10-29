@@ -11,6 +11,7 @@ import {
   getIncidentCategoryMeta,
   sortIncidentCategoryLabels,
 } from '../data/incidentCategories'
+import { toLucenaBarangay, withAllBarangays } from '../data/barangays'
 import { formatDetailValue, getIncidentTypeConfig } from '../data/incidentTypeFields'
 import {
   getIncidentReports,
@@ -290,6 +291,8 @@ function getReportDate(report: IncidentReport): Date | null {
 }
 
 function getBarangayName(report: IncidentReport, location: string): string {
+  const barangay = toLucenaBarangay(report.barangayName) ?? toLucenaBarangay(location)
+  if (barangay) return barangay
   if (report.barangayName) return report.barangayName
   const match = location.match(/(?:barangay|brgy\.?|bgy\.?)\s+([^,]+)/i)
   if (match?.[1]) return match[1].trim()
@@ -733,10 +736,8 @@ export function AdminIncidentMapPanel({
     [tabReports],
   )
 
-  const barangayOptions = useMemo(
-    () => Array.from(new Set(tabReports.map((incident) => incident.barangay))).sort((a, b) => a.localeCompare(b)),
-    [tabReports],
-  )
+  // All 33 barangays, even those without reports yet.
+  const barangayOptions = useMemo(() => withAllBarangays(tabReports.map((incident) => incident.barangay)), [tabReports])
 
   const hasActiveFilters =
     Boolean(selectedYear) || typeFilter !== 'all' || barangayFilter !== 'all' || severityFilter !== 'all'
