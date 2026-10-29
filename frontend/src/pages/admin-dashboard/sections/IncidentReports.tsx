@@ -1,10 +1,32 @@
 import { Fragment, useEffect, useMemo, useState } from 'react'
 import { getIncidentReports, type IncidentReport } from '../../../services/incidents'
-import { toTeamName } from '../../../data/teams'
+import { LUCENA_BARANGAYS, toLucenaBarangay } from '../../../data/barangays'
+import { ANALYTICS_TYPES, getIncidentCategoryKey, type AnalyticsTypeKey } from '../../../data/incidentCategories'
+import { TEAM_NAMES, toTeamName } from '../../../data/teams'
 
 type ReportStatus = 'pending' | 'approved'
 type DateGrouping = 'weekly' | 'monthly' | 'yearly'
-type TeamFilter = 'All' | 'Alpha' | 'Charlie' | 'Bravo'
+type VictimFilter = 'all' | 'with' | 'without'
+type SortOrder = 'newest' | 'oldest'
+
+type Filters = {
+  search: string
+  type: AnalyticsTypeKey | 'all'
+  barangay: string
+  team: string
+  victims: VictimFilter
+  from: string
+  to: string
+}
+
+const EMPTY_FILTERS: Filters = { search: '', type: 'all', barangay: 'all', team: 'all', victims: 'all', from: '', to: '' }
+
+const PAGE_SIZE_OPTIONS = [10, 25, 50]
+
+// Same look as the filters on the other admin pages (Accomplishment, Scoring, Mapping).
+const filterLabelClass = 'text-[11px] font-semibold uppercase tracking-[0.13em] text-slate-500'
+const filterControlClass =
+  'mt-1.5 block w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-800 outline-none transition hover:border-slate-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-100'
 
 function normalizeStatus(status?: string): ReportStatus {
   const value = String(status || '').trim().toLowerCase()
@@ -34,25 +56,12 @@ function getResponderTeam(report: IncidentReport): string {
   return toTeamName(report.responderTeam || report.responder_team) || 'Responder Team'
 }
 
-function getResponderTeamKey(report: IncidentReport): TeamFilter | 'Unknown' {
-  const raw = String(getResponderTeam(report)).trim().toLowerCase()
-
-  if (raw.includes('alpha')) return 'Alpha'
-  if (raw.includes('bravo')) return 'Bravo'
-  if (raw.includes('charlie')) return 'Charlie'
-  if (raw.includes('rescue') && raw.includes('team')) return 'Bravo'
-  if (raw.includes('medical') || raw.includes('unit')) return 'Charlie'
-  if (raw.includes('squad')) return 'Alpha'
-
-  return 'Unknown'
-}
-
+/** One of the 33 barangays, or the location when it names none. */
 function getReportBarangay(report: IncidentReport): string {
   return (
-    report.location ||
-    (report as any).location_name ||
-    (report as any).barangay ||
-    'Unknown Barangay'
+    toLucenaBarangay(report.barangayName) ??
+    toLucenaBarangay(report.location) ??
+    (report.location || (report as { location_name?: string }).location_name || 'Unknown Barangay')
   )
 }
 
@@ -81,6 +90,13 @@ function getReportCreatedAt(report: IncidentReport): Date | null {
 
   const parsed = new Date(value)
   return Number.isNaN(parsed.getTime()) ? null : parsed
+}
+
+/** "2026-10-29" from a date in local time, to compare with the date inputs. */
+function toDateInputValue(date: Date): string {
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${date.getFullYear()}-${month}-${day}`
 }
 
 function getGroupingLabel(report: IncidentReport, grouping: DateGrouping): string {
@@ -129,13 +145,40 @@ function compareResponderTeams(left: string, right: string): number {
   return leftRank - rightRank || normalizedLeft.localeCompare(normalizedRight, undefined, { sensitivity: 'base' })
 }
 
+/** Page numbers to show, with null for a gap: 1 … 4 5 6 … 15. */
+function getPageNumbers(current: number, total: number): Array<number | null> {
+  if (total <= 7) return Array.from({ length: total }, (_, index) => index + 1)
+
+  const pages = new Set([1, total, current - 1, current, current + 1])
+  const sorted = Array.from(pages).filter((page) => page >= 1 && page <= total).sort((a, b) => a - b)
+  const result: Array<number | null> = []
+  sorted.forEach((page, index) => {
+    if (index > 0 && page - sorted[index - 1] > 1) result.push(null)
+    result.push(page)
+  })
+  return result
+}
+
 export function IncidentReports() {
   const [reports, setReports] = useState<IncidentReport[]>([])
-  const [searchQuery, setSearchQuery] = useState('')
   const [isLoading, setIsLoading] = useState(true)
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [dateGrouping, setDateGrouping] = useState<DateGrouping>('weekly')
-  const [teamFilter, setTeamFilter] = useState<TeamFilter>('All')
+  const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS)
+  const [sortOrder, setSortOrder] = useState<SortOrder>('newest')
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(PAGE_SIZE_OPTIONS[0])
+
+  // Any filter change starts again at page 1.
+  function updateFilter<Key extends keyof Filters>(key: Key, value: Filters[Key]): void {
+    setFilters((current) => ({ ...current, [key]: value }))
+    setPage(1)
+  }
+
+  function clearFilters(): void {
+    setFilters(EMPTY_FILTERS)
+    setPage(1)
+  }
 
   useEffect(() => {
     let isMounted = true
@@ -172,52 +215,94 @@ export function IncidentReports() {
     }
   }, [])
 
+  // Incident types in the same order and with the same names as the other admin pages.
+  const typeOptions = useMemo(() => {
+    const present = new Set(reports.map((report) => getIncidentCategoryKey(report)))
+    return ANALYTICS_TYPES.filter((type) => type.key !== 'earthquake' && (type.key !== 'other' || present.has('other')))
+  }, [reports])
+
+  // Alpha, Bravo, Charlie, then any other team name found in the reports.
+  const teamOptions = useMemo(() => {
+    const others = Array.from(new Set(reports.map(getResponderTeam)))
+      .filter((team) => !(TEAM_NAMES as readonly string[]).includes(team))
+      .sort((a, b) => a.localeCompare(b))
+    return [...TEAM_NAMES, ...others]
+  }, [reports])
+
   const filteredReports = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase()
+    const query = filters.search.trim().toLowerCase()
 
-    if (!query) return reports
+    const matches = reports.filter((report) => {
+      if (filters.type !== 'all' && getIncidentCategoryKey(report) !== filters.type) return false
+      if (filters.barangay !== 'all' && getReportBarangay(report) !== filters.barangay) return false
+      if (filters.team !== 'all' && getResponderTeam(report) !== filters.team) return false
 
-    return reports.filter((report) =>
-      [
+      const victims = getVictimCount(report)
+      if (filters.victims === 'with' && victims === 0) return false
+      if (filters.victims === 'without' && victims > 0) return false
+
+      if (filters.from || filters.to) {
+        const date = getReportCreatedAt(report)
+        if (!date) return false
+        const day = toDateInputValue(date)
+        if (filters.from && day < filters.from) return false
+        if (filters.to && day > filters.to) return false
+      }
+
+      if (!query) return true
+      return [
         getReportCode(report),
         getIncidentType(report),
         report.location,
+        getReportBarangay(report),
         report.description,
         report.actionTaken,
         report.action_taken,
         getResponderTeam(report),
       ]
         .filter(Boolean)
-        .some((value) => String(value).toLowerCase().includes(query)),
-    )
-  }, [reports, searchQuery])
+        .some((value) => String(value).toLowerCase().includes(query))
+    })
 
-  const sortedFilteredReports = useMemo(() => {
-    return [...filteredReports]
-      .filter((report) => {
-        if (teamFilter === 'All') return true
-        return getResponderTeamKey(report) === teamFilter
-      })
-      .sort((left, right) => compareResponderTeams(getResponderTeam(left), getResponderTeam(right)))
-  }, [filteredReports, teamFilter])
-
-  const groupedReports = useMemo(() => {
-    const groups = new Map<string, IncidentReport[]>()
-    const reportsToGroup = [...sortedFilteredReports].sort((left, right) => {
+    const direction = sortOrder === 'newest' ? -1 : 1
+    return matches.sort((left, right) => {
       const leftDate = getReportCreatedAt(left)?.getTime() ?? 0
       const rightDate = getReportCreatedAt(right)?.getTime() ?? 0
-      return rightDate - leftDate
+      return (leftDate - rightDate) * direction
     })
+  }, [reports, filters, sortOrder])
 
-    reportsToGroup.forEach((report) => {
+  const totalPages = Math.max(1, Math.ceil(filteredReports.length / pageSize))
+  const currentPage = Math.min(page, totalPages)
+  const pageStart = (currentPage - 1) * pageSize
+  const pageReports = useMemo(
+    () => filteredReports.slice(pageStart, pageStart + pageSize),
+    [filteredReports, pageStart, pageSize],
+  )
+
+  // Date groups on this page; the count is for all matching reports in that period.
+  const groupedReports = useMemo(() => {
+    const totals = new Map<string, number>()
+    filteredReports.forEach((report) => {
       const label = getGroupingLabel(report, dateGrouping)
-      const bucket = groups.get(label) || []
-      bucket.push(report)
-      groups.set(label, bucket)
+      totals.set(label, (totals.get(label) || 0) + 1)
     })
 
-    return Array.from(groups.entries()).map(([group, items]) => ({ group, items }))
-  }, [sortedFilteredReports, dateGrouping])
+    const groups = new Map<string, IncidentReport[]>()
+    pageReports.forEach((report) => {
+      const label = getGroupingLabel(report, dateGrouping)
+      groups.set(label, [...(groups.get(label) || []), report])
+    })
+
+    return Array.from(groups.entries()).map(([group, items]) => ({ group, items, total: totals.get(group) || items.length }))
+  }, [filteredReports, pageReports, dateGrouping])
+
+  const activeFilterCount = (Object.keys(EMPTY_FILTERS) as Array<keyof Filters>).filter(
+    (key) => filters[key] !== EMPTY_FILTERS[key],
+  ).length
+
+  const pageIds = pageReports.map((report) => getReportCode(report))
+  const isPageSelected = pageIds.length > 0 && pageIds.every((id) => selectedIds.includes(id))
 
   const toggleSelect = (reportId: string) => {
     setSelectedIds((prev) =>
@@ -225,14 +310,17 @@ export function IncidentReports() {
     )
   }
 
-  const toggleSelectAll = () => {
-    const allReportIds = sortedFilteredReports.map((r) => getReportCode(r))
-
-    if (allReportIds.every((id) => selectedIds.includes(id))) {
-      setSelectedIds((prev) => prev.filter((id) => !allReportIds.includes(id)))
+  // The header checkbox selects the reports on this page.
+  const toggleSelectPage = () => {
+    if (isPageSelected) {
+      setSelectedIds((prev) => prev.filter((id) => !pageIds.includes(id)))
     } else {
-      setSelectedIds((prev) => Array.from(new Set([...prev, ...allReportIds])))
+      setSelectedIds((prev) => Array.from(new Set([...prev, ...pageIds])))
     }
+  }
+
+  const selectAllMatching = () => {
+    setSelectedIds((prev) => Array.from(new Set([...prev, ...filteredReports.map((report) => getReportCode(report))])))
   }
 
   const handlePrintReports = () => {
@@ -241,7 +329,8 @@ export function IncidentReports() {
       return
     }
 
-    const selectedReports = sortedFilteredReports.filter((r) => selectedIds.includes(getReportCode(r)))
+    // Selected reports from every page, not only the one on screen.
+    const selectedReports = reports.filter((r) => selectedIds.includes(getReportCode(r)))
     const sortedSelectedReports = [...selectedReports].sort((left, right) =>
       compareResponderTeams(getResponderTeam(left), getResponderTeam(right)),
     )
@@ -271,12 +360,12 @@ export function IncidentReports() {
       return acc
     }, {})
 
-    const sortedBarangays = Object.keys(printRows).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+    const sortedBarangays = Object.keys(printRows).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }))
     const grandTotal = sortedBarangays.reduce((sum, barangay) => {
       return sum + printTypes.reduce((rowSum, type) => rowSum + (printRows[barangay][type] || 0), 0)
     }, 0)
 
-    let htmlContent = `
+    const htmlContent = `
       <html>
         <head>
           <title>Summary of Incidents per Barangay</title>
@@ -372,7 +461,7 @@ export function IncidentReports() {
           <div class="page-header">
             <div class="block">
               <div class="label">Team</div>
-              <div class="value">${teamFilter}</div>
+              <div class="value">${filters.team === 'all' ? 'All Teams' : filters.team}</div>
             </div>
             <div class="block">
               <div class="label">Date</div>
@@ -430,7 +519,7 @@ export function IncidentReports() {
   return (
     <section className="px-4 pb-10 pt-2 sm:px-6">
       <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_18px_38px_rgba(15,23,42,0.08)]">
-        <div className="flex flex-col gap-5 border-b border-slate-200 pb-5 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex flex-col gap-4 border-b border-slate-200 pb-5 sm:flex-row sm:items-end sm:justify-between">
           <div className="max-w-xl">
             <p className="text-[12px] font-semibold uppercase tracking-[0.18em] text-gray-500">
               Approved Incidents
@@ -443,49 +532,18 @@ export function IncidentReports() {
             </p>
           </div>
 
-          <div className="flex flex-col gap-4 lg:flex-1 lg:px-6">
-            <div className="mx-auto w-full max-w-lg rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 lg:px-5">
-              <input
-                className="min-w-0 w-full bg-transparent text-sm text-slate-900 outline-none placeholder:text-slate-400"
-                onChange={(event) => setSearchQuery(event.target.value)}
-                placeholder="Search approved incidents..."
-                type="text"
-                value={searchQuery}
-              />
-            </div>
-          </div>
-
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
-            <label className="flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-xs uppercase tracking-[0.14em] text-slate-500">
-              <span>Group by</span>
-              <select
-                className="rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-sky-400"
-                onChange={(event) => setDateGrouping(event.target.value as DateGrouping)}
-                value={dateGrouping}
-              >
-                <option value="weekly">Weekly</option>
-                <option value="monthly">Monthly</option>
-                <option value="yearly">Yearly</option>
-              </select>
-            </label>
-            <label className="flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-xs uppercase tracking-[0.14em] text-slate-500">
-              <span>Team</span>
-              <select
-                className="rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-sky-400"
-                onChange={(event) => setTeamFilter(event.target.value as TeamFilter)}
-                value={teamFilter}
-              >
-                <option value="All">All Teams</option>
-                <option value="Alpha">Alpha</option>
-                <option value="Charlie">Charlie</option>
-                <option value="Bravo">Bravo</option>
-              </select>
-            </label>
-          </div>
-
           {selectedIds.length > 0 ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-sm font-semibold text-slate-600">{selectedIds.length} selected</span>
               <button
-                className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition-all hover:bg-blue-700 active:scale-95 whitespace-nowrap"
+                className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
+                onClick={() => setSelectedIds([])}
+                type="button"
+              >
+                Clear selection
+              </button>
+              <button
+                className="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition-all hover:bg-blue-700 active:scale-95"
                 onClick={handlePrintReports}
                 type="button"
               >
@@ -494,8 +552,8 @@ export function IncidentReports() {
                 </svg>
                 Print ({selectedIds.length})
               </button>
-            ) : null}
-          </div>
+            </div>
+          ) : null}
         </div>
 
         <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -520,31 +578,143 @@ export function IncidentReports() {
               Fire
             </p>
             <p className="mt-2 text-3xl font-black text-orange-700">
-              {reports.filter((item) => getIncidentType(item).toLowerCase().includes('fire')).length}
+              {reports.filter((item) => getIncidentCategoryKey(item) === 'fire').length}
             </p>
           </div>
 
           <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
             <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
-              Search Result
+              Matching Filters
             </p>
-            <p className="mt-2 text-3xl font-black text-slate-900">{sortedFilteredReports.length}</p>
+            <p className="mt-2 text-3xl font-black text-slate-900">{filteredReports.length}</p>
           </div>
         </div>
 
-        <div className="mt-6 overflow-hidden rounded-2xl border border-slate-200">
+        <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+          <div className="flex flex-col gap-3 md:flex-row md:items-end">
+            <label className="block flex-1">
+              <span className={filterLabelClass}>Search</span>
+              <input
+                className={`${filterControlClass} placeholder:font-normal placeholder:text-slate-400`}
+                onChange={(event) => updateFilter('search', event.target.value)}
+                placeholder="Search report code, type, location, team..."
+                type="search"
+                value={filters.search}
+              />
+            </label>
+            <label className="block md:w-44">
+              <span className={filterLabelClass}>Sort</span>
+              <select className={filterControlClass} onChange={(event) => { setSortOrder(event.target.value as SortOrder); setPage(1) }} value={sortOrder}>
+                <option value="newest">Newest first</option>
+                <option value="oldest">Oldest first</option>
+              </select>
+            </label>
+            <label className="block md:w-44">
+              <span className={filterLabelClass}>Group by</span>
+              <select className={filterControlClass} onChange={(event) => setDateGrouping(event.target.value as DateGrouping)} value={dateGrouping}>
+                <option value="weekly">Week</option>
+                <option value="monthly">Month</option>
+                <option value="yearly">Year</option>
+              </select>
+            </label>
+          </div>
+
+          <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+            <label className="block">
+              <span className={filterLabelClass}>Incident type</span>
+              <select className={filterControlClass} onChange={(event) => updateFilter('type', event.target.value as Filters['type'])} value={filters.type}>
+                <option value="all">All types</option>
+                {typeOptions.map((type) => (
+                  <option key={type.key} value={type.key}>{type.label}</option>
+                ))}
+              </select>
+            </label>
+            <label className="block">
+              <span className={filterLabelClass}>Barangay</span>
+              <select className={filterControlClass} onChange={(event) => updateFilter('barangay', event.target.value)} value={filters.barangay}>
+                <option value="all">All barangays</option>
+                {LUCENA_BARANGAYS.map((barangay) => (
+                  <option key={barangay} value={barangay}>{barangay}</option>
+                ))}
+              </select>
+            </label>
+            <label className="block">
+              <span className={filterLabelClass}>Team</span>
+              <select className={filterControlClass} onChange={(event) => updateFilter('team', event.target.value)} value={filters.team}>
+                <option value="all">All teams</option>
+                {teamOptions.map((team) => (
+                  <option key={team} value={team}>{team}</option>
+                ))}
+              </select>
+            </label>
+            <label className="block">
+              <span className={filterLabelClass}>Victims</span>
+              <select className={filterControlClass} onChange={(event) => updateFilter('victims', event.target.value as VictimFilter)} value={filters.victims}>
+                <option value="all">All reports</option>
+                <option value="with">With victims</option>
+                <option value="without">No victims</option>
+              </select>
+            </label>
+            <label className="block">
+              <span className={filterLabelClass}>From</span>
+              <input
+                className={filterControlClass}
+                max={filters.to || undefined}
+                onChange={(event) => updateFilter('from', event.target.value)}
+                type="date"
+                value={filters.from}
+              />
+            </label>
+            <label className="block">
+              <span className={filterLabelClass}>To</span>
+              <input
+                className={filterControlClass}
+                min={filters.from || undefined}
+                onChange={(event) => updateFilter('to', event.target.value)}
+                type="date"
+                value={filters.to}
+              />
+            </label>
+          </div>
+
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-sm">
+            <p className="text-slate-500">
+              {activeFilterCount > 0
+                ? `${filteredReports.length} of ${reports.length} reports match ${activeFilterCount} filter${activeFilterCount === 1 ? '' : 's'}.`
+                : `Showing all ${reports.length} approved reports.`}
+            </p>
+            {activeFilterCount > 0 ? (
+              <button
+                className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50"
+                onClick={clearFilters}
+                type="button"
+              >
+                Clear filters
+              </button>
+            ) : null}
+          </div>
+        </div>
+
+        {isPageSelected && selectedIds.length < filteredReports.length ? (
+          <div className="mt-4 rounded-xl border border-blue-100 bg-blue-50 px-4 py-2.5 text-sm text-blue-800">
+            All {pageIds.length} reports on this page are selected.{' '}
+            <button className="font-bold underline" onClick={selectAllMatching} type="button">
+              Select all {filteredReports.length} matching reports
+            </button>
+          </div>
+        ) : null}
+
+        <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200">
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-slate-200 text-left">
               <thead className="bg-slate-50">
                 <tr>
                   <th className="w-12 px-4 py-3">
                     <input
-                      checked={
-                        sortedFilteredReports.length > 0 &&
-                        sortedFilteredReports.every((r) => selectedIds.includes(getReportCode(r)))
-                      }
+                      aria-label="Select the reports on this page"
+                      checked={isPageSelected}
                       className="h-4 w-4 rounded accent-blue-600 transition"
-                      onChange={toggleSelectAll}
+                      onChange={toggleSelectPage}
                       type="checkbox"
                     />
                   </th>
@@ -579,18 +749,18 @@ export function IncidentReports() {
                       Loading approved incidents...
                     </td>
                   </tr>
-                ) : sortedFilteredReports.length === 0 ? (
+                ) : filteredReports.length === 0 ? (
                   <tr>
                     <td className="px-4 py-8 text-center text-sm text-slate-500" colSpan={8}>
-                      No approved incidents found.
+                      {activeFilterCount > 0 ? 'No approved incidents match these filters.' : 'No approved incidents found.'}
                     </td>
                   </tr>
                 ) : (
-                  groupedReports.map(({ group, items }) => (
+                  groupedReports.map(({ group, items, total }) => (
                     <Fragment key={group}>
                       <tr className="bg-slate-100">
                         <td className="px-4 py-3 text-sm font-semibold uppercase tracking-[0.12em] text-slate-700" colSpan={8}>
-                          {group} ({items.length})
+                          {group} ({total})
                         </td>
                       </tr>
                       {items.map((report) => {
@@ -645,7 +815,72 @@ export function IncidentReports() {
               </tbody>
             </table>
           </div>
+
+          {filteredReports.length > 0 ? (
+            <nav
+              aria-label="Incident report pages"
+              className="flex flex-col gap-3 border-t border-slate-200 bg-slate-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+            >
+              <div className="flex flex-wrap items-center gap-3 text-sm text-slate-600">
+                <span>
+                  Showing <strong className="text-slate-900">{pageStart + 1}–{pageStart + pageReports.length}</strong> of{' '}
+                  <strong className="text-slate-900">{filteredReports.length}</strong>
+                </span>
+                <label className="flex items-center gap-2">
+                  <span className="text-xs font-semibold text-slate-500">Rows per page</span>
+                  <select
+                    className="rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-sm font-medium text-slate-800 outline-none transition hover:border-slate-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                    onChange={(event) => { setPageSize(Number(event.target.value)); setPage(1) }}
+                    value={pageSize}
+                  >
+                    {PAGE_SIZE_OPTIONS.map((size) => (
+                      <option key={size} value={size}>{size}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-1">
+                <button
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+                  disabled={currentPage === 1}
+                  onClick={() => setPage(currentPage - 1)}
+                  type="button"
+                >
+                  Previous
+                </button>
+                {getPageNumbers(currentPage, totalPages).map((number, index) =>
+                  number === null ? (
+                    <span className="px-1.5 text-sm text-slate-400" key={`gap-${index}`}>…</span>
+                  ) : (
+                    <button
+                      aria-current={number === currentPage ? 'page' : undefined}
+                      className={`min-w-9 rounded-lg px-2.5 py-1.5 text-sm font-semibold transition ${
+                        number === currentPage
+                          ? 'bg-blue-600 text-white shadow-sm'
+                          : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-100'
+                      }`}
+                      key={number}
+                      onClick={() => setPage(number)}
+                      type="button"
+                    >
+                      {number}
+                    </button>
+                  ),
+                )}
+                <button
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+                  disabled={currentPage === totalPages}
+                  onClick={() => setPage(currentPage + 1)}
+                  type="button"
+                >
+                  Next
+                </button>
+              </div>
+            </nav>
+          ) : null}
         </div>
+      </div>
     </section>
   )
 }
