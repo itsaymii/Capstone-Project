@@ -23,6 +23,7 @@ import {
   fetchPhilippinesFaultLines,
   toHeatPoints,
 } from '../../services/earthquakes'
+import { toTeamName } from '../../data/teams'
 
 const lucenaBounds: LatLngBoundsExpression = [
   [13.895, 121.575],
@@ -222,7 +223,7 @@ function mapIncidentReportToMapIncident(report: any): IncidentItem {
     code,
     location,
     severity: victimCount >= 5 ? 'Critical' : victimCount >= 3 ? 'High' : victimCount >= 1 ? 'Moderate' : 'Low',
-    responseTeam: report.responderTeam || report.responder_team || 'Responder Team',
+    responseTeam: toTeamName(report.responderTeam || report.responder_team) || 'Responder Team',
     description: report.description || report.actionTaken || report.action_taken || 'No description provided.',
     coordinates,
   }

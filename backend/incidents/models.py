@@ -3,6 +3,7 @@ from django.db import models, transaction
 from django.conf import settings
 from django.utils import timezone
 from django.db.models.functions import Length
+from .teams import team_name
 
 
 
@@ -293,6 +294,8 @@ class IncidentReport(models.Model):
         ordering = ['-created_at']
 
     def save(self, *args, **kwargs):
+        # Teams are "Alpha", "Bravo", "Charlie", never "Team Alpha" (the team is the account's name).
+        self.responder_team = team_name(self.responder_team)
         with transaction.atomic():
             if not self.incident_code:
                 year = timezone.now().year

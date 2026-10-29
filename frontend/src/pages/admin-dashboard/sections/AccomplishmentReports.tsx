@@ -5,6 +5,7 @@ import {
   getIncidentCategoryKey,
   getIncidentCategoryMeta,
 } from '../../../data/incidentCategories'
+import { toTeamName } from '../../../data/teams'
 
 // Admin view of the accomplishment reports responders compile from their approved incident reports.
 
@@ -86,7 +87,7 @@ function getBarangay(report: IncludedReport): string {
 
 function summarize(item: AccomplishmentItem): Summary {
   const reports = item.reports ?? []
-  const teams = Array.from(new Set(reports.map((report) => clean(report.responderTeam)).filter(Boolean)))
+  const teams = Array.from(new Set(reports.map((report) => toTeamName(clean(report.responderTeam))).filter(Boolean)))
   const compiler = clean(item.compiledByName) || clean(item.compiledBy)
   // Old compilations may have no linked reports; the account that compiled them is then the team.
   const teamLabel = teams.length > 0 ? teams.join(', ') : compiler || NO_TEAM

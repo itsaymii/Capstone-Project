@@ -27,6 +27,7 @@ import {
   fetchPhilippinesFaultLines,
   toHeatPoints,
 } from '../services/earthquakes'
+import { toTeamName } from '../data/teams'
 
 type IncidentMapFilter = HazardType
 type ReportReviewStatus = 'pending' | 'approved'
@@ -216,7 +217,7 @@ function getReportCode(report: IncidentReport): string {
 }
 
 function getReportResponderTeam(report: IncidentReport): string {
-  return report.responderTeam || report.responder_team || 'Responder Team'
+  return toTeamName(report.responderTeam || report.responder_team) || 'Responder Team'
 }
 
 function getReportTime(report: IncidentReport): string {

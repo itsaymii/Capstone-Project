@@ -5,6 +5,7 @@ import { MobileNavBar } from '../../components/MobileNavBar'
 import { getCurrentUserProfile } from '../../services/auth'
 import { getAccomplishmentReports } from '../../services/incidents'
 import { getIncidentCategoryKey, getIncidentCategoryMeta } from '../../data/incidentCategories'
+import { toTeamName } from '../../data/teams'
 
 interface IndividualReport {
   id: string
@@ -36,9 +37,10 @@ const normalizeName = (value?: string | null) => String(value || '').trim().toLo
 function isOwnCompiledReport(report: CompiledReport): boolean {
   const profile = getCurrentUserProfile()
   const username = normalizeName(profile?.username)
-  const team = normalizeName(profile?.fullName)
+  // Reports store the team without "Team" (e.g. "Alpha" for the account "Team Alpha").
+  const team = normalizeName(toTeamName(profile?.fullName))
   if (username && normalizeName(report.compiledBy) === username) return true
-  return Boolean(team) && (report.reports || []).some((item) => normalizeName(item.responderTeam) === team)
+  return Boolean(team) && (report.reports || []).some((item) => normalizeName(toTeamName(item.responderTeam)) === team)
 }
 
 export const ResponderReportsPage: FC = () => {

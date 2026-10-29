@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useState } from 'react'
 import { getIncidentReports, type IncidentReport } from '../../../services/incidents'
+import { toTeamName } from '../../../data/teams'
 
 type ReportStatus = 'pending' | 'approved'
 type DateGrouping = 'weekly' | 'monthly' | 'yearly'
@@ -30,7 +31,7 @@ function getIncidentType(report: IncidentReport): string {
 }
 
 function getResponderTeam(report: IncidentReport): string {
-  return report.responderTeam || report.responder_team || 'Responder Team'
+  return toTeamName(report.responderTeam || report.responder_team) || 'Responder Team'
 }
 
 function getResponderTeamKey(report: IncidentReport): TeamFilter | 'Unknown' {

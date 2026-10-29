@@ -34,6 +34,7 @@ import {
   sortIncidentCategoryLabels,
 } from '../../data/incidentCategories'
 import { toLucenaBarangay, withAllBarangays } from '../../data/barangays'
+import { toTeamName } from '../../data/teams'
 
 type WorkspaceSection =
   | 'overview'
@@ -1366,7 +1367,7 @@ export function AdminDashboardPage() {
         linkedIncidentStatus: linkedIncident?.backendStatus || '',
         location: getDashboardLocation(report),
         time: getRecordDate(report).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }),
-        responseTeam: report.responderTeam || report.responder_team || report.responder_username || report.responder || '-',
+        responseTeam: toTeamName(report.responderTeam || report.responder_team) || report.responder_username || report.responder || '-',
         description: getDashboardDescription(report) || '-',
         coordinates,
       }
