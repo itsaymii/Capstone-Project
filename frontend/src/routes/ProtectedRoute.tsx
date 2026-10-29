@@ -39,3 +39,16 @@ export function ProtectedRoute({ element, redirectTo = '/login', requireDashboar
 
   return <>{element}</>
 }
+
+/**
+ * Pages for citizens and the public. A logged-in admin only uses the admin dashboard,
+ * so they are sent back there instead of seeing the citizen side.
+ */
+export function CitizenRoute({ element }: { element: ReactNode }) {
+  const profile = isAuthenticated() ? getCurrentUserProfile() : null
+  if (profile?.role === 'admin' || profile?.isAdmin) {
+    return <Navigate replace to="/admin-dashboard" />
+  }
+
+  return <>{element}</>
+}
