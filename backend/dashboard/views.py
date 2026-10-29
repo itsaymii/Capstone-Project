@@ -33,16 +33,17 @@ except Exception:  # pragma: no cover - optional dependency guard
 
 
 class HasDashboardAdminAccess(BasePermission):
+    """
+    Admin accounts only. The admin dashboard (accounts, simulation management, summary) is
+    admin-only in the frontend, and staff (responder) accounts must not be able to call it
+    directly either, or they could promote themselves or delete other accounts.
+    """
     def has_permission(self, request, view) -> bool:
         user = getattr(request, 'user', None)
         return bool(
             user
             and user.is_authenticated
-            and (
-                user_has_dashboard_access(user)
-                or getattr(user, 'is_staff', False)
-                or getattr(user, 'is_superuser', False)
-            )
+            and get_user_role(user) == AccountProfile.ROLE_ADMIN
         )
 
 

@@ -1,5 +1,5 @@
 from rest_framework import permissions
-from .models import AccountProfile
+from .models import AccountProfile, get_user_role, user_has_dashboard_access
 
 
 class IsAdminOrReadOnly(permissions.BasePermission):
@@ -51,3 +51,32 @@ class IsAdminOrStaff(permissions.BasePermission):
             return profile.role in [AccountProfile.ROLE_ADMIN, AccountProfile.ROLE_STAFF]
         except:
             return False
+
+class IsDashboardUser(permissions.BasePermission):
+    """Logged-in admin or staff (responder) accounts only, for reads and writes."""
+    def has_permission(self, request, view):
+        user = request.user
+        return bool(user and user.is_authenticated and user_has_dashboard_access(user))
+
+
+class IsDashboardAdmin(permissions.BasePermission):
+    """Logged-in admin accounts only. Staff (responders) are not admins."""
+    def has_permission(self, request, view):
+        user = request.user
+        return bool(user and user.is_authenticated and get_user_role(user) == AccountProfile.ROLE_ADMIN)
+
+
+class IsDashboardUserCreateAdminChange(permissions.BasePermission):
+    """
+    Admin and staff may list, read and create. Only admins may edit or delete,
+    which is also how reports get approved.
+    """
+    def has_permission(self, request, view):
+        user = request.user
+        if not (user and user.is_authenticated and user_has_dashboard_access(user)):
+            return False
+
+        if request.method in permissions.SAFE_METHODS or request.method == 'POST':
+            return True
+
+        return get_user_role(user) == AccountProfile.ROLE_ADMIN

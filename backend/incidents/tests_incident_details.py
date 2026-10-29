@@ -162,6 +162,11 @@ if DjangoTestCase is not None:
             self.client = APIClient()
             responder = User.objects.create_user('responder_test', 'responder@test.local', 'Pass12345', is_staff=True)
             self.client.force_authenticate(responder)
+            # Responders file reports; only an admin may approve them.
+            self.admin_client = APIClient()
+            self.admin_client.force_authenticate(
+                User.objects.create_superuser('admin_test', 'admin@test.local', 'Pass12345')
+            )
 
         def report(self, incident_type, details=None, victims=None):
             payload = {
@@ -181,7 +186,7 @@ if DjangoTestCase is not None:
             return self.client.post(REPORTS_URL, payload, format='json')
 
         def approve(self, report_id):
-            return self.client.patch(
+            return self.admin_client.patch(
                 f'{REPORTS_URL}{report_id}/',
                 {'status': 'approved', 'latitude': 13.9339, 'longitude': 121.6172},
                 format='json',

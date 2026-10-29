@@ -1,4 +1,4 @@
-import random
+import secrets
 from datetime import timedelta
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.models import User
@@ -14,9 +14,10 @@ from django.contrib.auth.hashers import check_password, identify_hasher, make_pa
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.csrf import csrf_exempt
 from rest_framework import status
-from rest_framework.decorators import api_view, authentication_classes, permission_classes
+from rest_framework.decorators import api_view, authentication_classes, permission_classes, throttle_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.throttling import AnonRateThrottle
 from sms.utils import send_otp_sms 
 
 from .models import (
@@ -29,9 +30,20 @@ from locations.models import Barangay
 
 
 OTP_EXPIRY_MINUTES = 3
+OTP_MAX_FAILED_ATTEMPTS = 5
 OTP_RESEND_COOLDOWN_SECONDS = 180
 OTP_RECENT_LOGIN_BYPASS_MINUTES = 5
 PENDING_RESIDENCY_SESSION_SECONDS = 24 * 60 * 60
+
+
+class LoginRateThrottle(AnonRateThrottle):
+	"""Limits password attempts per IP address (rate in settings: 'login')."""
+	scope = 'login'
+
+
+class OtpRateThrottle(AnonRateThrottle):
+	"""Limits OTP requests and checks per IP address (rate in settings: 'otp')."""
+	scope = 'otp'
 
 
 def _coerce_bool(value, default: bool = False) -> bool:
@@ -110,7 +122,7 @@ def _set_pending_residency_session_expiry(request, user: User) -> int | None:
 
 def _generate_otp_code() -> str:
 	"""Generate a six-digit OTP code."""
-	return ''.join(str(random.randint(0, 9)) for _ in range(6))
+	return ''.join(str(secrets.randbelow(10)) for _ in range(6))
 
 
 def _normalize_philippine_phone_number(phone_number: str) -> str:
@@ -195,6 +207,23 @@ def _get_valid_otp(email: str, purpose: str) -> OneTimePassword | None:
 	)
 
 
+def _otp_matches(otp_record: OneTimePassword | None, code: str) -> bool:
+	"""Check a submitted code. After too many wrong codes the OTP is used up and a new one is needed."""
+	if not otp_record:
+		return False
+
+	if check_password(code, otp_record.code_hash):
+		return True
+
+	otp_record.failed_attempts += 1
+	update_fields = ['failed_attempts']
+	if otp_record.failed_attempts >= OTP_MAX_FAILED_ATTEMPTS:
+		otp_record.is_used = True
+		update_fields.append('is_used')
+	otp_record.save(update_fields=update_fields)
+	return False
+
+
 def _get_recent_otp_request(email: str, purpose: str) -> OneTimePassword | None:
 	# """Return a recently issued OTP to enforce resend cooldown rules."""
 	"""Return a recently issued OTP to enforce resend cooldown rules."""
@@ -276,6 +305,7 @@ def issue_csrf_cookie(request):
 @csrf_exempt
 @authentication_classes([])
 @permission_classes([AllowAny])
+@throttle_classes([OtpRateThrottle])
 def register_user(request):
 	# """Start registration by validating input and emailing a verification OTP."""
 	"""Start registration by validating input and emailing a verification OTP."""
@@ -409,6 +439,7 @@ def register_user(request):
 @csrf_exempt
 @authentication_classes([])
 @permission_classes([AllowAny])
+@throttle_classes([OtpRateThrottle])
 def verify_register_otp(request):
 	# """Complete registration after validating the submitted OTP."""
 	"""Complete registration after validating the submitted OTP."""
@@ -419,7 +450,7 @@ def verify_register_otp(request):
 		return Response({'error': 'Email and OTP are required.'}, status=status.HTTP_400_BAD_REQUEST)
 
 	otp_record = _get_valid_otp(email=email, purpose=OneTimePassword.PURPOSE_REGISTER)
-	if not otp_record or not check_password(otp, otp_record.code_hash):
+	if not _otp_matches(otp_record, otp):
 		return Response({'error': 'Invalid or expired OTP.'}, status=status.HTTP_400_BAD_REQUEST)
 
 	if User.objects.filter(email__iexact=email).exists():
@@ -529,6 +560,7 @@ def current_user_profile(request):
 @csrf_exempt
 @authentication_classes([])
 @permission_classes([AllowAny])
+@throttle_classes([LoginRateThrottle])
 def login_user(request):
 	# """Authenticate a user and trigger OTP verification when policy requires it."""
 	"""Authenticate a user and trigger OTP verification when policy requires it."""
@@ -658,6 +690,7 @@ def login_user(request):
 @csrf_exempt
 @authentication_classes([])
 @permission_classes([AllowAny])
+@throttle_classes([OtpRateThrottle])
 def verify_login_otp(request):
 
 	# """Finish the login flow after validating the one-time password."""
@@ -669,7 +702,7 @@ def verify_login_otp(request):
 		return Response({'error': 'Email and OTP are required.'}, status=status.HTTP_400_BAD_REQUEST)
 
 	otp_record = _get_valid_otp(email=email, purpose=OneTimePassword.PURPOSE_LOGIN)
-	if not otp_record or not check_password(otp, otp_record.code_hash):
+	if not _otp_matches(otp_record, otp):
 		return Response({'error': 'Invalid or expired OTP.'}, status=status.HTTP_400_BAD_REQUEST)
 
 	user_id = otp_record.payload.get('userId')
@@ -711,6 +744,7 @@ def logout_user(request):
 @csrf_exempt
 @authentication_classes([])
 @permission_classes([AllowAny])
+@throttle_classes([OtpRateThrottle])
 def request_password_reset(request):
 	"""Start password reset by sending a reset OTP to the user's email."""
 	email = (request.data.get('email') or '').strip().lower()
@@ -762,6 +796,7 @@ def request_password_reset(request):
 @csrf_exempt
 @authentication_classes([])
 @permission_classes([AllowAny])
+@throttle_classes([OtpRateThrottle])
 def confirm_password_reset(request):
 	"""Reset the account password after a valid reset OTP is confirmed."""
 	email = (request.data.get('email') or '').strip().lower()
@@ -775,7 +810,7 @@ def confirm_password_reset(request):
 		return Response({'error': 'Password must be at least 6 characters.'}, status=status.HTTP_400_BAD_REQUEST)
 
 	otp_record = _get_valid_otp(email=email, purpose=OneTimePassword.PURPOSE_PASSWORD_RESET)
-	if not otp_record or not check_password(otp, otp_record.code_hash):
+	if not _otp_matches(otp_record, otp):
 		return Response({'error': 'Invalid or expired OTP.'}, status=status.HTTP_400_BAD_REQUEST)
 
 	user_id = otp_record.payload.get('userId')

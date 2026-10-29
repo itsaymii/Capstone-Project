@@ -128,6 +128,12 @@ def trigger_sms_on_report_approval(sender, instance, created, **kwargs):
         if ref and SMSLog.objects.filter(message__icontains=ref).exists():
             return
 
+        # Approval creates the matching Incident (incidents/signals.py), and creating a critical
+        # Incident already alerts citizens (trigger_critical_sms_alert above). Only send from here
+        # when that Incident was not created, so citizens do not get the same alert twice.
+        if ref and Incident.objects.filter(reference_code__iexact=ref).exists():
+            return
+
         location = instance.barangay.name if getattr(instance, 'barangay', None) else instance.location or ''
         hazard = (instance.incident_type or 'HAZARD').upper()
 

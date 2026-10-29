@@ -22,6 +22,8 @@ class OneTimePassword(models.Model):
 	payload = models.JSONField(default=dict, blank=True)
 	expires_at = models.DateTimeField()
 	is_used = models.BooleanField(default=False)
+	# Wrong codes entered for this OTP. It stops working after too many.
+	failed_attempts = models.PositiveSmallIntegerField(default=0)
 	created_at = models.DateTimeField(auto_now_add=True)
 
 	class Meta:
