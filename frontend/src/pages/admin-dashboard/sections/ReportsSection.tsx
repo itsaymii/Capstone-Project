@@ -34,9 +34,9 @@ type UnifiedHazardReportRow = {
   responseTeam: string
   magnitude: string
   cause: string
-  impactLevel: string
-  riskLevel: string
-  alertLevel: string
+  severity: string
+  victims: string
+  incidentStatus: string
   sentVia: string
   status: string
   hazardCode: 'FR' | 'EQ' | 'AC'
@@ -67,78 +67,10 @@ type ReportsSectionProps = {
   searchQuery: string
 }
 
-function getEarthquakeSeverity(magnitude: number): HazardIncident['severity'] {
-  if (magnitude >= 5) return 'Critical'
-  if (magnitude >= 4) return 'High'
-  if (magnitude >= 3) return 'Moderate'
-  return 'Low'
-}
-
-function getImpactLevelFromSeverity(severity: HazardIncident['severity']): string {
-  switch (severity) {
-    case 'Critical':
-      return 'Severe'
-    case 'High':
-      return 'Significant'
-    case 'Moderate':
-      return 'Localized'
-    default:
-      return 'Minimal'
-  }
-}
-
-function getRiskLevelFromSeverity(severity: HazardIncident['severity']): string {
-  switch (severity) {
-    case 'Critical':
-      return 'Critical'
-    case 'High':
-      return 'High'
-    case 'Moderate':
-      return 'Medium'
-    default:
-      return 'Low'
-  }
-}
-
-function getAlertLevelFromSeverity(severity: HazardIncident['severity']): string {
-  switch (severity) {
-    case 'Critical':
-      return 'Emergency'
-    case 'High':
-      return 'Warning'
-    case 'Moderate':
-      return 'Watch'
-    default:
-      return 'Advisory'
-  }
-}
-
-function getEarthquakeStatus(event: EarthquakeEvent): string {
-  const hoursSinceEvent = (Date.now() - event.rawTimestamp) / (1000 * 60 * 60)
-
-  // Recency always matters: an old earthquake is no longer under active monitoring,
-  // even if it was strong. Stronger events just stay in each stage a bit longer.
-  if (hoursSinceEvent <= 24 || (event.magnitude >= 4.5 && hoursSinceEvent <= 72)) return 'Active monitoring'
-  if (hoursSinceEvent <= 72 || (event.magnitude >= 3.5 && hoursSinceEvent <= 168)) return 'Field review'
-  return 'Logged'
-}
-
 const hazardTypeLabels: Record<'FR' | 'EQ' | 'AC', string> = {
   FR: 'Fire',
   EQ: 'Earthquake',
   AC: 'Accident',
-}
-
-// Same rules as map_incident_type_to_severity() in backend/incidents/serializers.py,
-// so responder reports get the same severity the backend gives them.
-function getResponderReportSeverity(incidentType: string, victimCount: number): HazardIncident['severity'] {
-  const lower = incidentType.toLowerCase()
-
-  if (victimCount >= 5) return 'Critical'
-  if (victimCount >= 3) return 'High'
-  if (lower.includes('fire') || lower.includes('drowning') || lower.includes('crime')) return 'Moderate'
-  if (victimCount > 0) return 'Moderate'
-  return 'Low'
 }
 
 function getSentViaLabel(createdByRole: string): string {
@@ -213,11 +145,11 @@ const unifiedHazardReportColumns: ReportTableColumn<UnifiedHazardReportRow>[] = 
   { key: 'responseTeam', label: 'Response Team' },
   { key: 'magnitude', label: 'Magnitude' },
   { key: 'cause', label: 'Cause' },
-  { key: 'impactLevel', label: 'Impact Level' },
-  { key: 'riskLevel', label: 'Risk Level' },
-  { key: 'alertLevel', label: 'Alert Level' },
+  { key: 'severity', label: 'Severity' },
+  { key: 'victims', label: 'Victims', align: 'center' },
+  { key: 'incidentStatus', label: 'Incident Status' },
   { key: 'sentVia', label: 'Sent Via' },
-  { key: 'status', label: 'Status' },
+  { key: 'status', label: 'Report Status' },
 ]
 
 export function ReportsSection({
@@ -250,11 +182,10 @@ export function ReportsSection({
       const dateValue = pickText(record, 'createdAt', 'reportedAt', 'created_at')
 
       const incidentType = pickText(record, 'incidentType')
-      const severity = isResponderReport
-        ? getResponderReportSeverity(incidentType, Number(pickText(record, 'victimCount')) || 0)
-        : incident.severity
-
       const rawStatus = pickText(record, 'reportStatus') || incident.status
+      // Status of the incident created on approval (e.g. On-going, Resolved); none while pending.
+      const incidentStatus = isResponderReport ? pickText(record, 'linkedIncidentStatus') : incident.status
+      const victims = pickText(record, 'victimCount', 'victim_count')
 
       return {
         reportId,
@@ -264,9 +195,10 @@ export function ReportsSection({
         responseTeam: incident.responseTeam || '-',
         magnitude: '-',
         cause: (incident.description && incident.description !== '-' ? incident.description : '') || 'Under investigation',
-        impactLevel: getImpactLevelFromSeverity(severity),
-        riskLevel: getRiskLevelFromSeverity(severity),
-        alertLevel: getAlertLevelFromSeverity(severity),
+        // Severity of the linked incident, or the backend's rule while there is none (see the dashboard).
+        severity: incident.severity || '-',
+        victims: victims || (isResponderReport ? '0' : '-'),
+        incidentStatus: toTitleCase(incidentStatus) || '-',
         sentVia: isResponderReport ? getSentViaLabel(pickText(record, 'createdByRole')) : 'Admin',
         status: toTitleCase(rawStatus) || '-',
         hazardCode: incident.code,
@@ -291,7 +223,6 @@ export function ReportsSection({
     return [...nearbyEarthquakes]
       .sort((left, right) => right.event.rawTimestamp - left.event.rawTimestamp)
       .map(({ event, km }) => {
-        const severity = getEarthquakeSeverity(event.magnitude)
         const dateValue = new Date(event.rawTimestamp).toISOString()
 
         return {
@@ -300,14 +231,15 @@ export function ReportsSection({
           reportType: 'Earthquake',
           location: `${event.place} (${Math.round(km)} km from Lucena)`,
           dateTime: formatReportDateTime(dateValue),
-          responseTeam: 'Seismic Assessment Unit',
+          // No DRRMO team or assessment is attached to a feed record: only the measured values.
+          responseTeam: '-',
           magnitude: event.magnitude.toFixed(1),
           cause: 'Tectonic movement detected by USGS feed',
-          impactLevel: getImpactLevelFromSeverity(severity),
-          riskLevel: getRiskLevelFromSeverity(severity),
-          alertLevel: getAlertLevelFromSeverity(severity),
+          severity: '-',
+          victims: '-',
+          incidentStatus: '-',
           sentVia: 'USGS API',
-          status: getEarthquakeStatus(event),
+          status: 'USGS record',
           hazardCode: 'EQ',
           approval: 'feed',
           locationKey: event.place,
@@ -375,9 +307,8 @@ export function ReportsSection({
       row.responseTeam,
       row.magnitude,
       row.cause,
-      row.impactLevel,
-      row.riskLevel,
-      row.alertLevel,
+      row.severity,
+      row.incidentStatus,
       row.sentVia,
       row.status,
     ].some((value) => value.toLowerCase().includes(normalizedDashboardSearchQuery))
