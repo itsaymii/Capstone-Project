@@ -39,6 +39,8 @@ type SessionUser = {
   isAdmin?: boolean
   isStaff?: boolean
   hasDashboardAccess?: boolean
+  // Responder accounts: Alpha, Bravo or Charlie.
+  team?: string | null
   photoUrl?: string
   phoneNumber?: string
   birthDate?: string
@@ -176,6 +178,7 @@ function persistAuthenticatedSession(user: SessionUser, keepLoggedIn: boolean, s
     isAdmin: user.isAdmin,
     isStaff: user.isStaff,
     hasDashboardAccess: user.hasDashboardAccess,
+    team: user.team,
   })
 
   oppositeStore.removeItem(AUTH_KEY)
@@ -278,6 +281,7 @@ export async function verifyRegisterOtpCode(email: string, otp: string): Promise
           isAdmin: response.user.isAdmin,
           isStaff: response.user.isStaff,
           hasDashboardAccess: response.user.hasDashboardAccess,
+          team: response.user.team,
           phoneNumber: response.user.phoneNumber,
           residencyStatus: response.user.residencyStatus,
         },
@@ -320,6 +324,7 @@ export async function saveCurrentUserProfileToServer(payload: { fullName?: strin
           isAdmin: response.user.isAdmin,
           isStaff: response.user.isStaff,
           hasDashboardAccess: response.user.hasDashboardAccess,
+          team: response.user.team,
           phoneNumber: response.user.phoneNumber,
         },
         keepLoggedIn,
@@ -379,6 +384,7 @@ export async function requestLoginOtp(
           isAdmin: response.user.isAdmin,
           isStaff: response.user.isStaff,
           hasDashboardAccess: response.user.hasDashboardAccess,
+          team: response.user.team,
         },
         keepLoggedIn,
       )
@@ -397,6 +403,7 @@ export async function requestLoginOtp(
           isAdmin: response.user.isAdmin,
           isStaff: response.user.isStaff,
           hasDashboardAccess: response.user.hasDashboardAccess,
+          team: response.user.team,
         },
       }
     }

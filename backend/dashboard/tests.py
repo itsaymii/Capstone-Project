@@ -98,13 +98,36 @@ class DashboardViewsTests(TestCase):
                 'email': 'staff@example.com',
                 'password': 'secret123',
                 'role': 'staff',
+                'team': 'Team Bravo',
             },
         )
 
         self.assertEqual(response.status_code, 201)
         payload = response.json()
         self.assertEqual(payload['user']['role'], AccountProfile.ROLE_STAFF)
+        self.assertEqual(payload['user']['team'], 'Bravo')
         self.assertTrue(payload['user']['hasDashboardAccess'])
+
+    def test_staff_accounts_need_a_team(self):
+        admin_user = User.objects.create_user(username='admin-user', password='secret123', is_staff=True)
+        admin_user.account_profile.role = AccountProfile.ROLE_ADMIN
+        admin_user.account_profile.save(update_fields=['role', 'updated_at'])
+        self.client.force_login(admin_user)
+        url = reverse('admin-dashboard-create-account')
+
+        for team in ('', 'Delta', 'Juan Dela Cruz'):
+            response = self.client.post(url, data={
+                'fullName': 'Juan Dela Cruz', 'email': 'juan@example.com', 'password': 'secret123', 'role': 'staff', 'team': team,
+            })
+            self.assertEqual(response.status_code, 400, team)
+        self.assertFalse(User.objects.filter(email='juan@example.com').exists())
+
+        # Admins and citizens have no team, whatever is sent.
+        response = self.client.post(url, data={
+            'fullName': 'Ana', 'email': 'ana@example.com', 'password': 'secret123', 'role': 'citizen', 'team': 'Alpha',
+        })
+        self.assertEqual(response.status_code, 201)
+        self.assertIsNone(response.json()['user']['team'])
 
     def test_list_dashboard_accounts_returns_explicit_roles(self):
         admin_user = User.objects.create_user(username='admin-user', password='secret123', is_staff=True)

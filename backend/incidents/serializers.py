@@ -432,7 +432,8 @@ class IncidentReportSerializer(serializers.ModelSerializer):
     incidentCode = serializers.CharField(source='incident_code', read_only=True)
     timeOccurred = serializers.TimeField(source='time_occurred')
     incidentType = serializers.CharField(source='incident_type')
-    responderTeam = serializers.CharField(source='responder_team', required=False, allow_blank=True)
+    # Always the filing responder's team (see create); a value sent by the form is ignored.
+    responderTeam = serializers.CharField(source='responder_team', read_only=True)
     victimCount = serializers.IntegerField(source='victim_count', required=False)
     actionTaken = serializers.CharField(source='action_taken')
     latitude = serializers.DecimalField(max_digits=9, decimal_places=6, required=True)
@@ -521,13 +522,20 @@ class IncidentReportSerializer(serializers.ModelSerializer):
         victims_data = validated_data.pop('victims', [])
         request = self.context.get('request')
 
-        if request and request.user and request.user.is_authenticated:
-            validated_data['created_by'] = request.user
-            # The responding team is the logged-in account, whatever the form sent.
-            full_name = f"{request.user.first_name} {request.user.last_name}".strip()
-            validated_data['responder_team'] = (full_name or request.user.username)[:100]
-        elif not (validated_data.get('responder_team') or '').strip():
-            raise serializers.ValidationError({'responderTeam': 'Responding team is required.'})
+        from accounts.models import AccountProfile
+
+        user = getattr(request, 'user', None)
+        # The team set on the responder's account (Alpha, Bravo or Charlie), never the account name.
+        team = (
+            AccountProfile.objects.filter(user=user).values_list('team', flat=True).first()
+            if user and user.is_authenticated else ''
+        )
+        if not team:
+            raise serializers.ValidationError({
+                'responderTeam': 'Your account has no team yet. Ask an admin to set your team (Alpha, Bravo or Charlie) in Users.',
+            })
+        validated_data['created_by'] = user
+        validated_data['responder_team'] = team
 
         incoming_victim_count = validated_data.pop('victim_count', None)
         if incoming_victim_count is None:

@@ -36,6 +36,7 @@ class AccessTestCase(TestCase):
         self.responder = User.objects.create_user('resp', 'resp@test.local', 'Pass12345', is_staff=True)
         profile = ensure_account_profile(self.responder)
         profile.role = AccountProfile.ROLE_STAFF
+        profile.team = 'Alpha'
         profile.save()
         self.citizen = User.objects.create_user('cit', 'cit@test.local', 'Pass12345')
         ensure_account_profile(self.citizen)

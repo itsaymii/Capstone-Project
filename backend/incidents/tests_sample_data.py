@@ -59,7 +59,7 @@ class SampleDetailsTests(PlainTestCase):
 
 
 try:
-    from django.core.management import call_command
+    from django.core.management import CommandError, call_command
     from django.test import TestCase as DjangoTestCase
 except ImportError:  # running without Django installed
     DjangoTestCase = None
@@ -78,7 +78,13 @@ if DjangoTestCase is not None:
         def setUp(self):
             for name in BARANGAY_NAMES:
                 Barangay.objects.create(name=name)
-            User.objects.create_user('responder_a', 'a@test.local', 'Pass12345', is_staff=True)
+            for username, team in (('responder_a', 'Alpha'), ('responder_b', 'Bravo')):
+                user = User.objects.create_user(username, f'{username}@test.local', 'Pass12345', is_staff=True)
+                user.account_profile.team = team
+                user.account_profile.save(update_fields=['team'])
+            # Admins and responders without a team never file reports.
+            User.objects.create_superuser('boss', 'boss@test.local', 'Pass12345')
+            User.objects.create_user('no_team', 'no_team@test.local', 'Pass12345', is_staff=True)
 
         def run_command(self, *args):
             out = StringIO()
@@ -138,9 +144,15 @@ if DjangoTestCase is not None:
                 self.assertGreaterEqual(IncidentReport.objects.filter(barangay__name=name).count(), 3, name)
             self.assertIn('33 of 33 barangays have data', output)
 
-        def test_reports_use_the_responder_account_as_team(self):
-            self.run_command('--count', '20', '--seed', '2')
-            self.assertEqual(set(IncidentReport.objects.values_list('responder_team', flat=True)), {'responder_a'})
+        def test_reports_are_filed_by_responders_under_their_team(self):
+            self.run_command('--count', '40', '--seed', '2')
+            filed = set(IncidentReport.objects.values_list('created_by__username', 'responder_team'))
+            self.assertEqual(filed, {('responder_a', 'Alpha'), ('responder_b', 'Bravo')})
+
+        def test_no_responder_with_a_team_is_an_error(self):
+            User.objects.filter(username__startswith='responder_').delete()
+            with self.assertRaisesMessage(CommandError, 'No responder account has a team'):
+                self.run_command('--count', '5')
 
         def test_points_land_inside_the_barangay_boundary(self):
             square = [[121.60, 13.93], [121.61, 13.93], [121.61, 13.94], [121.60, 13.94], [121.60, 13.93]]

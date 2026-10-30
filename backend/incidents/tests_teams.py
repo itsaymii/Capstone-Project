@@ -52,18 +52,54 @@ if DjangoTestCase is not None:
             report.refresh_from_db()
             self.assertEqual(report.responder_team, 'Bravo')
 
-        def test_report_filed_by_account_named_team_alpha_is_team_alpha(self):
-            responder = User.objects.create_user('alpha', 'alpha@test.local', 'Pass12345', is_staff=True, first_name='Team Alpha')
+        def file_report(self, user, **extra):
             client = APIClient()
-            client.force_authenticate(responder)
-            response = client.post('/api/incidents/incident-reports/', {
+            client.force_authenticate(user)
+            return client.post('/api/incidents/incident-reports/', {
                 'timeOccurred': '14:30', 'incidentType': 'Stand-by Medical Team', 'location': 'Perez Park',
                 'latitude': 13.9339, 'longitude': 121.6172, 'description': 'Event', 'actionTaken': 'Stand-by',
                 'status': 'Pending', 'victims': [],
-                'details': {'event_name': 'Fun Run', 'venue': 'Perez Park', 'persons_assisted': 0},
+                'details': {'event_name': 'Fun Run', 'venue': 'Perez Park', 'persons_assisted': 0}, **extra,
             }, format='json')
+
+        def test_report_is_filed_under_the_account_team_not_its_name(self):
+            responder = User.objects.create_user('juan', 'juan@test.local', 'Pass12345', is_staff=True, first_name='Juan Dela Cruz')
+            responder.account_profile.team = 'Charlie'
+            responder.account_profile.save(update_fields=['team'])
+
+            response = self.file_report(responder, responderTeam='Rescue 9')
             self.assertEqual(response.status_code, 201, response.data)
-            self.assertEqual(response.data['responderTeam'], 'Alpha')
+            self.assertEqual(response.data['responderTeam'], 'Charlie')
+
+        def test_responder_without_a_team_cannot_file(self):
+            responder = User.objects.create_user('juan', 'juan@test.local', 'Pass12345', is_staff=True, first_name='Juan Dela Cruz')
+            response = self.file_report(responder)
+            self.assertEqual(response.status_code, 400)
+            self.assertIn('no team', str(response.data['responderTeam']))
+            self.assertFalse(IncidentReport.objects.exists())
+
+        def test_admin_cannot_file_reports(self):
+            admin = User.objects.create_superuser('boss', 'boss@test.local', 'Pass12345')
+            self.assertEqual(self.file_report(admin).status_code, 403)
+
+        def test_migration_sets_teams_from_account_names_and_fixes_old_reports(self):
+            named = User.objects.create_user('alpha', 'alpha@test.local', 'Pass12345', is_staff=True, first_name='Team Alpha')
+            unnamed = User.objects.create_user('juan', 'juan@test.local', 'Pass12345', is_staff=True, first_name='Juan')
+            old = make_report(responder_team='Team Alpha', created_by=named)
+            IncidentReport.objects.filter(pk=old.pk).update(responder_team='Team Alpha Unit')
+            other = make_report(responder_team='Juan', created_by=unnamed)
+
+            import_module('accounts.migrations.0007_accountprofile_team').team_from_account_name(django_apps, None)
+            import_module('incidents.migrations.0010_report_team_from_account').team_from_filing_account(django_apps, None)
+
+            named.account_profile.refresh_from_db()
+            unnamed.account_profile.refresh_from_db()
+            self.assertEqual(named.account_profile.team, 'Alpha')
+            self.assertEqual(unnamed.account_profile.team, '')  # an admin sets it in Users
+            old.refresh_from_db()
+            other.refresh_from_db()
+            self.assertEqual(old.responder_team, 'Alpha')
+            self.assertEqual(other.responder_team, 'Juan')
 
         def test_migration_cleans_existing_reports(self):
             report = make_report()

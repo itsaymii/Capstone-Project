@@ -3,7 +3,7 @@ import type { FC, FormEvent, ChangeEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { getCurrentUserProfile, logoutUser } from '../../services/auth'
 import { MobileNavBar } from '../../components/MobileNavBar'
-import { toTeamName } from '../../data/teams'
+import { getAccountTeam } from '../../data/teams'
 
 interface TeamMember {
   id: string
@@ -26,8 +26,7 @@ const RESPONDER_TEAM_STORAGE_KEY = 'responderTeamMembers'
 
 const defaultProfileData = (profileFullName?: string): ProfileData => ({
   teamLeaderName: profileFullName || 'Team Leader',
-  // The account's team, e.g. "Alpha" for the account "Team Alpha".
-  teamName: toTeamName(profileFullName) || 'Alpha',
+  teamName: '',
   badgeId: 'RES-2026-0982',
   contactNumber: '09123456789',
   stationAddress: 'Zone 4, Lucena City Command Center',
@@ -71,7 +70,8 @@ const ProfileSettingsPage: FC = () => {
     const stored = loadSavedResponderProfile()
     // The name always comes from the account: it is how reports are matched to this team.
     const accountName = profile?.fullName || stored?.teamLeaderName || 'Team Leader'
-    return { ...(stored ?? defaultProfileData(accountName)), teamLeaderName: accountName }
+    // The team is set by an admin on the account; it is how reports are filed and matched.
+    return { ...(stored ?? defaultProfileData(accountName)), teamLeaderName: accountName, teamName: getAccountTeam(profile) }
   })
 
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>(() => {
@@ -271,7 +271,7 @@ const ProfileSettingsPage: FC = () => {
             <form onSubmit={handleProfileSubmit} className="space-y-4">
               <div>
                 <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5">Team Assignment</label>
-                <input type="text" name="teamName" value={profileData.teamName} onChange={handleProfileChange} className="w-full text-sm font-medium border border-slate-200 rounded-xl px-3.5 py-2.5 bg-slate-50/50 outline-none focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/5 transition-all" />
+                <input type="text" name="teamName" value={profileData.teamName} readOnly placeholder="No team yet: ask an admin" title="Set by an admin in Users." className="w-full text-sm font-semibold border border-slate-200 rounded-xl px-3.5 py-2.5 bg-slate-100 text-slate-500 cursor-not-allowed" />
               </div>
               <div>
                 <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5">Full Name</label>

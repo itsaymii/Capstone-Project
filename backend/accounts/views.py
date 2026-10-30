@@ -91,6 +91,8 @@ def _serialize_user(user: User, fallback_identifier: str = '') -> dict:
 		# works even if AccountProfile hasn't been synchronized.
 		'isAdmin': bool(user.is_superuser) or role == AccountProfile.ROLE_ADMIN,
 		'isStaff': role == AccountProfile.ROLE_STAFF,
+		# Responders only: the team their reports are filed under.
+		'team': getattr(getattr(user, 'account_profile', None), 'team', '') or None,
 		'hasDashboardAccess': user_has_dashboard_access(user),
 		'residencyStatus': verification.status if verification else None,
 		'barangay': verification.barangay_name if verification else None,

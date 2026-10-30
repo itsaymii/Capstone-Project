@@ -16,6 +16,7 @@ from rest_framework import status
 from rest_framework.response import Response
 
 from accounts.models import AccountProfile, OneTimePassword, ResidencyVerification, ensure_account_profile, get_user_role, user_has_dashboard_access
+from incidents.teams import TEAM_NAMES, team_name
 from .models import (
     SimulationCertificate,
     SimulationCourseCatalog,
@@ -80,6 +81,7 @@ def _serialize_dashboard_user(user: User, request=None) -> dict:
         'role': role,
         'isAdmin': role == AccountProfile.ROLE_ADMIN,
         'isStaff': role == AccountProfile.ROLE_STAFF,
+        'team': getattr(getattr(user, 'account_profile', None), 'team', '') or None,
         'hasDashboardAccess': user_has_dashboard_access(user),
         'isActive': user.is_active,
         'dateJoined': timezone.localtime(user.date_joined).isoformat() if user.date_joined else None,
@@ -124,6 +126,28 @@ def _normalize_account_role(raw_role: object, legacy_is_admin: object = None) ->
 
 def _role_has_dashboard_access(role: str) -> bool:
     return role in AccountProfile.DASHBOARD_ROLES
+
+
+def _account_team(raw_team: object, role: str) -> tuple[str, str | None]:
+    """
+    The team for an account: (team, error). Responders (staff) must be in Alpha, Bravo or Charlie,
+    because every report they file is filed under it. Other roles have no team.
+    """
+    if role != AccountProfile.ROLE_STAFF:
+        return '', None
+    team = team_name(raw_team)
+    if team not in TEAM_NAMES:
+        return '', 'Choose the responder team: Alpha, Bravo or Charlie.'
+    return team, None
+
+
+def _save_profile(user: User, role: str, team: str) -> None:
+    profile = ensure_account_profile(user, default_role=role)
+    if profile.role != role or profile.team != team:
+        profile.role = role
+        profile.team = team
+        profile.save(update_fields=['role', 'team', 'updated_at'])
+    user.account_profile = profile  # the serializer reads the team from here
 
 
 def _sanitize_course_progress(raw: object) -> dict[str, int]:
@@ -1440,6 +1464,10 @@ def create_dashboard_account(request):
     if not full_name or not email or not password:
         return Response({'error': 'Full name, email, and password are required.'}, status=status.HTTP_400_BAD_REQUEST)
 
+    team, team_error = _account_team(request.data.get('team'), role)
+    if team_error:
+        return Response({'error': team_error}, status=status.HTTP_400_BAD_REQUEST)
+
     try:
         validate_email(email)
     except ValidationError:
@@ -1462,10 +1490,7 @@ def create_dashboard_account(request):
         is_staff=_role_has_dashboard_access(role),
         is_superuser=False,
     )
-    profile = ensure_account_profile(user, default_role=role)
-    if profile.role != role:
-        profile.role = role
-        profile.save(update_fields=['role', 'updated_at'])
+    _save_profile(user, role, team)
 
     return Response(
         {
@@ -1559,6 +1584,10 @@ def dashboard_account_detail(request, user_id: int):
     role = _normalize_account_role(request.data.get('role'), request.data.get('isAdmin'))
     is_active = _coerce_bool(request.data.get('isActive', True), default=True)
 
+    team, team_error = _account_team(request.data.get('team'), role)
+    if team_error:
+        return Response({'error': team_error}, status=status.HTTP_400_BAD_REQUEST)
+
     if request.user.id == user.id and not _role_has_dashboard_access(role):
         return Response({'error': 'You cannot remove your own dashboard access.'}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -1570,10 +1599,7 @@ def dashboard_account_detail(request, user_id: int):
     if password:
         user.set_password(password)
     user.save()
-    profile = ensure_account_profile(user, default_role=role)
-    if profile.role != role:
-        profile.role = role
-        profile.save(update_fields=['role', 'updated_at'])
+    _save_profile(user, role, team)
 
     return Response(
         {

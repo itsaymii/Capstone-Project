@@ -2,6 +2,7 @@ import axios from 'axios'
 import { useEffect, useMemo, useState } from 'react'
 import { createDashboardAccount, deleteDashboardAccount, getDashboardAccounts, updateDashboardAccount, updateDashboardResidencyVerification } from '../../../services/api'
 import type { AuthUser, UserRole } from '../../../types/api'
+import { TEAM_NAMES } from '../../../data/teams'
 import { glassPanelClass, glassPanelSoftClass } from './constants'
 
 type DashboardUserFormState = {
@@ -10,6 +11,8 @@ type DashboardUserFormState = {
   username: string
   password: string
   role: UserRole
+  // Staff (responder) accounts only.
+  team: string
   isActive: boolean
 }
 
@@ -19,6 +22,7 @@ const defaultDashboardUserFormState: DashboardUserFormState = {
   username: '',
   password: '',
   role: 'citizen',
+  team: '',
   isActive: true,
 }
 
@@ -202,6 +206,7 @@ export function UsersSection({ searchQuery = '' }: UsersSectionProps) {
       username: user.username ?? '',
       password: '',
       role: getUserRole(user),
+      team: user.team ?? '',
       isActive: user.isActive ?? true,
     })
     setUsersMessage('')
@@ -220,6 +225,12 @@ export function UsersSection({ searchQuery = '' }: UsersSectionProps) {
       return
     }
 
+    if (userFormState.role === 'staff' && !userFormState.team) {
+      setUsersError('Choose the responder team: Alpha, Bravo or Charlie. Reports from this account are filed under it.')
+      setIsSavingUser(false)
+      return
+    }
+
     if (userFormState.password && userFormState.password.length < 6) {
       setUsersError('Password must be at least 6 characters.')
       setIsSavingUser(false)
@@ -234,6 +245,7 @@ export function UsersSection({ searchQuery = '' }: UsersSectionProps) {
           username: userFormState.username,
           password: userFormState.password || undefined,
           role: userFormState.role,
+          team: userFormState.role === 'staff' ? userFormState.team : undefined,
           isActive: userFormState.isActive,
         })
         setDashboardUsers((currentUsers) =>
@@ -247,6 +259,7 @@ export function UsersSection({ searchQuery = '' }: UsersSectionProps) {
           username: userFormState.username || undefined,
           password: userFormState.password,
           role: userFormState.role,
+          team: userFormState.role === 'staff' ? userFormState.team : undefined,
         })
         setDashboardUsers((currentUsers) => [response.user, ...currentUsers])
         setUsersMessage(response.message)
@@ -448,6 +461,11 @@ export function UsersSection({ searchQuery = '' }: UsersSectionProps) {
                               <span className={`rounded-full border px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.14em] ${getRoleBadgeClass(getUserRole(user))}`}>
                                 {getRoleLabel(getUserRole(user))}
                               </span>
+                              {getUserRole(user) === 'staff' ? (
+                                <p className={`mt-2 text-xs ${user.team ? 'text-slate-600' : 'font-semibold text-amber-700'}`}>
+                                  {user.team ? `Team: ${user.team}` : 'No team: cannot file reports'}
+                                </p>
+                              ) : null}
                             </td>
                             <td className="px-4 py-4 align-top">
                               <span className={`rounded-full border px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.1em] ${getResidencyStatusClass(user.residencyStatus)}`}>
@@ -623,6 +641,23 @@ export function UsersSection({ searchQuery = '' }: UsersSectionProps) {
                     />
                   </label>
                 </div>
+
+                {userFormState.role === 'staff' ? (
+                  <label className="block rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-700">
+                    <p className="font-semibold text-slate-900">Responder team</p>
+                    <p className="mt-1 text-xs text-slate-500">Every report this responder files is filed under this team.</p>
+                    <select
+                      className="mt-3 w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm text-slate-900 outline-none transition focus:border-blue-700 focus:ring-2 focus:ring-blue-100"
+                      onChange={(event) => handleUserFieldChange('team', event.target.value)}
+                      value={userFormState.team}
+                    >
+                      <option value="">Choose a team</option>
+                      {TEAM_NAMES.map((team) => (
+                        <option key={team} value={team}>{team}</option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
 
                 {usersError ? (
                   <p className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">{usersError}</p>

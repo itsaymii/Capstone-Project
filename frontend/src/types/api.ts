@@ -13,6 +13,8 @@ export interface AuthUser {
   phoneNumber?: string
   isAdmin?: boolean
   isStaff?: boolean
+  // Responder (staff) accounts: Alpha, Bravo or Charlie. Their reports are filed under it.
+  team?: string | null
   hasDashboardAccess?: boolean
   isActive?: boolean
   dateJoined?: string | null
@@ -231,6 +233,7 @@ export interface DashboardCreateAccountPayload {
   username?: string
   password: string
   role: UserRole
+  team?: string
 }
 
 export interface DashboardCreateAccountResponse {
@@ -248,6 +251,7 @@ export interface DashboardUpdateAccountPayload {
   username: string
   password?: string
   role: UserRole
+  team?: string
   isActive: boolean
 }
 

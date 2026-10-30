@@ -12,3 +12,12 @@ export function toTeamName(value: string | null | undefined): string {
 
   return TEAM_NAMES.find((name) => name.toLowerCase() === stripped.toLowerCase()) ?? stripped
 }
+
+/**
+ * A responder account's team (Alpha, Bravo or Charlie), set by an admin in Users; '' when it has none.
+ * Logins saved before accounts had a team field fall back to the team in the account name ("Team Alpha").
+ */
+export function getAccountTeam(account: { team?: string | null; fullName?: string | null } | null | undefined): string {
+  const team = toTeamName(account?.team === undefined ? account?.fullName : account.team)
+  return (TEAM_NAMES as readonly string[]).includes(team) ? team : ''
+}

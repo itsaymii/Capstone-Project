@@ -7,7 +7,7 @@ import { getCurrentUserProfile } from '../../services/auth'
 import { addNotification } from '../../services/notifications'
 import { createAccomplishmentReport, getIncidentReports } from '../../services/incidents'
 import { getIncidentCategoryMeta, getIncidentCategoryKey } from '../../data/incidentCategories'
-import { toTeamName } from '../../data/teams'
+import { getAccountTeam, toTeamName } from '../../data/teams'
 
 interface VictimDetails {
   name: string
@@ -132,8 +132,7 @@ type CurrentResponder = { username: string; teamName: string }
 
 function getCurrentResponder(): CurrentResponder {
   const profile = getCurrentUserProfile()
-  // Reports store the team without "Team" (e.g. "Alpha" for the account "Team Alpha").
-  return { username: normalizeName(profile?.username), teamName: normalizeName(toTeamName(profile?.fullName)) }
+  return { username: normalizeName(profile?.username), teamName: normalizeName(getAccountTeam(profile)) }
 }
 
 /**
@@ -353,7 +352,7 @@ const IncidentReportPage: FC = () => {
         {!isLoading && reports.length > 0 ? (
           <div className="space-y-3">
             <div className="rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-800">
-              {`Logged in as ${toTeamName(getCurrentUserProfile()?.fullName) || 'responder'}. You can compile approved reports filed by your team that are not yet in an accomplishment report.`}
+              {`Logged in as ${getAccountTeam(getCurrentUserProfile()) || 'a responder with no team'}. You can compile approved reports filed by your team that are not yet in an accomplishment report.`}
             </div>
 
             <div className="flex flex-col items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:flex-row">

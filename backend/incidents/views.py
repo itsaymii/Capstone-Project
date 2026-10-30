@@ -25,7 +25,7 @@ from .serializers import (
 )
 
 from accounts.models import AccountProfile, get_user_role
-from accounts.permissions import IsDashboardAdminOrReadOnly, IsDashboardUser, IsDashboardUserCreateAdminChange
+from accounts.permissions import IsDashboardAdminOrReadOnly, IsDashboardUser, IsResponderCreateAdminChange
 
 
 class HazardTypeViewSet(viewsets.ModelViewSet):
@@ -148,8 +148,8 @@ class IncidentReportViewSet(viewsets.ModelViewSet):
     serializer_class = IncidentReportSerializer
     authentication_classes = [SessionAuthentication, TokenAuthentication]
 
-    # Responders (staff) and admins only. Only admins may edit, approve or delete.
-    permission_classes = [IsDashboardUserCreateAdminChange]
+    # Responders (staff) and admins read; only responders file; only admins edit, approve or delete.
+    permission_classes = [IsResponderCreateAdminChange]
 
     def get_queryset(self):
         queryset = super().get_queryset()
@@ -210,8 +210,8 @@ class AccomplishmentReportViewSet(viewsets.ModelViewSet):
     serializer_class = AccomplishmentReportSerializer
     authentication_classes = [SessionAuthentication, TokenAuthentication]
 
-    # Responders (staff) and admins only. Only admins may edit, approve or delete.
-    permission_classes = [IsDashboardUserCreateAdminChange]
+    # Responders (staff) and admins read; only responders file; only admins edit, approve or delete.
+    permission_classes = [IsResponderCreateAdminChange]
 
     def get_queryset(self):
         queryset = super().get_queryset()
