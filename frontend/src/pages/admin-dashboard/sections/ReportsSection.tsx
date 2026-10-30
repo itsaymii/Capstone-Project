@@ -6,9 +6,11 @@ import type { HazardIncident } from '../../../data/adminOperations'
 import type { EarthquakeEvent } from '../../../services/earthquakes'
 import { glassPanelClass, glassPanelSoftClass } from './constants'
 import { distanceKm } from '../../../data/evacuation'
+import { ANALYTICS_TYPES, getIncidentCategoryKey, getIncidentCategoryLabel, type AnalyticsTypeKey } from '../../../data/incidentCategories'
 import { formatDetailValue, getIncidentTypeConfig, type DetailValues } from '../../../data/incidentTypeFields'
 
-type ReportHazardFilter = 'all' | 'FR' | 'EQ' | 'AC'
+// One of the incident types used on every admin page (incidentCategories.ts), or all.
+type ReportTypeFilter = 'all' | AnalyticsTypeKey
 
 // Approved only by default, so unverified reports are not printed as official ones.
 type ReportStatusFilter = 'approved' | 'pending' | 'all'
@@ -40,7 +42,7 @@ type UnifiedHazardReportRow = {
   incidentStatus: string
   sentVia: string
   status: string
-  hazardCode: 'FR' | 'EQ' | 'AC'
+  typeKey: AnalyticsTypeKey
   // 'feed' for earthquakes: they come from USGS and are never reviewed by an admin.
   approval: 'approved' | 'pending' | 'feed'
   locationKey: string
@@ -66,12 +68,6 @@ type ReportsSectionProps = {
   earthquakeFeedStatus: 'loading' | 'ready' | 'error'
   earthquakeLastUpdated: Date | null
   searchQuery: string
-}
-
-const hazardTypeLabels: Record<'FR' | 'EQ' | 'AC', string> = {
-  FR: 'Fire',
-  EQ: 'Earthquake',
-  AC: 'Accident',
 }
 
 // The detail that best answers "what caused it / what was it" for each incident type.
@@ -185,7 +181,7 @@ export function ReportsSection({
 }: ReportsSectionProps) {
   const [reportStartDate, setReportStartDate] = useState('')
   const [reportEndDate, setReportEndDate] = useState('')
-  const [reportHazardFilter, setReportHazardFilter] = useState<ReportHazardFilter>('all')
+  const [reportTypeFilter, setReportTypeFilter] = useState<ReportTypeFilter>('all')
   const [reportLocationFilter, setReportLocationFilter] = useState('')
   const [reportStatusFilter, setReportStatusFilter] = useState<ReportStatusFilter>('approved')
 
@@ -212,7 +208,8 @@ export function ReportsSection({
 
       return {
         reportId,
-        reportType: incidentType || pickText(record, 'hazardTypeName') || hazardTypeLabels[incident.code],
+        // Same type names as the Incidents and Analytics pages.
+        reportType: getIncidentCategoryLabel(record),
         location: incident.location || '-',
         dateTime: formatReportDateTime(dateValue),
         responseTeam: incident.responseTeam || '-',
@@ -224,7 +221,7 @@ export function ReportsSection({
         incidentStatus: toTitleCase(incidentStatus) || '-',
         sentVia: isResponderReport ? getSentViaLabel(pickText(record, 'createdByRole')) : 'Admin',
         status: toTitleCase(rawStatus) || '-',
-        hazardCode: incident.code,
+        typeKey: getIncidentCategoryKey(record),
         approval: getApproval(rawStatus),
         locationKey: incident.location || '',
         dateValue,
@@ -263,7 +260,7 @@ export function ReportsSection({
           incidentStatus: '-',
           sentVia: 'USGS API',
           status: 'USGS record',
-          hazardCode: 'EQ',
+          typeKey: 'earthquake',
           approval: 'feed',
           locationKey: event.place,
           dateValue,
@@ -303,9 +300,8 @@ export function ReportsSection({
     return true
   }
 
-  function matchesReportHazard(hazardCode?: 'FR' | 'EQ' | 'AC'): boolean {
-    if (!hazardCode || reportHazardFilter === 'all') return true
-    return reportHazardFilter === hazardCode
+  function matchesReportType(typeKey: AnalyticsTypeKey): boolean {
+    return reportTypeFilter === 'all' || reportTypeFilter === typeKey
   }
 
   function matchesReportStatus(approval: UnifiedHazardReportRow['approval']): boolean {
@@ -341,7 +337,7 @@ export function ReportsSection({
     () =>
       unifiedHazardReportRows.filter(
         (row) =>
-          matchesReportHazard(row.hazardCode) &&
+          matchesReportType(row.typeKey) &&
           matchesReportStatus(row.approval) &&
           matchesReportLocation(row.locationKey) &&
           matchesDashboardSearch(row) &&
@@ -350,7 +346,7 @@ export function ReportsSection({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [
       unifiedHazardReportRows,
-      reportHazardFilter,
+      reportTypeFilter,
       reportStatusFilter,
       normalizedReportLocationFilter,
       normalizedDashboardSearchQuery,
@@ -362,7 +358,7 @@ export function ReportsSection({
   // The table shows one page at a time; Save PDF, Print and CSV still use every matching row.
   // A change to any filter (or the dashboard search) starts again at page 1.
   const filterKey = [
-    reportHazardFilter,
+    reportTypeFilter,
     reportStatusFilter,
     normalizedReportLocationFilter,
     normalizedDashboardSearchQuery,
@@ -388,10 +384,15 @@ export function ReportsSection({
   function resetReportFilters(): void {
     setReportStartDate('')
     setReportEndDate('')
-    setReportHazardFilter('all')
+    setReportTypeFilter('all')
     setReportStatusFilter('approved')
     setReportLocationFilter('')
   }
+
+  // Every incident type, plus "Other" only when some old record matches none of them.
+  const typeOptions = ANALYTICS_TYPES.filter(
+    (type) => type.key !== 'other' || incidentReportRows.some((row) => row.typeKey === 'other'),
+  )
 
   // Shown under the filters so it is clear pending reports exist but are left out.
   const hiddenPendingCount =
@@ -848,13 +849,13 @@ export function ReportsSection({
               Type
               <select
                 className="w-full min-w-0 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-700"
-                onChange={(event) => setReportHazardFilter(event.target.value as ReportHazardFilter)}
-                value={reportHazardFilter}
+                onChange={(event) => setReportTypeFilter(event.target.value as ReportTypeFilter)}
+                value={reportTypeFilter}
               >
                 <option value="all">All types</option>
-                <option value="FR">Fire</option>
-                <option value="EQ">Earthquake</option>
-                <option value="AC">Accident / Other</option>
+                {typeOptions.map((type) => (
+                  <option key={type.key} value={type.key}>{type.label}</option>
+                ))}
               </select>
             </label>
 
