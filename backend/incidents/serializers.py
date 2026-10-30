@@ -563,6 +563,40 @@ class IncidentReportSerializer(serializers.ModelSerializer):
 
         return incident_report
 
+    def _viewer_team(self):
+        """
+        None when the viewer may see every report in full (admins, or no request such as in a
+        management command); otherwise the responder's own team ('' when they have none).
+        Worked out once per request and shared with nested serializers through the context.
+        """
+        if 'viewer_team' not in self.context:
+            from accounts.models import AccountProfile, get_user_role
+
+            request = self.context.get('request')
+            user = getattr(request, 'user', None)
+            if user is None or (user.is_authenticated and get_user_role(user) == AccountProfile.ROLE_ADMIN):
+                self.context['viewer_team'] = None
+            else:
+                self.context['viewer_team'] = (
+                    AccountProfile.objects.filter(user=user).values_list('team', flat=True).first() or ''
+                    if user.is_authenticated else ''
+                )
+        return self.context['viewer_team']
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        # Responders see other teams' reports (type, place, time, victim count) but not the people
+        # involved: the victim list, and the free text that can name them.
+        viewer_team = self._viewer_team()
+        if viewer_team is not None and instance.responder_team != viewer_team:
+            data['victims'] = []
+            data['description'] = ''
+            data['actionTaken'] = ''
+            data['personalDataHidden'] = True
+        else:
+            data['personalDataHidden'] = False
+        return data
+
     def get_createdByRole(self, obj):
         # Return a simple role for frontend consumption: 'anonymous', 'admin', 'staff', or 'responder'
         if not obj.created_by:
