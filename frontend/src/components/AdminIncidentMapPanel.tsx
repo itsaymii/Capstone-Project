@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import L, { type LatLngBoundsExpression } from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import 'leaflet.heat'
@@ -121,6 +122,162 @@ const mapLegendItems = [
   { label: 'Other Active Faults', color: '#ef4444' },
   { label: 'Earthquake Epicenter', color: hazardColors.EQ },
 ]
+
+// Heatmap colors, from few to many reports or earthquakes (shared by the map and the legend).
+const heatGradient: Record<number, string> = {
+  0.12: '#2563eb',
+  0.32: '#22d3ee',
+  0.5: '#22c55e',
+  0.68: '#facc15',
+  0.84: '#f97316',
+  1.0: '#dc2626',
+}
+// Sorted: JavaScript lists the key "1" before "0.12", which would paint the whole bar red.
+const heatGradientCss = `linear-gradient(90deg, ${Object.entries(heatGradient)
+  .sort(([left], [right]) => Number(left) - Number(right))
+  .map(([stop, color]) => `${color} ${Number(stop) * 100}%`)
+  .join(', ')})`
+
+// Fault lines as drawn on the map: color and dash pattern.
+const faultLegendItems = [
+  { label: 'Philippine Fault Zone', color: '#dc2626', dash: '' },
+  { label: 'Valley Fault System', color: '#3b82f6', dash: '4,6' },
+  { label: 'Other active faults', color: '#ef4444', dash: '8,7' },
+]
+
+type MapLegendProps = {
+  isEqView: boolean
+  typeItems: Array<{ label: string; color: string; count: number }>
+  showHeatmap: boolean
+  showFaultLines: boolean
+}
+
+/** Legend for the map-only view: every color and symbol that can appear on the current map. */
+function MapLegend({ isEqView, typeItems, showHeatmap, showFaultLines }: MapLegendProps) {
+  // Starts folded on phones, where it would cover most of the map.
+  const [open, setOpen] = useState(() => typeof window === 'undefined' || window.innerWidth >= 640)
+  const heading = 'text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500'
+  const row = 'flex items-center gap-2.5 text-xs text-slate-700'
+
+  if (!open) {
+    return (
+      <button
+        aria-expanded={false}
+        className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-bold text-slate-800 shadow-[0_8px_20px_rgba(15,23,42,0.18)] hover:bg-slate-50"
+        onClick={() => setOpen(true)}
+        type="button"
+      >
+        Show legend
+      </button>
+    )
+  }
+
+  return (
+    <div className="max-h-[calc(100%-2rem)] w-64 space-y-4 overflow-y-auto rounded-2xl border border-slate-200 bg-white/95 p-4 shadow-[0_12px_32px_rgba(15,23,42,0.18)] backdrop-blur">
+      <div className="flex items-center justify-between">
+        <p className="text-sm font-bold text-slate-900">Legend</p>
+        <button
+          aria-expanded={true}
+          className="rounded-full px-2 py-0.5 text-[11px] font-semibold text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+          onClick={() => setOpen(false)}
+          type="button"
+        >
+          Hide
+        </button>
+      </div>
+
+      {isEqView ? (
+        <>
+          <section className="space-y-2">
+            <p className={heading}>Earthquakes</p>
+            <div className={row}>
+              <span className="flex w-7 items-center justify-center gap-0.5">
+                <span className="h-2 w-2 rounded-full border border-white" style={{ backgroundColor: hazardColors.EQ }} />
+                <span className="h-3.5 w-3.5 rounded-full border-2 border-white shadow" style={{ backgroundColor: hazardColors.EQ }} />
+              </span>
+              <span>Epicenter (M3.5 and up). Bigger circle = stronger.</span>
+            </div>
+          </section>
+
+          {showFaultLines ? (
+            <section className="space-y-2">
+              <p className={heading}>Fault lines (PHIVOLCS)</p>
+              {faultLegendItems.map((item) => (
+                <div className={row} key={item.label}>
+                  <svg aria-hidden="true" className="w-7 shrink-0" height="8" viewBox="0 0 28 8">
+                    <line stroke={item.color} strokeDasharray={item.dash || undefined} strokeWidth="3.5" x1="0" x2="28" y1="4" y2="4" />
+                  </svg>
+                  <span>{item.label}</span>
+                </div>
+              ))}
+            </section>
+          ) : null}
+        </>
+      ) : (
+        <>
+          <section className="space-y-2">
+            <p className={heading}>Incident types</p>
+            {typeItems.length > 0 ? (
+              typeItems.map((item) => (
+                <div className={row} key={item.label}>
+                  <span className="flex w-7 justify-center">
+                    <span className="h-3.5 w-3.5 rounded-full border-2 border-white shadow" style={{ backgroundColor: item.color }} />
+                  </span>
+                  <span className="flex-1">{item.label}</span>
+                  <span className="text-[11px] font-semibold text-slate-500">{item.count}</span>
+                </div>
+              ))
+            ) : (
+              <p className="text-xs text-slate-500">No approved reports match these filters.</p>
+            )}
+          </section>
+
+          <section className="space-y-2">
+            <p className={heading}>Status</p>
+            <div className={row}>
+              <span className="ongoing-incident-pulse-marker flex w-7 justify-center">
+                <span className="pulse-wrap block scale-[0.6]" style={{ margin: '-8px' }}>
+                  <span className="pulse-ring" style={{ background: '#64748b47' }} />
+                  <span className="pulse-dot" style={{ background: '#64748b' }} />
+                </span>
+              </span>
+              <span>Pulsing: on-going</span>
+            </div>
+            <div className={row}>
+              <span className="flex w-7 justify-center">
+                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-500/20">
+                  <span className="h-3.5 w-3.5 rounded-full border-2 border-white bg-slate-500" />
+                </span>
+              </span>
+              <span>Still dot: resolved or closed</span>
+            </div>
+          </section>
+
+          <section className="space-y-2">
+            <p className={heading}>Barangays</p>
+            <div className={row}>
+              <span className="flex w-7 justify-center">
+                <span className="h-3.5 w-5 rounded-sm border-2 border-blue-600 bg-blue-600/10" />
+              </span>
+              <span>Colored outlines: the 33 barangay boundaries</span>
+            </div>
+          </section>
+        </>
+      )}
+
+      {showHeatmap ? (
+        <section className="space-y-2">
+          <p className={heading}>Heatmap</p>
+          <div className="h-2.5 rounded-full" style={{ background: heatGradientCss }} />
+          <div className="flex justify-between text-[11px] text-slate-500">
+            <span>Few</span>
+            <span>Many {isEqView ? 'earthquakes' : 'reports'}</span>
+          </div>
+        </section>
+      ) : null}
+    </div>
+  )
+}
 
 const monthOptions = [
   { value: '01', label: 'January' },
@@ -497,6 +654,8 @@ export function AdminIncidentMapPanel({
   const [showHeatmap, setShowHeatmap] = useState(true)
   const [showFaultLines, setShowFaultLines] = useState(true)
   const [showIncidentHeatmap, setShowIncidentHeatmap] = useState(true)
+  // "Map only": the map fills the whole window, with a full legend.
+  const [isMapOnly, setIsMapOnly] = useState(false)
   const [eqLastRefreshed, setEqLastRefreshed] = useState<Date | null>(null)
   const [eqIsRefreshing, setEqIsRefreshing] = useState(false)
   const [eqSearchQuery, setEqSearchQuery] = useState('')
@@ -917,6 +1076,20 @@ export function AdminIncidentMapPanel({
   }, [selectedType, loadEarthquakes])
 
   useEffect(() => {
+    if (!isMapOnly) return
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setIsMapOnly(false)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.body.style.overflow = previousOverflow
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [isMapOnly])
+
+  useEffect(() => {
     void fetch('/lucena_barangays.geojson')
       .then((response) => response.json())
       .then((data) => setBarangayLayer(data))
@@ -1084,14 +1257,7 @@ export function AdminIncidentMapPanel({
           blur: 32,
           max: 1.0,
           maxZoom: 16,
-          gradient: {
-            0.12: '#2563eb',
-            0.32: '#22d3ee',
-            0.5: '#22c55e',
-            0.68: '#facc15',
-            0.84: '#f97316',
-            1.0: '#dc2626',
-          },
+          gradient: heatGradient,
         })
         earthquakeHeatLayer.addTo(overlayLayerGroup)
       }
@@ -1172,14 +1338,7 @@ export function AdminIncidentMapPanel({
           blur: 34,
           max: 1.0,
           maxZoom: 17,
-          gradient: {
-            0.12: '#2563eb',
-            0.32: '#22d3ee',
-            0.5: '#22c55e',
-            0.68: '#facc15',
-            0.84: '#f97316',
-            1.0: '#dc2626',
-          },
+          gradient: heatGradient,
         })
         incidentHeatLayer.addTo(overlayLayerGroup)
       }
@@ -1230,7 +1389,8 @@ export function AdminIncidentMapPanel({
       })
     }
 
-    window.setTimeout(() => {
+    // Cancelled in the cleanup: on a quick rebuild it would run on a removed map and throw.
+    const resizeTimer = window.setTimeout(() => {
       map.invalidateSize()
     }, 0)
 
@@ -1242,7 +1402,7 @@ export function AdminIncidentMapPanel({
           { label: 'Pulsing = on-going', color: '#64748b' },
         ]
 
-    if (legendItems.length > 0) {
+    if (legendItems.length > 0 && !isMapOnly) {
       const legendControl = new L.Control({ position: 'topright' })
       legendControl.onAdd = function () {
         const container = L.DomUtil.create('div', 'map-legend leaflet-bar') as HTMLDivElement
@@ -1270,6 +1430,11 @@ export function AdminIncidentMapPanel({
     previousSelectedTypeRef.current = selectedType
 
     return () => {
+      // Keep the zoom and position for the rebuilt map (new filters, layers, or the map-only view).
+      // A different map type starts from its own default view instead (see the setView above).
+      const center = map.getCenter()
+      savedMapViewRef.current = { center: [center.lat, center.lng], zoom: map.getZoom() }
+      window.clearTimeout(resizeTimer)
       markerRefs.current.clear()
       map.remove()
       mapInstanceRef.current = null
@@ -1286,6 +1451,8 @@ export function AdminIncidentMapPanel({
     showFaultLines,
     faultLines,
     barangayLayer,
+    // The map moves between the page and the map-only view, so it is rebuilt there (keeping the view).
+    isMapOnly,
   ])
 
   // Fly to an incident picked from the "On map" list and open its popup.
@@ -1398,6 +1565,71 @@ export function AdminIncidentMapPanel({
     }
   }
 
+  // Shared by the page and the map-only view.
+  const typeTabs = (
+  <div className="flex flex-wrap gap-2 lg:justify-end" role="tablist" aria-label="Map type">
+    {hazardTabOrder.map((typeCode) => {
+      const active = selectedType === typeCode
+      return (
+        <button
+          aria-selected={active}
+          className={`flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
+            active ? 'text-white shadow-[0_8px_18px_rgba(15,23,42,0.16)]' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
+          }`}
+          key={typeCode}
+          onClick={() => onSelectType(typeCode)}
+          role="tab"
+          style={active ? { backgroundColor: hazardTypeMeta[typeCode].color, borderColor: hazardTypeMeta[typeCode].color } : undefined}
+          title={hazardTypeMeta[typeCode].description}
+          type="button"
+        >
+          {hazardTypeMeta[typeCode].label}
+          {typeCode !== 'EQ' || earthquakeEvents.length > 0 ? (
+            <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${active ? 'bg-white/25' : 'bg-slate-100 text-slate-600'}`}>
+              {incidentCounts[typeCode]}
+            </span>
+          ) : null}
+        </button>
+      )
+    })}
+  </div>
+  )
+
+  const layerButtons = (
+  <div className="ml-auto flex flex-wrap items-center gap-2">
+    <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">Layers</span>
+    {selectedType === 'EQ' ? (
+      <>
+        <button
+          aria-pressed={showHeatmap}
+          className={`rounded-full border px-3 py-1 text-[11px] font-semibold transition ${showHeatmap ? 'border-emerald-500 bg-emerald-500 text-white' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'}`}
+          onClick={() => setShowHeatmap((value) => !value)}
+          type="button"
+        >
+          Heatmap
+        </button>
+        <button
+          aria-pressed={showFaultLines}
+          className={`rounded-full border px-3 py-1 text-[11px] font-semibold transition ${showFaultLines ? 'border-rose-500 bg-rose-500 text-white' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'}`}
+          onClick={() => setShowFaultLines((value) => !value)}
+          type="button"
+        >
+          Fault Lines
+        </button>
+      </>
+    ) : (
+      <button
+        aria-pressed={showIncidentHeatmap}
+        className={`rounded-full border px-3 py-1 text-[11px] font-semibold transition ${showIncidentHeatmap ? 'border-emerald-500 bg-emerald-500 text-white' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'}`}
+        onClick={() => setShowIncidentHeatmap((value) => !value)}
+        type="button"
+      >
+        Heatmap
+      </button>
+    )}
+  </div>
+  )
+
   return (
     <section className="px-4 py-5 sm:px-6 sm:py-8">
       <div className="grid gap-5 xl:grid-cols-[minmax(0,2fr)_minmax(320px,0.9fr)] xl:items-start">
@@ -1416,32 +1648,7 @@ export function AdminIncidentMapPanel({
                 </p>
               </div>
 
-              <div className="flex flex-wrap gap-2 lg:justify-end" role="tablist" aria-label="Map type">
-                {hazardTabOrder.map((typeCode) => {
-                  const active = selectedType === typeCode
-                  return (
-                    <button
-                      aria-selected={active}
-                      className={`flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
-                        active ? 'text-white shadow-[0_8px_18px_rgba(15,23,42,0.16)]' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
-                      }`}
-                      key={typeCode}
-                      onClick={() => onSelectType(typeCode)}
-                      role="tab"
-                      style={active ? { backgroundColor: hazardTypeMeta[typeCode].color, borderColor: hazardTypeMeta[typeCode].color } : undefined}
-                      title={hazardTypeMeta[typeCode].description}
-                      type="button"
-                    >
-                      {hazardTypeMeta[typeCode].label}
-                      {typeCode !== 'EQ' || earthquakeEvents.length > 0 ? (
-                        <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${active ? 'bg-white/25' : 'bg-slate-100 text-slate-600'}`}>
-                          {incidentCounts[typeCode]}
-                        </span>
-                      ) : null}
-                    </button>
-                  )
-                })}
-              </div>
+              {typeTabs}
             </div>
 
             <div className="flex flex-wrap items-end gap-2">
@@ -1528,38 +1735,7 @@ export function AdminIncidentMapPanel({
                 </button>
               ) : null}
 
-              <div className="ml-auto flex flex-wrap items-center gap-2">
-                <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">Layers</span>
-                {selectedType === 'EQ' ? (
-                  <>
-                    <button
-                      aria-pressed={showHeatmap}
-                      className={`rounded-full border px-3 py-1 text-[11px] font-semibold transition ${showHeatmap ? 'border-emerald-500 bg-emerald-500 text-white' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'}`}
-                      onClick={() => setShowHeatmap((value) => !value)}
-                      type="button"
-                    >
-                      Heatmap
-                    </button>
-                    <button
-                      aria-pressed={showFaultLines}
-                      className={`rounded-full border px-3 py-1 text-[11px] font-semibold transition ${showFaultLines ? 'border-rose-500 bg-rose-500 text-white' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'}`}
-                      onClick={() => setShowFaultLines((value) => !value)}
-                      type="button"
-                    >
-                      Fault Lines
-                    </button>
-                  </>
-                ) : (
-                  <button
-                    aria-pressed={showIncidentHeatmap}
-                    className={`rounded-full border px-3 py-1 text-[11px] font-semibold transition ${showIncidentHeatmap ? 'border-emerald-500 bg-emerald-500 text-white' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'}`}
-                    onClick={() => setShowIncidentHeatmap((value) => !value)}
-                    type="button"
-                  >
-                    Heatmap
-                  </button>
-                )}
-              </div>
+              {layerButtons}
             </div>
           </div>
 
@@ -1590,9 +1766,73 @@ export function AdminIncidentMapPanel({
             ) : selectedType !== 'EQ' ? (
               <span className="ml-auto text-[11px] font-semibold text-emerald-700">{plottableMapIncidents.length} plotted on map</span>
             ) : null}
+
+            <button
+              className={`${selectedType === 'EQ' ? 'ml-auto' : ''} flex items-center gap-1.5 rounded-full border border-slate-300 bg-white px-3 py-1 text-[11px] font-semibold text-slate-700 transition hover:bg-slate-50`}
+              onClick={() => setIsMapOnly(true)}
+              title="Show only the map, in the whole window, with a full legend"
+              type="button"
+            >
+              <svg aria-hidden="true" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              Map only
+            </button>
           </div>
 
-          <div className="h-[520px] w-full sm:h-[640px] md:h-auto md:flex-1" ref={mapContainerRef} />
+          {isMapOnly ? (
+            <div className="flex h-[520px] w-full flex-col items-center justify-center gap-3 bg-slate-50 text-sm text-slate-500 sm:h-[640px] md:h-auto md:flex-1">
+              The map is open in the map-only view.
+              <button
+                className="rounded-full border border-slate-300 bg-white px-4 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100"
+                onClick={() => setIsMapOnly(false)}
+                type="button"
+              >
+                Back to this page
+              </button>
+            </div>
+          ) : (
+            <div className="h-[520px] w-full sm:h-[640px] md:h-auto md:flex-1" ref={mapContainerRef} />
+          )}
+
+          {isMapOnly
+            ? createPortal(
+                <div aria-label="Map only" aria-modal="true" className="fixed inset-0 z-[1600] flex flex-col bg-white" role="dialog">
+                  <div className="flex flex-wrap items-center gap-3 border-b border-slate-200 bg-[linear-gradient(90deg,#e8f1fd_0%,#f6fbff_100%)] px-4 py-3 sm:px-5">
+                    <div className="mr-2">
+                      <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                        {selectedType === 'EQ' ? 'Seismic Mapping — Philippines' : 'Approved Report Mapping'}
+                      </p>
+                      <h2 className="text-lg font-bold text-slate-900">Lucena Incident Map</h2>
+                    </div>
+                    {typeTabs}
+                    {layerButtons}
+                    <button
+                      className="rounded-full bg-slate-900 px-4 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-700"
+                      onClick={() => setIsMapOnly(false)}
+                      title="Close (Esc)"
+                      type="button"
+                    >
+                      Close
+                    </button>
+                  </div>
+                  <div className="relative min-h-0 flex-1">
+                    <div className="absolute inset-0" ref={mapContainerRef} />
+                    <div className="pointer-events-none absolute bottom-4 left-4 top-4 z-[1000] flex items-end">
+                      <div className="pointer-events-auto max-h-full">
+                        <MapLegend
+                          isEqView={selectedType === 'EQ'}
+                          showFaultLines={showFaultLines}
+                          showHeatmap={selectedType === 'EQ' ? showHeatmap : showIncidentHeatmap}
+                          typeItems={plottedTypeLegend}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>,
+                document.body,
+              )
+            : null}
         </div>
 
         <aside className="overflow-x-hidden rounded-[28px] border border-slate-200 bg-white p-4 shadow-[0_12px_32px_rgba(15,23,42,0.08)] sm:p-5 md:h-[calc(100vh-13rem)] md:overflow-hidden">
