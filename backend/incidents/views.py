@@ -25,7 +25,7 @@ from .serializers import (
 )
 
 from accounts.models import AccountProfile, get_user_role
-from accounts.permissions import IsDashboardAdminOrReadOnly, IsDashboardUser, IsResponderCreateAdminChange
+from accounts.permissions import IsDashboardAdmin, IsDashboardAdminOrReadOnly, IsDashboardUser, IsResponderCreateAdminChange
 
 
 class HazardTypeViewSet(viewsets.ModelViewSet):
@@ -40,7 +40,9 @@ class HazardTypeViewSet(viewsets.ModelViewSet):
 class IncidentViewSet(viewsets.ModelViewSet):
     serializer_class = IncidentSerializer
     authentication_classes = [SessionAuthentication, TokenAuthentication]
-    permission_classes = [IsDashboardAdminOrReadOnly]
+    # Admins only, reads included: incidents carry the reporter's username and the report's free-text
+    # description, which can name victims. Public pages use /incident-reports/public/ instead.
+    permission_classes = [IsDashboardAdmin]
     search_fields = ['description', 'address', 'hazard_type__name', 'reference_code']
     ordering_fields = ['incident_datetime', 'severity_level', 'status']
 

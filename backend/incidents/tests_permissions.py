@@ -362,3 +362,32 @@ class ResidencyProofAccessTests(AccessTestCase):
         for path in (stored, f'other/../{stored}', stored.upper(), f'./{stored}'):
             with self.assertRaises(Http404, msg=path):
                 serve_public_media(request, path)
+
+
+class IncidentListAccessTests(AccessTestCase):
+    """Incidents carry the reporter's username and free text that can name victims: admins only."""
+
+    def setUp(self):
+        super().setUp()
+        from incidents.models import HazardType, Incident
+
+        self.incident = Incident.objects.create(
+            hazard_type=HazardType.objects.create(name='Fire'), latitude=Decimal('13.93'), longitude=Decimal('121.61'),
+            address='Barangay 1', incident_datetime=timezone.now(), severity_level='high', status='verified',
+            description='Victim Juan, 40, burned hand', reported_by=self.responder,
+        )
+
+    def test_only_admins_can_read_incidents(self):
+        urls = (
+            '/api/incidents/incidents/',
+            f'/api/incidents/incidents/{self.incident.id}/',
+            f'/api/incidents/incidents/lookup/{self.incident.reference_code}/',
+        )
+        for url in urls:
+            for user in (None, self.citizen, self.responder):
+                self.assertEqual(self.client_for(user).get(url).status_code, 403, (url, user))
+            self.assertEqual(self.client_for(self.admin).get(url).status_code, 200, url)
+
+    def test_public_pages_still_get_approved_reports(self):
+        make_report(status='approved')
+        self.assertEqual(self.client_for().get(f'{REPORTS_URL}public/').status_code, 200)
