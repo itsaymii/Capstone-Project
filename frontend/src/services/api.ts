@@ -471,6 +471,15 @@ export async function deleteDashboardAccount(userId: number): Promise<DashboardD
   return data
 }
 
+/**
+ * A citizen's residency proof image, for the admin Users page. It is only served to logged-in
+ * admins, so it is fetched with the session instead of opened as a plain link.
+ */
+export async function getResidencyProofImage(proofUrl: string): Promise<Blob> {
+  const { data } = await api.get<Blob>(proofUrl, { responseType: 'blob' })
+  return data
+}
+
 export async function updateDashboardResidencyVerification(
   userId: number,
   payload: { status: 'verified' | 'rejected'; rejectionReason?: string },

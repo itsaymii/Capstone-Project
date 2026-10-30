@@ -7,6 +7,8 @@ from django.core.validators import validate_email
 from django.contrib.auth.models import User
 from django.db import transaction
 from django.db.models import Max
+from django.http import FileResponse
+from django.urls import reverse
 from django.utils import timezone
 from django.utils.text import slugify
 from rest_framework.decorators import api_view
@@ -70,9 +72,12 @@ def _get_user_full_name(user: User) -> str:
 def _serialize_dashboard_user(user: User, request=None) -> dict:
     role = get_user_role(user)
     residency = ResidencyVerification.objects.filter(user=user).first()
-    proof_url = residency.proof_document.url if residency and residency.proof_document else None
-    if proof_url and request:
-        proof_url = request.build_absolute_uri(proof_url)
+    # The ID or bill is only served to admins through the API (see dashboard_account_residency_proof),
+    # never from the public /media/ folder.
+    proof_url = (
+        reverse('admin-dashboard-account-residency-proof', args=[user.id])
+        if residency and residency.proof_document else None
+    )
     return {
         'id': user.id,
         'fullName': _get_user_full_name(user),
@@ -1543,6 +1548,26 @@ def dashboard_account_residency_verification(request, user_id: int):
         },
         status=status.HTTP_200_OK,
     )
+
+
+@api_view(['GET'])
+@permission_classes([HasDashboardAdminAccess])
+def dashboard_account_residency_proof(request, user_id: int):
+    """The residency proof image (ID or bill) a citizen uploaded when registering. Admins only."""
+    residency = ResidencyVerification.objects.filter(user_id=user_id).first()
+    if not residency or not residency.proof_document:
+        return Response({'error': 'This account has no residency proof.'}, status=status.HTTP_404_NOT_FOUND)
+
+    try:
+        document = residency.proof_document.open('rb')
+    except FileNotFoundError:
+        return Response({'error': 'The residency proof file is missing.'}, status=status.HTTP_404_NOT_FOUND)
+
+    response = FileResponse(document, filename=residency.proof_document_name or None)
+    # Personal document: no shared or browser caching, and never guessed as anything but an image.
+    response['Cache-Control'] = 'private, no-store'
+    response['X-Content-Type-Options'] = 'nosniff'
+    return response
 
 
 @api_view(['PUT', 'PATCH', 'DELETE'])

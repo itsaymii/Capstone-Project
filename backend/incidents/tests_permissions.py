@@ -306,3 +306,59 @@ class OtherTeamVictimTests(AccessTestCase):
             data = self.report_from(client, report)
             self.assertEqual(len(data['victims']), 1)
             self.assertFalse(data['personalDataHidden'])
+
+
+class ResidencyProofAccessTests(AccessTestCase):
+    """Residency proof images (IDs, bills) are only for admins, never a public /media/ link."""
+
+    PNG = b'\x89PNG\r\n\x1a\n' + b'\x00' * 32
+
+    def setUp(self):
+        super().setUp()
+        import tempfile
+
+        from django.core.files.base import ContentFile
+        from django.test import override_settings
+
+        from accounts.models import ResidencyVerification
+
+        media = tempfile.TemporaryDirectory()
+        self.addCleanup(media.cleanup)
+        settings_override = override_settings(MEDIA_ROOT=media.name)
+        settings_override.enable()
+        self.addCleanup(settings_override.disable)
+
+        self.verification = ResidencyVerification(
+            user=self.citizen, email='cit@test.local', barangay_name='Cotta', residential_address='Purok 1',
+            proof_document_name='juan-id.png',
+        )
+        self.verification.proof_document.save('juan-id.png', ContentFile(self.PNG), save=True)
+        self.url = f'/dashboard/admin/accounts/{self.citizen.id}/residency-proof/'
+
+    def test_admin_gets_the_image(self):
+        response = self.client_for(self.admin).get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(b''.join(response.streaming_content), self.PNG)
+        self.assertEqual(response['Content-Type'], 'image/png')
+        self.assertEqual(response['Cache-Control'], 'private, no-store')
+
+    def test_others_cannot_get_the_image(self):
+        for user in (None, self.citizen, self.responder):
+            self.assertEqual(self.client_for(user).get(self.url).status_code, 403, user)
+
+    def test_account_list_links_to_the_admin_endpoint(self):
+        users = self.client_for(self.admin).get('/dashboard/admin/accounts/').json()['users']
+        citizen = next(user for user in users if user['id'] == self.citizen.id)
+        self.assertEqual(citizen['residencyProofUrl'], self.url)
+
+    def test_media_link_is_blocked(self):
+        from django.http import Http404
+        from django.test import RequestFactory
+
+        from config.urls import serve_public_media
+
+        request = RequestFactory().get('/media/')
+        stored = self.verification.proof_document.name  # residency_verification_documents/juan-id....png
+        for path in (stored, f'other/../{stored}', stored.upper(), f'./{stored}'):
+            with self.assertRaises(Http404, msg=path):
+                serve_public_media(request, path)
