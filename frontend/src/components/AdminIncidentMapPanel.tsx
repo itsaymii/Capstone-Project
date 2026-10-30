@@ -882,10 +882,11 @@ export function AdminIncidentMapPanel({
 
 
   useEffect(() => {
-    if (selectedType === 'EQ' && earthquakeEvents.length === 0 && eqFetchStatus === 'idle') {
+    // Load once. An empty feed is a valid answer: it must not trigger another load (and a map rebuild) forever.
+    if (selectedType === 'EQ' && eqLastRefreshed === null && eqFetchStatus === 'idle') {
       void loadEarthquakes()
     }
-  }, [selectedType, earthquakeEvents.length, eqFetchStatus, loadEarthquakes])
+  }, [selectedType, eqLastRefreshed, eqFetchStatus, loadEarthquakes])
 
   useEffect(() => {
     if (selectedType !== 'EQ' || faultLines || faultLineFetchStatus !== 'idle') return
@@ -949,12 +950,10 @@ export function AdminIncidentMapPanel({
 
     const isEqView = selectedType === 'EQ'
 
+    // Free to pan and zoom out; each view only starts on the Philippines (earthquakes) or Lucena.
     const map = L.map(mapContainerRef.current, {
       zoomControl: true,
       attributionControl: false,
-      maxBounds: isEqView ? philippinesBounds : lucenaBounds,
-      maxBoundsViscosity: 1,
-      minZoom: isEqView ? 6 : 12,
       maxZoom: 18,
     })
 
