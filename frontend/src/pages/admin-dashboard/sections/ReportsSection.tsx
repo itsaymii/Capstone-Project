@@ -7,6 +7,7 @@ import type { EarthquakeEvent } from '../../../services/earthquakes'
 import { glassPanelClass, glassPanelSoftClass } from './constants'
 import { LUCENA_BARANGAYS, toLucenaBarangay } from '../../../data/barangays'
 import { distanceKm } from '../../../data/evacuation'
+import { TEAM_NAMES } from '../../../data/teams'
 import { ANALYTICS_TYPES, getIncidentCategoryKey, getIncidentCategoryLabel, type AnalyticsTypeKey } from '../../../data/incidentCategories'
 import { formatDetailValue, getIncidentTypeConfig, type DetailValues } from '../../../data/incidentTypeFields'
 
@@ -185,6 +186,8 @@ export function ReportsSection({
   const [reportEndDate, setReportEndDate] = useState('')
   const [reportTypeFilter, setReportTypeFilter] = useState<ReportTypeFilter>('all')
   const [reportBarangayFilter, setReportBarangayFilter] = useState('all')
+  const [reportTeamFilter, setReportTeamFilter] = useState('all')
+  const [reportSortOrder, setReportSortOrder] = useState<'newest' | 'oldest'>('newest')
   const [reportStatusFilter, setReportStatusFilter] = useState<ReportStatusFilter>('approved')
 
   const normalizedDashboardSearchQuery = searchQuery.trim().toLowerCase()
@@ -269,16 +272,27 @@ export function ReportsSection({
       })
   }, [nearbyEarthquakes])
 
-  // Newest first across all sources; rows without a valid date go last.
+  // Newest or oldest first across all sources; rows without a valid date always go last.
   const unifiedHazardReportRows = useMemo(
     () =>
       [...earthquakeReportRows, ...incidentReportRows].sort((left, right) => {
-        const leftTime = isValidDate(left.dateValue) ? new Date(left.dateValue).getTime() : -Infinity
-        const rightTime = isValidDate(right.dateValue) ? new Date(right.dateValue).getTime() : -Infinity
-        return rightTime - leftTime
+        const leftValid = isValidDate(left.dateValue)
+        const rightValid = isValidDate(right.dateValue)
+        if (leftValid !== rightValid) return leftValid ? -1 : 1
+        if (!leftValid) return 0
+        const difference = new Date(left.dateValue).getTime() - new Date(right.dateValue).getTime()
+        return reportSortOrder === 'newest' ? -difference : difference
       }),
-    [earthquakeReportRows, incidentReportRows],
+    [earthquakeReportRows, incidentReportRows, reportSortOrder],
   )
+
+  // Alpha, Bravo, Charlie, then any other team found in the reports.
+  const teamOptions = useMemo(() => {
+    const others = Array.from(new Set(incidentReportRows.map((row) => row.responseTeam)))
+      .filter((team) => team && team !== '-' && !(TEAM_NAMES as readonly string[]).includes(team))
+      .sort((a, b) => a.localeCompare(b))
+    return [...TEAM_NAMES, ...others]
+  }, [incidentReportRows])
 
   function matchesReportDateRange(dateValue?: string): boolean {
     if (!reportStartDate && !reportEndDate) return true
@@ -311,6 +325,11 @@ export function ReportsSection({
     return approval !== 'pending'
   }
 
+  // Earthquakes have no team, so they only show with "All teams".
+  function matchesReportTeam(team: string): boolean {
+    return reportTeamFilter === 'all' || reportTeamFilter === team
+  }
+
   function matchesReportBarangay(barangay: string): boolean {
     return reportBarangayFilter === 'all' || reportBarangayFilter === barangay
   }
@@ -340,6 +359,7 @@ export function ReportsSection({
           matchesReportType(row.typeKey) &&
           matchesReportStatus(row.approval) &&
           matchesReportBarangay(row.barangay) &&
+          matchesReportTeam(row.responseTeam) &&
           matchesDashboardSearch(row) &&
           matchesReportDateRange(row.dateValue),
       ),
@@ -349,6 +369,7 @@ export function ReportsSection({
       reportTypeFilter,
       reportStatusFilter,
       reportBarangayFilter,
+      reportTeamFilter,
       normalizedDashboardSearchQuery,
       reportStartDate,
       reportEndDate,
@@ -361,6 +382,8 @@ export function ReportsSection({
     reportTypeFilter,
     reportStatusFilter,
     reportBarangayFilter,
+    reportTeamFilter,
+    reportSortOrder,
     normalizedDashboardSearchQuery,
     reportStartDate,
     reportEndDate,
@@ -387,6 +410,8 @@ export function ReportsSection({
     setReportTypeFilter('all')
     setReportStatusFilter('approved')
     setReportBarangayFilter('all')
+    setReportTeamFilter('all')
+    setReportSortOrder('newest')
   }
 
   // Every incident type, plus "Other" only when some old record matches none of them.
@@ -824,7 +849,7 @@ export function ReportsSection({
             </button>
           </div>
 
-          <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-5 [&>label]:min-w-0">
+          <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4 [&>label]:min-w-0">
             <label className="grid gap-2 text-sm font-medium text-slate-700">
               Start date (optional)
               <input
@@ -883,6 +908,32 @@ export function ReportsSection({
                 {LUCENA_BARANGAYS.map((barangay) => (
                   <option key={barangay} value={barangay}>{barangay}</option>
                 ))}
+              </select>
+            </label>
+
+            <label className="grid gap-2 text-sm font-medium text-slate-700">
+              Team
+              <select
+                className="w-full min-w-0 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-700"
+                onChange={(event) => setReportTeamFilter(event.target.value)}
+                value={reportTeamFilter}
+              >
+                <option value="all">All teams</option>
+                {teamOptions.map((team) => (
+                  <option key={team} value={team}>{team}</option>
+                ))}
+              </select>
+            </label>
+
+            <label className="grid gap-2 text-sm font-medium text-slate-700">
+              Sort
+              <select
+                className="w-full min-w-0 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-700"
+                onChange={(event) => setReportSortOrder(event.target.value as 'newest' | 'oldest')}
+                value={reportSortOrder}
+              >
+                <option value="newest">Newest first</option>
+                <option value="oldest">Oldest first</option>
               </select>
             </label>
           </div>
