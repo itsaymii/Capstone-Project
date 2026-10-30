@@ -14,10 +14,24 @@ Including another URLconf
     1. Import the include() function: from django.urls import include, path
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
+import posixpath
+
 from django.contrib import admin
 from django.conf import settings
-from django.conf.urls.static import static
-from django.urls import include, path
+from django.http import Http404
+from django.urls import include, path, re_path
+from django.views.static import serve
+
+# Folders under MEDIA_ROOT with personal documents. Admins open them through the API
+# (dashboard_account_residency_proof), never by their /media/ link.
+PRIVATE_MEDIA_FOLDERS = ('residency_verification_documents/',)
+
+
+def serve_public_media(request, path):
+    normalized = posixpath.normpath(path).lstrip('/').lower()
+    if normalized.startswith(PRIVATE_MEDIA_FOLDERS):
+        raise Http404('Not found.')
+    return serve(request, path, document_root=settings.MEDIA_ROOT)
 from rest_framework.response import Response
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.permissions import AllowAny
@@ -41,4 +55,4 @@ urlpatterns = [
 ]
 
 if settings.DEBUG:
-    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+    urlpatterns += [re_path(rf'^{settings.MEDIA_URL.lstrip("/")}(?P<path>.*)$', serve_public_media)]

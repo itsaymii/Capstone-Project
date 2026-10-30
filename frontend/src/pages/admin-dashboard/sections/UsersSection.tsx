@@ -1,6 +1,6 @@
 import axios from 'axios'
 import { useEffect, useMemo, useState } from 'react'
-import { createDashboardAccount, deleteDashboardAccount, getDashboardAccounts, updateDashboardAccount, updateDashboardResidencyVerification } from '../../../services/api'
+import { createDashboardAccount, deleteDashboardAccount, getDashboardAccounts, getResidencyProofImage, updateDashboardAccount, updateDashboardResidencyVerification } from '../../../services/api'
 import type { AuthUser, UserRole } from '../../../types/api'
 import { TEAM_NAMES } from '../../../data/teams'
 import { glassPanelClass, glassPanelSoftClass } from './constants'
@@ -128,6 +128,31 @@ export function UsersSection({ searchQuery = '' }: UsersSectionProps) {
   const [reviewingUserId, setReviewingUserId] = useState<number | null>(null)
   const [isUserModalOpen, setIsUserModalOpen] = useState(false)
   const [proofPreviewUser, setProofPreviewUser] = useState<AuthUser | null>(null)
+  // The loaded proof image (an object URL) or an error, for the account being previewed.
+  const [proofImage, setProofImage] = useState<{ userId?: number; url?: string; error?: string } | null>(null)
+  const proofPreviewUrl = proofPreviewUser?.residencyProofUrl
+
+  useEffect(() => {
+    if (!proofPreviewUrl) return
+    let objectUrl: string | undefined
+    let cancelled = false
+    const userId = proofPreviewUser?.id
+    getResidencyProofImage(proofPreviewUrl)
+      .then((blob) => {
+        if (cancelled) return
+        objectUrl = URL.createObjectURL(blob)
+        setProofImage({ userId, url: objectUrl })
+      })
+      .catch(() => {
+        if (!cancelled) setProofImage({ userId, error: 'Unable to load the residency proof right now.' })
+      })
+    return () => {
+      cancelled = true
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+    }
+  }, [proofPreviewUrl, proofPreviewUser?.id])
+
+  const shownProof = proofImage && proofImage.userId === proofPreviewUser?.id ? proofImage : null
 
   const normalizedSearchQuery = searchQuery.trim().toLowerCase()
 
@@ -710,11 +735,17 @@ export function UsersSection({ searchQuery = '' }: UsersSectionProps) {
                 </button>
               </div>
               <div className="max-h-[72vh] overflow-auto bg-slate-100 p-4">
-                <img
-                  alt={`Residency proof for ${proofPreviewUser.fullName}`}
-                  className="mx-auto max-h-[64vh] max-w-full rounded-lg bg-white object-contain shadow-sm"
-                  src={proofPreviewUser.residencyProofUrl}
-                />
+                {shownProof?.url ? (
+                  <img
+                    alt={`Residency proof for ${proofPreviewUser.fullName}`}
+                    className="mx-auto max-h-[64vh] max-w-full rounded-lg bg-white object-contain shadow-sm"
+                    src={shownProof.url}
+                  />
+                ) : (
+                  <p className={`py-16 text-center text-sm ${shownProof?.error ? 'font-medium text-red-700' : 'text-slate-500'}`}>
+                    {shownProof?.error ?? 'Loading residency proof...'}
+                  </p>
+                )}
               </div>
             </section>
           </div>
