@@ -4,6 +4,7 @@ import { LUCENA_BARANGAYS, toLucenaBarangay } from '../../../data/barangays'
 import { ANALYTICS_TYPES, getIncidentCategoryKey, type AnalyticsTypeKey } from '../../../data/incidentCategories'
 import { TEAM_NAMES, toTeamName } from '../../../data/teams'
 import { TablePagination } from '../../../components/TablePagination'
+import { filterControlClass, filterLabelClass } from './constants'
 import { PAGE_SIZE_OPTIONS, clampPage } from '../../../components/pagination'
 
 type ReportStatus = 'pending' | 'approved'
@@ -23,10 +24,6 @@ type Filters = {
 
 const EMPTY_FILTERS: Filters = { search: '', type: 'all', barangay: 'all', team: 'all', victims: 'all', from: '', to: '' }
 
-// Same look as the filters on the other admin pages (Accomplishment, Scoring, Mapping).
-const filterLabelClass = 'text-[11px] font-semibold uppercase tracking-[0.13em] text-slate-500'
-const filterControlClass =
-  'mt-1.5 block w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-800 outline-none transition hover:border-slate-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-100'
 
 function normalizeStatus(status?: string): ReportStatus {
   const value = String(status || '').trim().toLowerCase()

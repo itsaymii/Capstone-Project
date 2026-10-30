@@ -4,7 +4,7 @@ import { PAGE_SIZE_OPTIONS, clampPage } from '../../../components/pagination'
 import { jsPDF } from 'jspdf'
 import type { HazardIncident } from '../../../data/adminOperations'
 import type { EarthquakeEvent } from '../../../services/earthquakes'
-import { glassPanelClass, glassPanelSoftClass } from './constants'
+import { filterControlClass, filterLabelClass, glassPanelClass, glassPanelSoftClass } from './constants'
 import { LUCENA_BARANGAYS, toLucenaBarangay } from '../../../data/barangays'
 import { distanceKm } from '../../../data/evacuation'
 import { TEAM_NAMES } from '../../../data/teams'
@@ -423,6 +423,17 @@ export function ReportsSection({
     setReportTeamFilter('all')
     setReportSortOrder('newest')
   }
+
+  // Filters changed from their defaults (Approved only and Newest first are the defaults).
+  const activeFilterCount = [
+    reportStartDate,
+    reportEndDate,
+    reportTypeFilter !== 'all',
+    reportStatusFilter !== 'approved',
+    reportBarangayFilter !== 'all',
+    reportTeamFilter !== 'all',
+    reportSortOrder !== 'newest',
+  ].filter(Boolean).length
 
   // Every incident type, plus "Other" only when some old record matches none of them.
   const typeOptions = ANALYTICS_TYPES.filter(
@@ -1003,102 +1014,90 @@ export function ReportsSection({
               </div>
             </div>
 
-            <button
-              className="rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-              onClick={resetReportFilters}
-              type="button"
-            >
-              Clear filters
-            </button>
           </div>
 
-          <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4 [&>label]:min-w-0">
-            <label className="grid gap-2 text-sm font-medium text-slate-700">
-              Start date (optional)
-              <input
-                className="w-full min-w-0 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-700"
-                onChange={(event) => setReportStartDate(event.target.value)}
-                type="date"
-                value={reportStartDate}
-              />
-            </label>
+          <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 [&>label]:min-w-0">
+              <label className="block">
+                <span className={filterLabelClass}>From</span>
+                <input
+                  className={filterControlClass}
+                  max={reportEndDate || undefined}
+                  onChange={(event) => setReportStartDate(event.target.value)}
+                  type="date"
+                  value={reportStartDate}
+                />
+              </label>
+              <label className="block">
+                <span className={filterLabelClass}>To</span>
+                <input
+                  className={filterControlClass}
+                  min={reportStartDate || undefined}
+                  onChange={(event) => setReportEndDate(event.target.value)}
+                  type="date"
+                  value={reportEndDate}
+                />
+              </label>
+              <label className="block">
+                <span className={filterLabelClass}>Incident type</span>
+                <select className={filterControlClass} onChange={(event) => setReportTypeFilter(event.target.value as ReportTypeFilter)} value={reportTypeFilter}>
+                  <option value="all">All types</option>
+                  {typeOptions.map((type) => (
+                    <option key={type.key} value={type.key}>{type.label}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="block">
+                <span className={filterLabelClass}>Status</span>
+                <select className={filterControlClass} onChange={(event) => setReportStatusFilter(event.target.value as ReportStatusFilter)} value={reportStatusFilter}>
+                  <option value="approved">Approved only</option>
+                  <option value="pending">Pending review</option>
+                  <option value="all">All reports</option>
+                </select>
+              </label>
+              <label className="block">
+                <span className={filterLabelClass}>Barangay</span>
+                <select className={filterControlClass} onChange={(event) => setReportBarangayFilter(event.target.value)} value={reportBarangayFilter}>
+                  <option value="all">All barangays</option>
+                  {LUCENA_BARANGAYS.map((barangay) => (
+                    <option key={barangay} value={barangay}>{barangay}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="block">
+                <span className={filterLabelClass}>Team</span>
+                <select className={filterControlClass} onChange={(event) => setReportTeamFilter(event.target.value)} value={reportTeamFilter}>
+                  <option value="all">All teams</option>
+                  {teamOptions.map((team) => (
+                    <option key={team} value={team}>{team}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="block">
+                <span className={filterLabelClass}>Sort</span>
+                <select className={filterControlClass} onChange={(event) => setReportSortOrder(event.target.value as 'newest' | 'oldest')} value={reportSortOrder}>
+                  <option value="newest">Newest first</option>
+                  <option value="oldest">Oldest first</option>
+                </select>
+              </label>
+            </div>
 
-            <label className="grid gap-2 text-sm font-medium text-slate-700">
-              End date (optional)
-              <input
-                className="w-full min-w-0 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-700"
-                onChange={(event) => setReportEndDate(event.target.value)}
-                type="date"
-                value={reportEndDate}
-              />
-            </label>
-
-            <label className="grid gap-2 text-sm font-medium text-slate-700">
-              Type
-              <select
-                className="w-full min-w-0 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-700"
-                onChange={(event) => setReportTypeFilter(event.target.value as ReportTypeFilter)}
-                value={reportTypeFilter}
-              >
-                <option value="all">All types</option>
-                {typeOptions.map((type) => (
-                  <option key={type.key} value={type.key}>{type.label}</option>
-                ))}
-              </select>
-            </label>
-
-            <label className="grid gap-2 text-sm font-medium text-slate-700">
-              Status
-              <select
-                className="w-full min-w-0 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-700"
-                onChange={(event) => setReportStatusFilter(event.target.value as ReportStatusFilter)}
-                value={reportStatusFilter}
-              >
-                <option value="approved">Approved only</option>
-                <option value="pending">Pending review</option>
-                <option value="all">All reports</option>
-              </select>
-            </label>
-
-            <label className="grid gap-2 text-sm font-medium text-slate-700">
-              Barangay
-              <select
-                className="w-full min-w-0 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-700"
-                onChange={(event) => setReportBarangayFilter(event.target.value)}
-                value={reportBarangayFilter}
-              >
-                <option value="all">All barangays</option>
-                {LUCENA_BARANGAYS.map((barangay) => (
-                  <option key={barangay} value={barangay}>{barangay}</option>
-                ))}
-              </select>
-            </label>
-
-            <label className="grid gap-2 text-sm font-medium text-slate-700">
-              Team
-              <select
-                className="w-full min-w-0 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-700"
-                onChange={(event) => setReportTeamFilter(event.target.value)}
-                value={reportTeamFilter}
-              >
-                <option value="all">All teams</option>
-                {teamOptions.map((team) => (
-                  <option key={team} value={team}>{team}</option>
-                ))}
-              </select>
-            </label>
-
-            <label className="grid gap-2 text-sm font-medium text-slate-700">
-              Sort
-              <select
-                className="w-full min-w-0 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-700"
-                onChange={(event) => setReportSortOrder(event.target.value as 'newest' | 'oldest')}
-                value={reportSortOrder}
-              >
-                <option value="newest">Newest first</option>
-                <option value="oldest">Oldest first</option>
-              </select>
-            </label>
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-sm">
+              <p className="text-slate-500">
+                {filteredUnifiedHazardReportRows.length.toLocaleString()} report
+                {filteredUnifiedHazardReportRows.length === 1 ? '' : 's'} match
+                {activeFilterCount > 0 ? ` ${activeFilterCount} changed filter${activeFilterCount === 1 ? '' : 's'}.` : ' the default filters.'}
+              </p>
+              {activeFilterCount > 0 ? (
+                <button
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50"
+                  onClick={resetReportFilters}
+                  type="button"
+                >
+                  Clear filters
+                </button>
+              ) : null}
+            </div>
           </div>
 
           {searchQuery.trim() ? (
