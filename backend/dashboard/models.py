@@ -100,6 +100,28 @@ class SimulationQuizAttempt(models.Model):
 		return f"Attempt {self.user_id} - quiz {self.quiz_id} ({self.score}%)"
 
 
+class SimulationExamAttempt(models.Model):
+	"""An attempt at an exam lesson from the course catalog, graded on the server."""
+
+	user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='simulation_exam_attempts')
+	course_id = models.CharField(max_length=120, db_index=True)
+	lesson_id = models.CharField(max_length=120)
+	answers = models.JSONField(default=dict, blank=True)
+	score = models.PositiveSmallIntegerField(default=0)
+	total_questions = models.PositiveSmallIntegerField(default=0)
+	passed = models.BooleanField(default=False)
+	attempted_at = models.DateTimeField(auto_now_add=True)
+
+	class Meta:
+		ordering = ['-attempted_at', '-id']
+		indexes = [
+			models.Index(fields=['user', 'course_id', 'lesson_id', 'attempted_at']),
+		]
+
+	def __str__(self):
+		return f"Exam attempt {self.user_id} - {self.course_id}:{self.lesson_id} ({self.score}%)"
+
+
 class SimulationCourseCatalog(models.Model):
 	key = models.CharField(max_length=64, unique=True, default='default')
 	courses = models.JSONField(default=list, blank=True)

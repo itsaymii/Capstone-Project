@@ -9,6 +9,7 @@ import {
   getMySimulationCertificates,
   requestSimulationCertificate,
   saveSimulationProgress,
+  submitSimulationExamAttempt,
   submitSimulationQuizAttempt,
 } from '../../services/api'
 import {
@@ -19,16 +20,17 @@ import {
   normalizeVideoUrl,
   type SimulationCourse,
 } from '../../services/simulationCourses'
-import type { SimulationCertificate, SimulationLearnerQuiz, SimulationQuizSubmitResponse } from '../../types/api'
+import type {
+  SimulationCertificate,
+  SimulationExamSubmitResponse,
+  SimulationLearnerQuiz,
+  SimulationQuizSubmitResponse,
+} from '../../types/api'
 
 type CourseStatus = 'Not Started' | 'In Progress' | 'Completed'
 
-type ExamAttemptResult = {
+type ExamAttemptResult = SimulationExamSubmitResponse & {
   moduleKey: string
-  score: number
-  total: number
-  passed: boolean
-  unanswered: number
 }
 
 type ModuleQuizAttemptResult = SimulationQuizSubmitResponse & {
@@ -206,6 +208,7 @@ export function SimulationPage() {
   const [moduleQuizAttemptResult, setModuleQuizAttemptResult] = useState<ModuleQuizAttemptResult | null>(null)
   const [moduleQuizLoading, setModuleQuizLoading] = useState(false)
   const [moduleQuizError, setModuleQuizError] = useState('')
+  const [examError, setExamError] = useState('')
   const [hasLoadedProgress, setHasLoadedProgress] = useState(false)
   const [completedCourseTitle, setCompletedCourseTitle] = useState<string | null>(null)
   const [certificateCourseId, setCertificateCourseId] = useState<string | null>(null)
@@ -389,6 +392,7 @@ export function SimulationPage() {
     }
 
     setExamAttemptResult((previous) => (previous?.moduleKey === currentLessonProgressKey ? previous : null))
+    setExamError('')
     setModuleQuizAttemptResult((previous) => (previous?.moduleKey === currentLessonProgressKey ? previous : null))
   }, [currentLessonProgressKey])
 
@@ -514,7 +518,14 @@ export function SimulationPage() {
     }
 
     const answers = moduleQuizSelections[currentLessonProgressKey] ?? {}
+    // Unanswered questions are not sent: a submitted quiz uses up one of the daily attempts.
+    const unanswered = moduleQuiz.questions.filter((question) => answers[String(question.id)] === undefined).length
+    if (unanswered > 0) {
+      setModuleQuizError(`Answer all questions first. ${unanswered} remaining.`)
+      return
+    }
 
+    setModuleQuizError('')
     try {
       const response = await submitSimulationQuizAttempt(moduleQuiz.id, answers)
       setModuleQuizAttemptResult({
@@ -538,42 +549,29 @@ export function SimulationPage() {
     }
   }
 
-  function handleSubmitExam() {
-    if (!activeLesson || activeLesson.lessonType !== 'exam' || !currentLessonProgressKey) {
+  async function handleSubmitExam(): Promise<void> {
+    if (!activeCourse || !activeLesson || activeLesson.lessonType !== 'exam' || !currentLessonProgressKey) {
       return
     }
 
     const selectedAnswers = examSelections[currentLessonProgressKey] ?? {}
-    const totalQuestions = activeLesson.examQuestions.length
     const unanswered = activeLesson.examQuestions.filter((question) => selectedAnswers[question.id] === undefined).length
-
-    if (totalQuestions === 0) {
-      setExamAttemptResult({
-        moduleKey: currentLessonProgressKey,
-        score: 0,
-        total: 0,
-        passed: false,
-        unanswered: 0,
-      })
+    if (unanswered > 0) {
+      setExamError(`Answer all questions first. ${unanswered} remaining.`)
       return
     }
 
-    const correctAnswers = activeLesson.examQuestions.reduce((total, question) => {
-      return total + (selectedAnswers[question.id] === question.correctOptionIndex ? 1 : 0)
-    }, 0)
-    const score = Math.round((correctAnswers / totalQuestions) * 100)
-    const passed = unanswered === 0 && score >= activeLesson.passingScore
-
-    setExamAttemptResult({
-      moduleKey: currentLessonProgressKey,
-      score,
-      total: totalQuestions,
-      passed,
-      unanswered,
-    })
-
-    if (passed) {
-      handleMarkCurrentModuleComplete()
+    // The server grades the exam: learners do not receive the correct answers.
+    setExamError('')
+    const moduleKey = currentLessonProgressKey
+    try {
+      const response = await submitSimulationExamAttempt(activeCourse.id, activeLesson.id, selectedAnswers)
+      setExamAttemptResult({ ...response, moduleKey })
+      if (response.passed) {
+        handleMarkCurrentModuleComplete()
+      }
+    } catch (error) {
+      setExamError(error instanceof Error ? error.message : 'Failed to submit the exam.')
     }
   }
 
@@ -1091,10 +1089,13 @@ export function SimulationPage() {
                             <p className="font-semibold">
                               {moduleQuizAttemptResult.passed
                                 ? `Passed with ${moduleQuizAttemptResult.score}%`
-                                : moduleQuizAttemptResult.unanswered > 0
-                                  ? `Answer all questions first. ${moduleQuizAttemptResult.unanswered} remaining.`
-                                  : `Score: ${moduleQuizAttemptResult.score}% of ${moduleQuizAttemptResult.requiredScore}% required.`}
+                                : `Score: ${moduleQuizAttemptResult.score}% of ${moduleQuizAttemptResult.requiredScore}% required.`}
                             </p>
+                            {!moduleQuizAttemptResult.passed ? (
+                              <p className="mt-1 text-xs">
+                                The answers are shown once you pass. {moduleQuizAttemptResult.attemptsLeft} of 3 attempts left for the next 24 hours.
+                              </p>
+                            ) : null}
                           </div>
                         ) : null}
 
@@ -1115,7 +1116,7 @@ export function SimulationPage() {
                           </div>
                           <button
                             className="rounded-xl bg-[linear-gradient(135deg,#0b2a57,#1a4a8c)] px-4 py-2 text-xs font-bold uppercase tracking-[0.08em] text-white transition hover:brightness-110"
-                            onClick={handleSubmitExam}
+                            onClick={() => void handleSubmitExam()}
                             type="button"
                           >
                             Submit Exam
@@ -1126,8 +1127,8 @@ export function SimulationPage() {
                           <div className="mt-4 space-y-4">
                             {activeLesson.examQuestions.map((question, questionIndex) => {
                               const selectedAnswer = currentLessonProgressKey ? examSelections[currentLessonProgressKey]?.[question.id] : undefined
-                              const showExplanation = Boolean(examAttemptResult)
-                              const isCorrect = selectedAnswer === question.correctOptionIndex
+                              // Filled in by the server only after a passed attempt.
+                              const detail = examAttemptResult?.details.find((item) => item.questionId === question.id)
 
                               return (
                                 <article className="rounded-xl border border-slate-200 bg-white p-4" key={question.id}>
@@ -1149,10 +1150,10 @@ export function SimulationPage() {
                                     ))}
                                   </div>
 
-                                  {showExplanation && selectedAnswer !== undefined ? (
-                                    <div className={`mt-3 rounded-xl border px-3 py-2 text-xs ${isCorrect ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-red-200 bg-red-50 text-red-800'}`}>
-                                      <p className="font-semibold">{isCorrect ? 'Correct' : 'Incorrect'}</p>
-                                      {question.explanation ? <p className="mt-1">{question.explanation}</p> : null}
+                                  {detail ? (
+                                    <div className={`mt-3 rounded-xl border px-3 py-2 text-xs ${detail.isCorrect ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-red-200 bg-red-50 text-red-800'}`}>
+                                      <p className="font-semibold">{detail.isCorrect ? 'Correct' : 'Incorrect'}</p>
+                                      {detail.explanation ? <p className="mt-1">{detail.explanation}</p> : null}
                                     </div>
                                   ) : null}
                                 </article>
@@ -1168,10 +1169,19 @@ export function SimulationPage() {
                             <p className="font-semibold">
                               {examAttemptResult.passed
                                 ? `Passed with ${examAttemptResult.score}%`
-                                : examAttemptResult.unanswered > 0
-                                  ? `Answer all questions first. ${examAttemptResult.unanswered} remaining.`
-                                  : `Score: ${examAttemptResult.score}% of ${activeLesson.passingScore}% required.`}
+                                : `Score: ${examAttemptResult.score}% of ${examAttemptResult.requiredScore}% required.`}
                             </p>
+                            {!examAttemptResult.passed ? (
+                              <p className="mt-1 text-xs">
+                                The answers are shown once you pass. {examAttemptResult.attemptsLeft} of 3 attempts left for the next 24 hours.
+                              </p>
+                            ) : null}
+                          </div>
+                        ) : null}
+
+                        {examError ? (
+                          <div className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
+                            {examError}
                           </div>
                         ) : null}
                       </div>
@@ -1214,7 +1224,7 @@ export function SimulationPage() {
                 </div>
 
                 <div className="flex flex-wrap gap-2">
-                  {!isCurrentLessonCompleted && activeLesson?.lessonType !== 'exam' ? (
+                  {!isCurrentLessonCompleted && activeLesson?.lessonType !== 'exam' && !moduleQuiz ? (
                     <div className="w-full rounded-xl border border-amber-200 bg-amber-50 p-2.5">
                       <p className="text-xs font-semibold text-amber-700">
                         {activeLesson?.lessonType === 'lesson'
@@ -1231,9 +1241,9 @@ export function SimulationPage() {
                     </div>
                   ) : null}
 
-                  {!isCurrentLessonCompleted && activeLesson?.lessonType === 'exam' ? (
+                  {!isCurrentLessonCompleted && (activeLesson?.lessonType === 'exam' || moduleQuiz) ? (
                     <div className="w-full rounded-xl border border-amber-200 bg-amber-50 p-2.5 text-xs font-semibold text-amber-700">
-                      Pass the exam to unlock the next module.
+                      {moduleQuiz ? 'Pass the module quiz to unlock the next module.' : 'Pass the exam to unlock the next module.'}
                     </div>
                   ) : null}
 

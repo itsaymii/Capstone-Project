@@ -19,6 +19,7 @@ from accounts.models import AccountProfile, OneTimePassword, ResidencyVerificati
 from .models import (
     SimulationCertificate,
     SimulationCourseCatalog,
+    SimulationExamAttempt,
     SimulationModuleQuiz,
     SimulationProgress,
     SimulationQuizAttempt,
@@ -654,6 +655,102 @@ def _serialize_quiz_for_learner(quiz: SimulationModuleQuiz) -> dict:
     }
 
 
+# Quizzes and exams: at most this many attempts per quiz in any 24 hours.
+SIMULATION_MAX_ATTEMPTS = 3
+SIMULATION_ATTEMPT_WINDOW = timedelta(hours=24)
+
+
+def _get_catalog_courses() -> list[dict]:
+    catalog = SimulationCourseCatalog.objects.filter(key='default').first()
+    courses = catalog.courses if catalog and isinstance(catalog.courses, list) else []
+    try:
+        return _sanitize_simulation_courses(courses)
+    except ValidationError:
+        return []
+
+
+def _find_catalog_course(course_id: str) -> dict | None:
+    return next((course for course in _get_catalog_courses() if course['id'] == course_id), None)
+
+
+def _hide_exam_answers(courses: list[dict]) -> list[dict]:
+    """Learners get the exam questions without the correct answers; exams are graded on the server."""
+    for course in courses:
+        for lesson in course.get('lessonOutline', []):
+            lesson['examQuestions'] = [
+                {'id': question['id'], 'prompt': question['prompt'], 'options': question['options']}
+                for question in lesson.get('examQuestions', [])
+            ]
+    return courses
+
+
+def _attempt_limit(recent_attempts) -> tuple[int, int]:
+    """(attempts left, seconds until the next attempt is allowed) for attempts on one quiz or exam."""
+    window_start = timezone.now() - SIMULATION_ATTEMPT_WINDOW
+    recent = list(recent_attempts.filter(attempted_at__gte=window_start).order_by('attempted_at').values_list('attempted_at', flat=True))
+    attempts_left = max(0, SIMULATION_MAX_ATTEMPTS - len(recent))
+    if attempts_left > 0:
+        return attempts_left, 0
+    retry_after = recent[0] + SIMULATION_ATTEMPT_WINDOW - timezone.now()
+    return 0, max(1, int(retry_after.total_seconds()))
+
+
+def _too_many_attempts(retry_after_seconds: int) -> Response:
+    hours = max(1, round(retry_after_seconds / 3600))
+    return Response(
+        {
+            'error': f'You have used all {SIMULATION_MAX_ATTEMPTS} attempts for the last 24 hours. Try again in about {hours} hour{"s" if hours != 1 else ""}.',
+            'retryAfterSeconds': retry_after_seconds,
+        },
+        status=status.HTTP_429_TOO_MANY_REQUESTS,
+    )
+
+
+def _missing_course_requirements(user: User, course_id: str, course: dict | None) -> tuple[list[str], timezone.datetime | None]:
+    """
+    What the user still has to pass, checked on the server: every exam lesson of the course and
+    every published module quiz of its lessons. Returns (titles still missing, time of the last pass).
+    """
+    missing: list[str] = []
+    passed_times = []
+    lesson_titles = {lesson['id']: lesson['title'] for lesson in (course or {}).get('lessonOutline', [])}
+
+    for lesson in (course or {}).get('lessonOutline', []):
+        if lesson['lessonType'] != 'exam' or not lesson['examQuestions']:
+            continue
+        last_pass = (
+            SimulationExamAttempt.objects.filter(user=user, course_id=course_id, lesson_id=lesson['id'], passed=True)
+            .order_by('-attempted_at')
+            .first()
+        )
+        if last_pass:
+            passed_times.append(last_pass.attempted_at)
+        else:
+            missing.append(f"{lesson['title']} (exam)")
+
+    quiz_lessons = (
+        SimulationModuleQuiz.objects.filter(course_id=course_id, status=SimulationModuleQuiz.STATUS_PUBLISHED)
+        .values_list('lesson_id', 'lesson_title')
+        .distinct()
+    )
+    checked_lessons = set()
+    for lesson_id, lesson_title in quiz_lessons:
+        if lesson_id in checked_lessons or (course and lesson_id not in lesson_titles):
+            continue
+        checked_lessons.add(lesson_id)
+        last_pass = (
+            SimulationQuizAttempt.objects.filter(user=user, quiz__course_id=course_id, quiz__lesson_id=lesson_id, passed=True)
+            .order_by('-attempted_at')
+            .first()
+        )
+        if last_pass:
+            passed_times.append(last_pass.attempted_at)
+        else:
+            missing.append(f"{lesson_titles.get(lesson_id) or lesson_title or lesson_id} (module quiz)")
+
+    return missing, max(passed_times) if passed_times else None
+
+
 @api_view(['GET', 'PUT'])
 @permission_classes([IsAuthenticated])
 def simulation_progress(request):
@@ -693,6 +790,10 @@ def simulation_courses(request):
         sanitized_courses = _sanitize_simulation_courses(courses)
     except ValidationError:
         sanitized_courses = []
+
+    # Admins edit the exams, so they need the answers; everyone else only gets the questions.
+    if get_user_role(request.user) != AccountProfile.ROLE_ADMIN:
+        sanitized_courses = _hide_exam_answers(sanitized_courses)
 
     return Response({'courses': sanitized_courses}, status=status.HTTP_200_OK)
 
@@ -957,6 +1058,20 @@ def simulation_submit_quiz_attempt(request, quiz_id: int):
     if total_questions == 0:
         return Response({'error': 'This quiz has no questions.'}, status=status.HTTP_400_BAD_REQUEST)
 
+    # An incomplete answer sheet is not graded and does not use up an attempt.
+    unanswered_count = sum(1 for question in questions if raw_answers.get(str(question.id)) in (None, ''))
+    if unanswered_count:
+        return Response(
+            {'error': f'Answer all questions first. {unanswered_count} remaining.', 'unanswered': unanswered_count},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    attempts_left, retry_after = _attempt_limit(
+        SimulationQuizAttempt.objects.filter(user=request.user, quiz__course_id=quiz.course_id, quiz__lesson_id=quiz.lesson_id)
+    )
+    if attempts_left == 0:
+        return _too_many_attempts(retry_after)
+
     correct_count = 0
     unanswered = 0
     details = []
@@ -1020,7 +1135,94 @@ def simulation_submit_quiz_attempt(request, quiz_id: int):
             'passed': passed,
             'unanswered': unanswered,
             'requiredScore': quiz.passing_score,
-            'details': details,
+            # The answers are only shown after passing, so a failed attempt does not give them away.
+            'details': details if passed else [],
+            'attemptsLeft': attempts_left - 1,
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def simulation_submit_exam_attempt(request):
+    """Grade an exam lesson from the course catalog on the server (learners never get the answers)."""
+    course_id = str(request.data.get('courseId') or '').strip()
+    lesson_id = str(request.data.get('lessonId') or '').strip()
+    raw_answers = request.data.get('answers')
+
+    if not course_id or not lesson_id:
+        return Response({'error': 'courseId and lessonId are required.'}, status=status.HTTP_400_BAD_REQUEST)
+    if not isinstance(raw_answers, dict):
+        return Response({'error': 'answers must be an object keyed by question id.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    course = _find_catalog_course(course_id)
+    lesson = next((item for item in (course or {}).get('lessonOutline', []) if item['id'] == lesson_id), None)
+    if not lesson or lesson['lessonType'] != 'exam' or not lesson['examQuestions']:
+        return Response({'error': 'Exam not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+    questions = lesson['examQuestions']
+    answers: dict[str, int] = {}
+    for question in questions:
+        try:
+            answers[question['id']] = int(raw_answers.get(question['id']))
+        except (TypeError, ValueError):
+            continue
+
+    unanswered = len(questions) - len(answers)
+    if unanswered:
+        return Response(
+            {'error': f'Answer all questions first. {unanswered} remaining.', 'unanswered': unanswered},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    attempts_left, retry_after = _attempt_limit(
+        SimulationExamAttempt.objects.filter(user=request.user, course_id=course_id, lesson_id=lesson_id)
+    )
+    if attempts_left == 0:
+        return _too_many_attempts(retry_after)
+
+    correct_count = sum(1 for question in questions if answers[question['id']] == question['correctOptionIndex'])
+    score = round((correct_count / len(questions)) * 100)
+    passed = score >= lesson['passingScore']
+
+    SimulationExamAttempt.objects.create(
+        user=request.user,
+        course_id=course_id,
+        lesson_id=lesson_id,
+        answers=answers,
+        score=score,
+        total_questions=len(questions),
+        passed=passed,
+    )
+
+    if passed:
+        progress, _ = SimulationProgress.objects.get_or_create(user=request.user)
+        completed_map = progress.completed_lesson_videos if isinstance(progress.completed_lesson_videos, dict) else {}
+        completed_map[f'{course_id}:{lesson_id}'] = True
+        progress.completed_lesson_videos = completed_map
+        progress.save(update_fields=['completed_lesson_videos', 'updated_at'])
+
+    details = [
+        {
+            'questionId': question['id'],
+            'selectedOptionIndex': answers[question['id']],
+            'correctOptionIndex': question['correctOptionIndex'],
+            'isCorrect': answers[question['id']] == question['correctOptionIndex'],
+            'explanation': question['explanation'],
+        }
+        for question in questions
+    ]
+
+    return Response(
+        {
+            'score': score,
+            'totalQuestions': len(questions),
+            'passed': passed,
+            'unanswered': 0,
+            'requiredScore': lesson['passingScore'],
+            'details': details if passed else [],
+            'attemptsLeft': attempts_left - 1,
         },
         status=status.HTTP_200_OK,
     )
@@ -1061,6 +1263,13 @@ def simulation_request_certificate(request):
     if not course_id:
         return Response({'error': 'courseId is required.'}, status=status.HTTP_400_BAD_REQUEST)
 
+    # The course must exist (once admins have published courses) and its title comes from the catalog.
+    catalog_courses = _get_catalog_courses()
+    course = next((item for item in catalog_courses if item['id'] == course_id), None)
+    if catalog_courses and course is None:
+        return Response({'error': 'This course is not available.'}, status=status.HTTP_404_NOT_FOUND)
+    course_title = course['title'] if course else course_title[:255]
+
     progress, _ = SimulationProgress.objects.get_or_create(user=request.user)
     completed_courses = progress.completed_courses if isinstance(progress.completed_courses, dict) else {}
     completed_at_raw = completed_courses.get(course_id)
@@ -1071,10 +1280,21 @@ def simulation_request_certificate(request):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    try:
-        completed_at = timezone.datetime.fromisoformat(str(completed_at_raw).replace('Z', '+00:00'))
-    except ValueError:
-        completed_at = timezone.now()
+    # The browser only says the course is finished; the server checks every exam and quiz was passed.
+    missing, last_passed_at = _missing_course_requirements(request.user, course_id, course)
+    if missing:
+        return Response(
+            {'error': f"Pass these first: {', '.join(missing)}.", 'missing': missing},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if last_passed_at:
+        completed_at = last_passed_at
+    else:
+        try:
+            completed_at = timezone.datetime.fromisoformat(str(completed_at_raw).replace('Z', '+00:00'))
+        except ValueError:
+            completed_at = timezone.now()
 
     certificate, created = SimulationCertificate.objects.get_or_create(
         user=request.user,
@@ -1161,16 +1381,20 @@ def simulation_admin_reset_progress(request):
 
     progress_qs = SimulationProgress.objects.all()
     attempts_qs = SimulationQuizAttempt.objects.all()
+    exam_attempts_qs = SimulationExamAttempt.objects.all()
     certificates_qs = SimulationCertificate.objects.all()
 
     if user_id:
         progress_qs = progress_qs.filter(user_id=user_id)
         attempts_qs = attempts_qs.filter(user_id=user_id)
+        exam_attempts_qs = exam_attempts_qs.filter(user_id=user_id)
         certificates_qs = certificates_qs.filter(user_id=user_id)
 
     reset_users = progress_qs.count()
     progress_qs.update(course_progress={}, completed_lesson_videos={}, completed_courses={})
     deleted_attempts, _ = attempts_qs.delete()
+    deleted_exam_attempts, _ = exam_attempts_qs.delete()
+    deleted_attempts += deleted_exam_attempts
     deleted_certificates, _ = certificates_qs.delete()
 
     return Response(
