@@ -6,6 +6,7 @@ import type { HazardIncident } from '../../../data/adminOperations'
 import type { EarthquakeEvent } from '../../../services/earthquakes'
 import { glassPanelClass, glassPanelSoftClass } from './constants'
 import { distanceKm } from '../../../data/evacuation'
+import { formatDetailValue, getIncidentTypeConfig, type DetailValues } from '../../../data/incidentTypeFields'
 
 type ReportHazardFilter = 'all' | 'FR' | 'EQ' | 'AC'
 
@@ -71,6 +72,27 @@ const hazardTypeLabels: Record<'FR' | 'EQ' | 'AC', string> = {
   FR: 'Fire',
   EQ: 'Earthquake',
   AC: 'Accident',
+}
+
+// The detail that best answers "what caused it / what was it" for each incident type.
+const CAUSE_FIELDS = ['suspected_cause', 'crime_type', 'chief_complaint', 'transport_reason', 'activity', 'event_name']
+
+/**
+ * The cause from the report's type-specific details, e.g. "Electrical" for a fire.
+ * The free-text description is not used: it can name victims and is too long for a table.
+ */
+function getReportCause(incidentType: string, details: unknown): string {
+  const config = getIncidentTypeConfig(incidentType)
+  if (!config || !details || typeof details !== 'object') return 'Not stated'
+
+  const values = details as DetailValues
+  for (const name of CAUSE_FIELDS) {
+    const spec = config.fields.find((field) => field.name === name)
+    if (!spec) continue
+    const text = formatDetailValue(spec, values[name])
+    if (text !== '-') return name === 'event_name' ? `Stand-by: ${text}` : text
+  }
+  return 'Not stated'
 }
 
 function getSentViaLabel(createdByRole: string): string {
@@ -194,7 +216,7 @@ export function ReportsSection({
         dateTime: formatReportDateTime(dateValue),
         responseTeam: incident.responseTeam || '-',
         magnitude: '-',
-        cause: (incident.description && incident.description !== '-' ? incident.description : '') || 'Under investigation',
+        cause: getReportCause(incidentType, record.details),
         // Severity of the linked incident, or the backend's rule while there is none (see the dashboard).
         severity: incident.severity || '-',
         victims: victims || (isResponderReport ? '0' : '-'),
@@ -234,7 +256,7 @@ export function ReportsSection({
           // No DRRMO team or assessment is attached to a feed record: only the measured values.
           responseTeam: '-',
           magnitude: event.magnitude.toFixed(1),
-          cause: 'Tectonic movement detected by USGS feed',
+          cause: '-',
           severity: '-',
           victims: '-',
           incidentStatus: '-',
@@ -800,11 +822,11 @@ export function ReportsSection({
             </button>
           </div>
 
-          <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+          <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-5 [&>label]:min-w-0">
             <label className="grid gap-2 text-sm font-medium text-slate-700">
               Start date (optional)
               <input
-                className="rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-700"
+                className="w-full min-w-0 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-700"
                 onChange={(event) => setReportStartDate(event.target.value)}
                 type="date"
                 value={reportStartDate}
@@ -814,7 +836,7 @@ export function ReportsSection({
             <label className="grid gap-2 text-sm font-medium text-slate-700">
               End date (optional)
               <input
-                className="rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-700"
+                className="w-full min-w-0 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-700"
                 onChange={(event) => setReportEndDate(event.target.value)}
                 type="date"
                 value={reportEndDate}
@@ -824,7 +846,7 @@ export function ReportsSection({
             <label className="grid gap-2 text-sm font-medium text-slate-700">
               Type
               <select
-                className="rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-700"
+                className="w-full min-w-0 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-700"
                 onChange={(event) => setReportHazardFilter(event.target.value as ReportHazardFilter)}
                 value={reportHazardFilter}
               >
@@ -838,7 +860,7 @@ export function ReportsSection({
             <label className="grid gap-2 text-sm font-medium text-slate-700">
               Status
               <select
-                className="rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-700"
+                className="w-full min-w-0 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-700"
                 onChange={(event) => setReportStatusFilter(event.target.value as ReportStatusFilter)}
                 value={reportStatusFilter}
               >
@@ -851,7 +873,7 @@ export function ReportsSection({
             <label className="grid gap-2 text-sm font-medium text-slate-700">
               Location / Barangay
               <input
-                className="rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-700"
+                className="w-full min-w-0 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-700"
                 onChange={(event) => setReportLocationFilter(event.target.value)}
                 placeholder="Filter by location"
                 type="text"
