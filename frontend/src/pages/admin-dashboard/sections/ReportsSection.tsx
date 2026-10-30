@@ -459,6 +459,62 @@ export function ReportsSection({
     (type) => type.key !== 'other' || incidentReportRows.some((row) => row.typeKey === 'other'),
   )
 
+  // Totals for the summary cards, counted from the same rows as the table and exports.
+  const reportSummary = useMemo(() => {
+    const incidents = filteredUnifiedHazardReportRows.filter((row) => row.approval !== 'feed')
+    const mostCommon = (values: string[]) => {
+      const counts = new Map<string, number>()
+      values.forEach((value) => counts.set(value, (counts.get(value) ?? 0) + 1))
+      return [...counts.entries()].sort((left, right) => right[1] - left[1])[0] ?? null
+    }
+
+    return {
+      total: filteredUnifiedHazardReportRows.length,
+      incidentCount: incidents.length,
+      earthquakeCount: filteredUnifiedHazardReportRows.length - incidents.length,
+      victims: incidents.reduce((sum, row) => sum + (Number.parseInt(row.victims, 10) || 0), 0),
+      reportsWithVictims: incidents.filter((row) => (Number.parseInt(row.victims, 10) || 0) > 0).length,
+      highSeverity: incidents.filter((row) => ['high', 'critical'].includes(row.severity.toLowerCase())).length,
+      topBarangay: mostCommon(incidents.map((row) => row.barangay).filter(Boolean)),
+      topType: mostCommon(incidents.map((row) => row.reportType)),
+    }
+  }, [filteredUnifiedHazardReportRows])
+
+  const summaryCards = [
+    {
+      label: 'Reports',
+      value: reportSummary.total.toLocaleString(),
+      note: `${reportSummary.incidentCount.toLocaleString()} incident${reportSummary.incidentCount === 1 ? '' : 's'}, ${reportSummary.earthquakeCount.toLocaleString()} earthquake${reportSummary.earthquakeCount === 1 ? '' : 's'}`,
+    },
+    {
+      label: 'Victims',
+      value: reportSummary.victims.toLocaleString(),
+      note: `In ${reportSummary.reportsWithVictims.toLocaleString()} report${reportSummary.reportsWithVictims === 1 ? '' : 's'}`,
+    },
+    {
+      label: 'High or critical',
+      value: reportSummary.highSeverity.toLocaleString(),
+      note:
+        reportSummary.incidentCount > 0
+          ? `${Math.round((reportSummary.highSeverity / reportSummary.incidentCount) * 100)}% of incidents`
+          : 'No incidents',
+    },
+    {
+      label: 'Top barangay',
+      isName: true,
+      value: reportSummary.topBarangay?.[0] ?? '-',
+      note: reportSummary.topBarangay
+        ? `${reportSummary.topBarangay[1]} report${reportSummary.topBarangay[1] === 1 ? '' : 's'}`
+        : 'No barangay named',
+    },
+    {
+      label: 'Most common type',
+      isName: true,
+      value: reportSummary.topType?.[0] ?? '-',
+      note: reportSummary.topType ? `${reportSummary.topType[1]} report${reportSummary.topType[1] === 1 ? '' : 's'}` : 'No incidents',
+    },
+  ]
+
   // Shown under the filters so it is clear pending reports exist but are left out.
   const hiddenPendingCount =
     reportStatusFilter === 'approved' ? incidentReportRows.filter((row) => row.approval === 'pending').length : 0
@@ -1062,7 +1118,21 @@ export function ReportsSection({
 
           </div>
 
-          <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+          <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-5" aria-label="Report summary">
+            {summaryCards.map((card) => (
+              <div className="min-w-0 rounded-2xl border border-slate-200 bg-white px-4 py-3" key={card.label}>
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{card.label}</p>
+                <p
+                  className={`mt-1 font-bold text-slate-900 ${'isName' in card ? 'pt-1 text-lg leading-snug' : 'text-2xl'}`}
+                >
+                  {card.value}
+                </p>
+                <p className="mt-0.5 truncate text-xs text-slate-500">{card.note}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 [&>label]:min-w-0">
               <label className="block">
                 <span className={filterLabelClass}>From</span>
