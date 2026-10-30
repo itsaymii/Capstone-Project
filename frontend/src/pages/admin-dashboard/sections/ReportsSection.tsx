@@ -70,7 +70,9 @@ type ReportsSectionProps = {
   earthquakeEvents: EarthquakeEvent[]
   earthquakeFeedStatus: 'loading' | 'ready' | 'error'
   earthquakeLastUpdated: Date | null
+  // The search box in the dashboard header; it also narrows this page.
   searchQuery: string
+  onClearSearch?: () => void
 }
 
 // The detail that best answers "what caused it / what was it" for each incident type.
@@ -181,6 +183,7 @@ export function ReportsSection({
   earthquakeFeedStatus,
   earthquakeLastUpdated,
   searchQuery,
+  onClearSearch,
 }: ReportsSectionProps) {
   const [reportStartDate, setReportStartDate] = useState('')
   const [reportEndDate, setReportEndDate] = useState('')
@@ -937,6 +940,24 @@ export function ReportsSection({
               </select>
             </label>
           </div>
+
+          {searchQuery.trim() ? (
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800">
+              <p>
+                Also filtered by the search <strong>&ldquo;{searchQuery.trim()}&rdquo;</strong> in the top bar. The table and
+                the PDF, Print and CSV only include matching reports.
+              </p>
+              {onClearSearch ? (
+                <button
+                  className="rounded-lg border border-blue-300 bg-white px-3 py-1 text-xs font-semibold text-blue-700 transition hover:bg-blue-100"
+                  onClick={onClearSearch}
+                  type="button"
+                >
+                  Clear search
+                </button>
+              ) : null}
+            </div>
+          ) : null}
 
           {hiddenPendingCount > 0 ? (
             <p className="mt-3 text-xs text-slate-500">

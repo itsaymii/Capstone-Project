@@ -2384,6 +2384,7 @@ export function AdminDashboardPage() {
               reports={filteredReports}
               responderReports={responderReports}
               searchQuery={dashboardSearchQuery}
+              onClearSearch={() => setDashboardSearchQuery('')}
             />
           ) : null}
 
