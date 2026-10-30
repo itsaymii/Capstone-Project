@@ -158,7 +158,8 @@ function formatReportDateTime(value: string): string {
   const parsedDate = new Date(value)
   if (Number.isNaN(parsedDate.getTime())) return value
 
-  return parsedDate.toLocaleString(undefined, {
+  // en-PH like the rest of the admin pages, so the table and exports look the same on every computer.
+  return parsedDate.toLocaleString('en-PH', {
     year: 'numeric',
     month: 'short',
     day: 'numeric',
