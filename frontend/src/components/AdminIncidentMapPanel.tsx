@@ -116,13 +116,6 @@ const hazardTabOrder: HazardType[] = ['FR', 'AC', 'EQ']
 // Report cards shown at first in the side list; scrolling down adds this many more.
 const LIST_PAGE_SIZE = 10
 
-const mapLegendItems = [
-  { label: 'Philippine Fault Zone', color: '#dc2626' },
-  { label: 'Valley Fault System', color: '#3b82f6' },
-  { label: 'Other Active Faults', color: '#ef4444' },
-  { label: 'Earthquake Epicenter', color: hazardColors.EQ },
-]
-
 // Heatmap colors, from few to many reports or earthquakes (shared by the map and the legend).
 const heatGradient: Record<number, string> = {
   0.12: '#2563eb',
@@ -305,8 +298,9 @@ const operationalStatusClass: Record<OperationalStatus, string> = {
   Resolved: 'bg-emerald-50 text-emerald-700',
 }
 
-const filterSelectClass =
-  'h-9 rounded-xl border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-800 shadow-sm outline-none transition hover:border-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100'
+// Smaller filters in the map header; the first option ("All years", "All barangays") names each one.
+const compactSelectClass =
+  'h-8 rounded-full border border-slate-300 bg-white pl-3 pr-7 text-xs font-semibold text-slate-700 shadow-sm outline-none transition hover:border-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100'
 
 function isApprovedStatus(status?: string): boolean {
   // Only an explicit report approval makes a responder report plottable.
@@ -825,13 +819,19 @@ export function AdminIncidentMapPanel({
     [selectedMonth, selectedYear],
   )
 
-  const matchesFilters = useCallback(
+  // Every filter except the incident type: the legend uses it to keep listing all types.
+  const matchesFiltersExceptType = useCallback(
     (incident: MapIncident): boolean =>
       matchesDate(incident.date) &&
-      (typeFilter === 'all' || incident.incidentTypeLabel === typeFilter) &&
       (barangayFilter === 'all' || incident.barangay === barangayFilter) &&
       (severityFilter === 'all' || incident.severity === severityFilter),
-    [barangayFilter, matchesDate, severityFilter, typeFilter],
+    [barangayFilter, matchesDate, severityFilter],
+  )
+
+  const matchesFilters = useCallback(
+    (incident: MapIncident): boolean =>
+      matchesFiltersExceptType(incident) && (typeFilter === 'all' || incident.incidentTypeLabel === typeFilter),
+    [matchesFiltersExceptType, typeFilter],
   )
 
   const matchesSearch = useCallback(
@@ -965,16 +965,17 @@ export function AdminIncidentMapPanel({
     [filteredEarthquakeEvents.length, incidentReports, matchesDate],
   )
 
-  // Legend for the incident tabs: one entry per incident type on the map.
+  // Legend for the incident tabs: one entry per incident type, counted with every filter but the type,
+  // so picking a type still lists the others to switch to.
   const plottedTypeLegend = useMemo(() => {
     const counts = new Map<string, { color: string; count: number }>()
-    plottableMapIncidents.forEach((incident) => {
+    tabReports.filter((incident) => incident.status === 'approved' && matchesFiltersExceptType(incident)).forEach((incident) => {
       const current = counts.get(incident.incidentTypeLabel) || { color: incident.color, count: 0 }
       current.count += 1
       counts.set(incident.incidentTypeLabel, current)
     })
     return sortIncidentCategoryLabels(Array.from(counts.keys())).map((label) => ({ label, ...counts.get(label)! }))
-  }, [plottableMapIncidents])
+  }, [matchesFiltersExceptType, tabReports])
 
   const loadEarthquakes = useCallback(async (silent = false) => {
     if (silent) {
@@ -1394,38 +1395,6 @@ export function AdminIncidentMapPanel({
       map.invalidateSize()
     }, 0)
 
-    // Small in-map legend: fault lines for earthquakes, incident types for the other tabs.
-    const legendItems = isEqView
-      ? mapLegendItems
-      : [
-          ...plottedTypeLegend.map((item) => ({ label: `${item.label} (${item.count})`, color: item.color })),
-          { label: 'Pulsing = on-going', color: '#64748b' },
-        ]
-
-    if (legendItems.length > 0 && !isMapOnly) {
-      const legendControl = new L.Control({ position: 'topright' })
-      legendControl.onAdd = function () {
-        const container = L.DomUtil.create('div', 'map-legend leaflet-bar') as HTMLDivElement
-        container.style.cssText =
-          'font-size:12px;line-height:1.2;pointer-events:auto;background:rgba(255,255,255,0.92);padding:8px 10px;border-radius:10px;max-width:220px;'
-
-        legendItems.forEach((item) => {
-          const row = document.createElement('div')
-          row.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:5px;'
-          const swatch = document.createElement('span')
-          swatch.style.cssText = `width:12px;height:12px;flex-shrink:0;border-radius:999px;display:inline-block;background:${item.color};`
-          const label = document.createElement('span')
-          label.textContent = item.label
-          row.appendChild(swatch)
-          row.appendChild(label)
-          container.appendChild(row)
-        })
-
-        return container
-      }
-      legendControl.addTo(map)
-    }
-
     mapInstanceRef.current = map
     previousSelectedTypeRef.current = selectedType
 
@@ -1441,7 +1410,6 @@ export function AdminIncidentMapPanel({
     }
   }, [
     plottableMapIncidents,
-    plottedTypeLegend,
     incidentHeatPoints,
     showIncidentHeatmap,
     selectedType,
@@ -1566,97 +1534,116 @@ export function AdminIncidentMapPanel({
   }
 
   // Shared by the page and the map-only view.
+  // Fire / Accident & Others / Earthquake as one segmented control.
   const typeTabs = (
-  <div className="flex flex-wrap gap-2 lg:justify-end" role="tablist" aria-label="Map type">
-    {hazardTabOrder.map((typeCode) => {
-      const active = selectedType === typeCode
-      return (
-        <button
-          aria-selected={active}
-          className={`flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
-            active ? 'text-white shadow-[0_8px_18px_rgba(15,23,42,0.16)]' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
-          }`}
-          key={typeCode}
-          onClick={() => onSelectType(typeCode)}
-          role="tab"
-          style={active ? { backgroundColor: hazardTypeMeta[typeCode].color, borderColor: hazardTypeMeta[typeCode].color } : undefined}
-          title={hazardTypeMeta[typeCode].description}
-          type="button"
-        >
-          {hazardTypeMeta[typeCode].label}
-          {typeCode !== 'EQ' || earthquakeEvents.length > 0 ? (
-            <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${active ? 'bg-white/25' : 'bg-slate-100 text-slate-600'}`}>
-              {incidentCounts[typeCode]}
-            </span>
-          ) : null}
-        </button>
-      )
-    })}
-  </div>
+    <div aria-label="Map type" className="inline-flex max-w-full gap-1 overflow-x-auto rounded-2xl border border-slate-200 bg-white/80 p-1 shadow-sm" role="tablist">
+      {hazardTabOrder.map((typeCode) => {
+        const active = selectedType === typeCode
+        const meta = hazardTypeMeta[typeCode]
+        return (
+          <button
+            aria-selected={active}
+            className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-xl px-2 py-1.5 text-xs font-semibold transition ${
+              active ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+            }`}
+            key={typeCode}
+            onClick={() => onSelectType(typeCode)}
+            role="tab"
+            title={meta.description}
+            type="button"
+          >
+            <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: meta.color }} />
+            {meta.label}
+            {typeCode !== 'EQ' || earthquakeEvents.length > 0 ? (
+              <span className={`rounded-md px-1.5 text-[10px] font-bold tabular-nums ${active ? 'bg-white/20' : 'bg-slate-100 text-slate-500'}`}>
+                {incidentCounts[typeCode]}
+              </span>
+            ) : null}
+          </button>
+        )
+      })}
+    </div>
   )
 
+  const layerToggleClass = (on: boolean, onClass: string) =>
+    `flex h-8 items-center gap-1.5 rounded-full border px-3 text-[11px] font-semibold transition ${
+      on ? onClass : 'border-slate-300 bg-white text-slate-500 hover:bg-slate-50'
+    }`
+  const toggleMark = (on: boolean) => (
+    <span aria-hidden="true" className={`flex h-3.5 w-3.5 items-center justify-center rounded-full text-[9px] ${on ? 'bg-white/90 text-slate-900' : 'border border-slate-300'}`}>
+      {on ? '✓' : ''}
+    </span>
+  )
+
+  // Map layers that can be shown or hidden.
   const layerButtons = (
-  <div className="ml-auto flex flex-wrap items-center gap-2">
-    <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">Layers</span>
-    {selectedType === 'EQ' ? (
-      <>
+    <div aria-label="Map layers" className="flex flex-wrap items-center gap-1.5" role="group">
+      {selectedType === 'EQ' ? (
+        <>
+          <button
+            aria-pressed={showHeatmap}
+            className={layerToggleClass(showHeatmap, 'border-emerald-500 bg-emerald-500 text-white')}
+            onClick={() => setShowHeatmap((value) => !value)}
+            title="Show or hide the heatmap"
+            type="button"
+          >
+            {toggleMark(showHeatmap)}
+            Heatmap
+          </button>
+          <button
+            aria-pressed={showFaultLines}
+            className={layerToggleClass(showFaultLines, 'border-rose-500 bg-rose-500 text-white')}
+            onClick={() => setShowFaultLines((value) => !value)}
+            title="Show or hide the PHIVOLCS fault lines"
+            type="button"
+          >
+            {toggleMark(showFaultLines)}
+            Fault Lines
+          </button>
+        </>
+      ) : (
         <button
-          aria-pressed={showHeatmap}
-          className={`rounded-full border px-3 py-1 text-[11px] font-semibold transition ${showHeatmap ? 'border-emerald-500 bg-emerald-500 text-white' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'}`}
-          onClick={() => setShowHeatmap((value) => !value)}
+          aria-pressed={showIncidentHeatmap}
+          className={layerToggleClass(showIncidentHeatmap, 'border-emerald-500 bg-emerald-500 text-white')}
+          onClick={() => setShowIncidentHeatmap((value) => !value)}
+          title="Show or hide the heatmap"
           type="button"
         >
+          {toggleMark(showIncidentHeatmap)}
           Heatmap
         </button>
-        <button
-          aria-pressed={showFaultLines}
-          className={`rounded-full border px-3 py-1 text-[11px] font-semibold transition ${showFaultLines ? 'border-rose-500 bg-rose-500 text-white' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'}`}
-          onClick={() => setShowFaultLines((value) => !value)}
-          type="button"
-        >
-          Fault Lines
-        </button>
-      </>
-    ) : (
-      <button
-        aria-pressed={showIncidentHeatmap}
-        className={`rounded-full border px-3 py-1 text-[11px] font-semibold transition ${showIncidentHeatmap ? 'border-emerald-500 bg-emerald-500 text-white' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'}`}
-        onClick={() => setShowIncidentHeatmap((value) => !value)}
-        type="button"
-      >
-        Heatmap
-      </button>
-    )}
-  </div>
+      )}
+    </div>
   )
 
   return (
     <section className="px-4 py-5 sm:px-6 sm:py-8">
       <div className="grid gap-5 xl:grid-cols-[minmax(0,2fr)_minmax(320px,0.9fr)] xl:items-start">
         <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_12px_32px_rgba(15,23,42,0.08)] md:flex md:h-[calc(100vh-13rem)] md:flex-col">
-          <div className="flex flex-col gap-4 border-b border-slate-200 bg-[linear-gradient(90deg,#e8f1fd_0%,#f6fbff_100%)] px-4 py-4 sm:px-5">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+          <div className="space-y-3 border-b border-slate-200 bg-[linear-gradient(90deg,#e8f1fd_0%,#f6fbff_100%)] px-4 py-4 sm:px-5">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
                   {selectedType === 'EQ' ? 'Seismic Mapping — Philippines' : 'Approved Report Mapping'}
                 </p>
-                <h2 className="mt-1 text-xl font-bold text-slate-900 sm:text-2xl">Lucena Incident Map</h2>
-                <p className="mt-1 text-xs text-slate-500">
-                  {selectedType === 'EQ'
-                    ? 'Live earthquake events with heatmap and PHIVOLCS fault lines.'
-                    : 'Only approved reports are plotted. Pending reports stay in the review list until approved.'}
+                <h2 className="text-xl font-bold leading-tight text-slate-900">Lucena Incident Map</h2>
+                <p
+                  className="mt-0.5 text-xs text-slate-500"
+                  title={selectedType === 'EQ' ? undefined : 'Pending reports stay in the review list until approved.'}
+                >
+                  {selectedType === 'EQ' ? 'Live earthquakes with PHIVOLCS fault lines' : 'Approved reports only'}
                 </p>
               </div>
 
               {typeTabs}
             </div>
 
-            <div className="flex flex-wrap items-end gap-2">
-              <label className="flex flex-col gap-1">
-                <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">Year</span>
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="min-w-0">
                 <select
                   aria-label="Year"
-                  className={filterSelectClass}
+                  className={`${compactSelectClass} w-[7rem]`}
+                  title="Year"
                   onChange={(event) => {
                     setSelectedYear(event.target.value)
                     setSelectedMonth('')
@@ -1670,11 +1657,10 @@ export function AdminIncidentMapPanel({
                 </select>
               </label>
 
-              <label className="flex flex-col gap-1">
-                <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">Month</span>
+              <label className="min-w-0">
                 <select
                   aria-label="Month"
-                  className={`${filterSelectClass} disabled:cursor-not-allowed disabled:opacity-50`}
+                  className={`${compactSelectClass} w-[8rem] disabled:cursor-not-allowed disabled:opacity-50`}
                   disabled={!selectedYear}
                   onChange={(event) => setSelectedMonth(event.target.value)}
                   title={selectedYear ? undefined : 'Choose a year first'}
@@ -1692,9 +1678,8 @@ export function AdminIncidentMapPanel({
               {selectedType !== 'EQ' ? (
                 <>
                   {selectedType === 'AC' ? (
-                    <label className="flex flex-col gap-1">
-                      <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">Incident type</span>
-                      <select aria-label="Incident type" className={filterSelectClass} onChange={(event) => setTypeFilter(event.target.value)} value={typeFilter}>
+                    <label className="min-w-0">
+                      <select aria-label="Incident type" className={`${compactSelectClass} w-[8.5rem]`} onChange={(event) => setTypeFilter(event.target.value)} value={typeFilter}>
                         <option value="all">All types</option>
                         {typeOptions.map((type) => (
                           <option key={type} value={type}>{type}</option>
@@ -1703,9 +1688,8 @@ export function AdminIncidentMapPanel({
                     </label>
                   ) : null}
 
-                  <label className="flex flex-col gap-1">
-                    <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">Barangay</span>
-                    <select aria-label="Barangay" className={filterSelectClass} onChange={(event) => setBarangayFilter(event.target.value)} value={barangayFilter}>
+                  <label className="min-w-0">
+                    <select aria-label="Barangay" className={`${compactSelectClass} w-[9rem]`} onChange={(event) => setBarangayFilter(event.target.value)} value={barangayFilter}>
                       <option value="all">All barangays</option>
                       {barangayOptions.map((barangay) => (
                         <option key={barangay} value={barangay}>{barangay}</option>
@@ -1713,9 +1697,8 @@ export function AdminIncidentMapPanel({
                     </select>
                   </label>
 
-                  <label className="flex flex-col gap-1">
-                    <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">Severity</span>
-                    <select aria-label="Severity" className={filterSelectClass} onChange={(event) => setSeverityFilter(event.target.value)} value={severityFilter}>
+                  <label className="min-w-0">
+                    <select aria-label="Severity" className={`${compactSelectClass} w-[8rem]`} onChange={(event) => setSeverityFilter(event.target.value)} value={severityFilter}>
                       <option value="all">All severity</option>
                       {(['Critical', 'High', 'Moderate', 'Low'] as const).map((severity) => (
                         <option key={severity} value={severity}>{severity}</option>
@@ -1727,7 +1710,7 @@ export function AdminIncidentMapPanel({
 
               {hasActiveFilters ? (
                 <button
-                  className="h-9 rounded-xl border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+                  className="h-8 rounded-full px-2.5 text-xs font-semibold text-blue-700 transition hover:bg-blue-50"
                   onClick={clearFilters}
                   type="button"
                 >
@@ -1735,49 +1718,98 @@ export function AdminIncidentMapPanel({
                 </button>
               ) : null}
 
-              {layerButtons}
+              <div className="ml-auto flex flex-wrap items-center gap-1.5">
+                {layerButtons}
+                <button
+                  className="flex h-8 items-center gap-1.5 rounded-full border border-slate-300 bg-white px-3 text-[11px] font-semibold text-slate-700 transition hover:bg-slate-50"
+                  onClick={() => setIsMapOnly(true)}
+                  title="Show only the map, in the whole window, with a full legend"
+                  type="button"
+                >
+                  <svg aria-hidden="true" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                    <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                  Map only
+                </button>
+              </div>
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3 border-b border-slate-200 px-4 py-2.5 text-xs text-slate-600 sm:px-5">
+          {/* Legend: what each color means. On Accident & Others a type can be picked to show only it. */}
+          <div className="flex flex-wrap items-center gap-1.5 border-b border-slate-200 px-4 py-2 text-xs sm:px-5">
             {selectedType === 'EQ' ? (
-              <span className="font-semibold text-slate-700">{filteredEarthquakeEvents.length} earthquake events in view</span>
-            ) : plottedTypeLegend.length > 0 ? (
-              plottedTypeLegend.map((item) => (
-                <button
-                  className={`flex items-center gap-1.5 rounded-full px-2 py-0.5 transition hover:bg-slate-100 ${typeFilter === item.label ? 'bg-slate-100' : ''}`}
-                  disabled={selectedType !== 'AC'}
-                  key={item.label}
-                  onClick={() => setTypeFilter((current) => (current === item.label ? 'all' : item.label))}
-                  title={selectedType === 'AC' ? 'Show only this type' : undefined}
-                  type="button"
-                >
-                  <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.color }} />
-                  <span className="font-semibold text-slate-700">{item.label}</span>
-                  <span className="text-[11px] text-slate-500">{item.count}</span>
-                </button>
-              ))
+              <>
+                <span className="flex items-center gap-1.5 rounded-full px-2 py-1 font-semibold text-slate-700">
+                  <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: hazardColors.EQ }} />
+                  Epicenter
+                </span>
+                {showFaultLines
+                  ? faultLegendItems.map((item) => (
+                      <span className="flex items-center gap-1.5 rounded-full px-2 py-1 text-slate-600" key={item.label}>
+                        <svg aria-hidden="true" className="w-5 shrink-0" height="6" viewBox="0 0 20 6">
+                          <line stroke={item.color} strokeDasharray={item.dash || undefined} strokeWidth="3" x1="0" x2="20" y1="3" y2="3" />
+                        </svg>
+                        {item.label}
+                      </span>
+                    ))
+                  : null}
+                <span className="ml-auto text-[11px] font-semibold text-slate-600">
+                  {filteredEarthquakeEvents.length} earthquake{filteredEarthquakeEvents.length === 1 ? '' : 's'} in view
+                </span>
+              </>
             ) : (
-              <span className="text-slate-500">No approved reports match these filters.</span>
+              <>
+                {plottedTypeLegend.length > 0 ? (
+                  plottedTypeLegend.map((item) => {
+                    const canPick = selectedType === 'AC'
+                    const picked = typeFilter === item.label
+                    const dimmed = typeFilter !== 'all' && !picked
+                    return (
+                      <button
+                        aria-label={picked ? `Show all types again (now only ${item.label})` : canPick ? `Show only ${item.label}` : item.label}
+                        aria-pressed={canPick ? picked : undefined}
+                        className={`flex items-center gap-1.5 rounded-full border py-1 pl-2 transition ${picked ? 'pr-1' : 'pr-2.5'} ${
+                          picked
+                            ? 'border-slate-300 bg-white font-semibold text-slate-900 shadow-sm'
+                            : `border-transparent text-slate-700 ${canPick ? 'hover:bg-slate-100' : 'cursor-default'} ${dimmed ? 'opacity-45' : ''}`
+                        }`}
+                        disabled={!canPick}
+                        key={item.label}
+                        onClick={() => setTypeFilter((current) => (current === item.label ? 'all' : item.label))}
+                        title={picked ? 'Show all types again' : canPick ? 'Show only this type' : undefined}
+                        type="button"
+                      >
+                        <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: item.color }} />
+                        <span className="font-semibold">{item.label}</span>
+                        <span className="text-[11px] tabular-nums text-slate-500">{item.count}</span>
+                        {picked ? (
+                          <span aria-hidden="true" className="ml-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-slate-100 text-sm leading-none text-slate-600 hover:bg-slate-200">
+                            ×
+                          </span>
+                        ) : null}
+                      </button>
+                    )
+                  })
+                ) : (
+                  <span className="px-2 py-1 text-slate-500">No approved reports match these filters.</span>
+                )}
+
+                <span className="ml-auto flex items-center gap-3 pl-2 text-[11px]">
+                  <span className="flex items-center gap-1.5 text-slate-500" title="On-going incidents pulse on the map">
+                    <span className="relative flex h-2.5 w-2.5">
+                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-slate-400 opacity-60" />
+                      <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-slate-500" />
+                    </span>
+                    On-going
+                  </span>
+                  {reportsLoading && rawReports.length === 0 ? (
+                    <span className="font-semibold text-blue-600">Loading reports...</span>
+                  ) : (
+                    <span className="font-semibold text-emerald-700">{plottableMapIncidents.length} on map</span>
+                  )}
+                </span>
+              </>
             )}
-
-            {reportsLoading && rawReports.length === 0 ? (
-              <span className="ml-auto text-[11px] font-semibold text-blue-600">Loading responder reports...</span>
-            ) : selectedType !== 'EQ' ? (
-              <span className="ml-auto text-[11px] font-semibold text-emerald-700">{plottableMapIncidents.length} plotted on map</span>
-            ) : null}
-
-            <button
-              className={`${selectedType === 'EQ' ? 'ml-auto' : ''} flex items-center gap-1.5 rounded-full border border-slate-300 bg-white px-3 py-1 text-[11px] font-semibold text-slate-700 transition hover:bg-slate-50`}
-              onClick={() => setIsMapOnly(true)}
-              title="Show only the map, in the whole window, with a full legend"
-              type="button"
-            >
-              <svg aria-hidden="true" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-              Map only
-            </button>
           </div>
 
           {isMapOnly ? (
@@ -1824,7 +1856,7 @@ export function AdminIncidentMapPanel({
                           isEqView={selectedType === 'EQ'}
                           showFaultLines={showFaultLines}
                           showHeatmap={selectedType === 'EQ' ? showHeatmap : showIncidentHeatmap}
-                          typeItems={plottedTypeLegend}
+                          typeItems={typeFilter === 'all' ? plottedTypeLegend : plottedTypeLegend.filter((item) => item.label === typeFilter)}
                         />
                       </div>
                     </div>
