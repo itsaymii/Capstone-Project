@@ -5,6 +5,7 @@ import { jsPDF } from 'jspdf'
 import type { HazardIncident } from '../../../data/adminOperations'
 import type { EarthquakeEvent } from '../../../services/earthquakes'
 import { glassPanelClass, glassPanelSoftClass } from './constants'
+import { LUCENA_BARANGAYS, toLucenaBarangay } from '../../../data/barangays'
 import { distanceKm } from '../../../data/evacuation'
 import { ANALYTICS_TYPES, getIncidentCategoryKey, getIncidentCategoryLabel, type AnalyticsTypeKey } from '../../../data/incidentCategories'
 import { formatDetailValue, getIncidentTypeConfig, type DetailValues } from '../../../data/incidentTypeFields'
@@ -45,7 +46,8 @@ type UnifiedHazardReportRow = {
   typeKey: AnalyticsTypeKey
   // 'feed' for earthquakes: they come from USGS and are never reviewed by an admin.
   approval: 'approved' | 'pending' | 'feed'
-  locationKey: string
+  // One of the 33 barangays, or '' when the location names none (earthquakes, old records).
+  barangay: string
   dateValue: string
 }
 
@@ -182,11 +184,10 @@ export function ReportsSection({
   const [reportStartDate, setReportStartDate] = useState('')
   const [reportEndDate, setReportEndDate] = useState('')
   const [reportTypeFilter, setReportTypeFilter] = useState<ReportTypeFilter>('all')
-  const [reportLocationFilter, setReportLocationFilter] = useState('')
+  const [reportBarangayFilter, setReportBarangayFilter] = useState('all')
   const [reportStatusFilter, setReportStatusFilter] = useState<ReportStatusFilter>('approved')
 
   const normalizedDashboardSearchQuery = searchQuery.trim().toLowerCase()
-  const normalizedReportLocationFilter = reportLocationFilter.trim().toLowerCase()
 
   // `reports` is already the single, de-duplicated source from the dashboard:
   // responder-submitted IncidentReports when there are any, otherwise admin Incidents.
@@ -223,7 +224,7 @@ export function ReportsSection({
         status: toTitleCase(rawStatus) || '-',
         typeKey: getIncidentCategoryKey(record),
         approval: getApproval(rawStatus),
-        locationKey: incident.location || '',
+        barangay: toLucenaBarangay(pickText(record, 'barangayName')) ?? toLucenaBarangay(incident.location) ?? '',
         dateValue,
       }
     })
@@ -262,7 +263,7 @@ export function ReportsSection({
           status: 'USGS record',
           typeKey: 'earthquake',
           approval: 'feed',
-          locationKey: event.place,
+          barangay: '',
           dateValue,
         }
       })
@@ -310,9 +311,8 @@ export function ReportsSection({
     return approval !== 'pending'
   }
 
-  function matchesReportLocation(locationValue?: string): boolean {
-    if (!normalizedReportLocationFilter) return true
-    return (locationValue || '').toLowerCase().includes(normalizedReportLocationFilter)
+  function matchesReportBarangay(barangay: string): boolean {
+    return reportBarangayFilter === 'all' || reportBarangayFilter === barangay
   }
 
   function matchesDashboardSearch(row: UnifiedHazardReportRow): boolean {
@@ -339,7 +339,7 @@ export function ReportsSection({
         (row) =>
           matchesReportType(row.typeKey) &&
           matchesReportStatus(row.approval) &&
-          matchesReportLocation(row.locationKey) &&
+          matchesReportBarangay(row.barangay) &&
           matchesDashboardSearch(row) &&
           matchesReportDateRange(row.dateValue),
       ),
@@ -348,7 +348,7 @@ export function ReportsSection({
       unifiedHazardReportRows,
       reportTypeFilter,
       reportStatusFilter,
-      normalizedReportLocationFilter,
+      reportBarangayFilter,
       normalizedDashboardSearchQuery,
       reportStartDate,
       reportEndDate,
@@ -360,7 +360,7 @@ export function ReportsSection({
   const filterKey = [
     reportTypeFilter,
     reportStatusFilter,
-    normalizedReportLocationFilter,
+    reportBarangayFilter,
     normalizedDashboardSearchQuery,
     reportStartDate,
     reportEndDate,
@@ -386,7 +386,7 @@ export function ReportsSection({
     setReportEndDate('')
     setReportTypeFilter('all')
     setReportStatusFilter('approved')
-    setReportLocationFilter('')
+    setReportBarangayFilter('all')
   }
 
   // Every incident type, plus "Other" only when some old record matches none of them.
@@ -873,14 +873,17 @@ export function ReportsSection({
             </label>
 
             <label className="grid gap-2 text-sm font-medium text-slate-700">
-              Location / Barangay
-              <input
+              Barangay
+              <select
                 className="w-full min-w-0 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-700"
-                onChange={(event) => setReportLocationFilter(event.target.value)}
-                placeholder="Filter by location"
-                type="text"
-                value={reportLocationFilter}
-              />
+                onChange={(event) => setReportBarangayFilter(event.target.value)}
+                value={reportBarangayFilter}
+              >
+                <option value="all">All barangays</option>
+                {LUCENA_BARANGAYS.map((barangay) => (
+                  <option key={barangay} value={barangay}>{barangay}</option>
+                ))}
+              </select>
             </label>
           </div>
 
