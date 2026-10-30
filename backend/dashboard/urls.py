@@ -23,6 +23,7 @@ from .views import (
     simulation_my_certificates,
     simulation_progress,
     simulation_request_certificate,
+    simulation_submit_exam_attempt,
     simulation_submit_quiz_attempt,
 )
 
@@ -48,6 +49,7 @@ urlpatterns = [
     path('simulation/progress/', simulation_progress, name='simulation-progress'),
     path('simulation/quizzes/module/', simulation_module_quiz, name='simulation-module-quiz'),
     path('simulation/quizzes/<int:quiz_id>/submit/', simulation_submit_quiz_attempt, name='simulation-quiz-submit'),
+    path('simulation/exams/submit/', simulation_submit_exam_attempt, name='simulation-exam-submit'),
     path('simulation/certificates/request/', simulation_request_certificate, name='simulation-certificate-request'),
     path('simulation/certificates/mine/', simulation_my_certificates, name='simulation-certificates-mine'),
 ]

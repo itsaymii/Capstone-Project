@@ -470,6 +470,7 @@ export interface SimulationQuizSubmitResponse {
   passed: boolean
   unanswered: number
   requiredScore: number
+  // Empty after a failed attempt: the answers are only shown after passing.
   details: Array<{
     questionId: number
     selectedChoiceId: number | null
@@ -477,6 +478,25 @@ export interface SimulationQuizSubmitResponse {
     isCorrect: boolean
     explanation: string
   }>
+  attemptsLeft: number
+}
+
+/** Result of an exam lesson, graded on the server. */
+export interface SimulationExamSubmitResponse {
+  score: number
+  totalQuestions: number
+  passed: boolean
+  unanswered: number
+  requiredScore: number
+  // Empty after a failed attempt: the answers are only shown after passing.
+  details: Array<{
+    questionId: string
+    selectedOptionIndex: number
+    correctOptionIndex: number
+    isCorrect: boolean
+    explanation: string
+  }>
+  attemptsLeft: number
 }
 
 export type SimulationCertificateStatus = 'pending' | 'issued' | 'rejected'

@@ -16,6 +16,7 @@ import type {
   SimulationCourseCatalogResponse,
   SimulationAdminQuizDetailResponse,
   SimulationAdminQuizMutationResponse,
+  SimulationExamSubmitResponse,
   SimulationQuizSubmitResponse,
   SimulationLearnerQuizDetailResponse,
   SimulationProgressPayload,
@@ -604,10 +605,33 @@ export async function submitSimulationQuizAttempt(
   answers: Record<string, number>,
 ): Promise<SimulationQuizSubmitResponse> {
   await ensureCsrfCookie()
-  const { data } = await api.post<SimulationQuizSubmitResponse>(`/dashboard/simulation/quizzes/${quizId}/submit/`, {
-    answers,
-  })
-  return data
+  try {
+    const { data } = await api.post<SimulationQuizSubmitResponse>(`/dashboard/simulation/quizzes/${quizId}/submit/`, {
+      answers,
+    })
+    return data
+  } catch (error) {
+    throw new Error(getApiErrorMessage(error, 'Failed to submit module quiz.'))
+  }
+}
+
+/** Submit an exam lesson; the server grades it (learners never receive the answers). */
+export async function submitSimulationExamAttempt(
+  courseId: string,
+  lessonId: string,
+  answers: Record<string, number>,
+): Promise<SimulationExamSubmitResponse> {
+  await ensureCsrfCookie()
+  try {
+    const { data } = await api.post<SimulationExamSubmitResponse>('/dashboard/simulation/exams/submit/', {
+      courseId,
+      lessonId,
+      answers,
+    })
+    return data
+  } catch (error) {
+    throw new Error(getApiErrorMessage(error, 'Failed to submit the exam.'))
+  }
 }
 
 export async function requestSimulationCertificate(courseId: string, courseTitle: string): Promise<SimulationCertificate> {
