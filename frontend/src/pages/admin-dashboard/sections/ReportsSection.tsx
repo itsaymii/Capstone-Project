@@ -5,8 +5,15 @@ import { jsPDF } from 'jspdf'
 import type { HazardIncident } from '../../../data/adminOperations'
 import type { EarthquakeEvent } from '../../../services/earthquakes'
 import { glassPanelClass, glassPanelSoftClass } from './constants'
+import { distanceKm } from '../../../data/evacuation'
 
 type ReportHazardFilter = 'all' | 'FR' | 'EQ' | 'AC'
+
+// The earthquake feed covers the whole Philippines. The report only keeps earthquakes that can be
+// felt in Lucena: within this distance of the city center and at least this magnitude.
+const LUCENA_CENTER = { lat: 13.9414, lng: 121.6236 }
+const REPORT_EARTHQUAKE_RADIUS_KM = 100
+const REPORT_EARTHQUAKE_MIN_MAGNITUDE = 3
 
 type PdfAction = 'save' | 'print'
 
@@ -255,10 +262,20 @@ export function ReportsSection({
     })
   }, [reports])
 
+  // Earthquakes near Lucena, each with its distance from the city.
+  const nearbyEarthquakes = useMemo(
+    () =>
+      earthquakeEvents
+        .filter((event) => Number.isFinite(event.lat) && Number.isFinite(event.lng))
+        .map((event) => ({ event, km: distanceKm(LUCENA_CENTER.lat, LUCENA_CENTER.lng, event.lat, event.lng) }))
+        .filter(({ event, km }) => km <= REPORT_EARTHQUAKE_RADIUS_KM && event.magnitude >= REPORT_EARTHQUAKE_MIN_MAGNITUDE),
+    [earthquakeEvents],
+  )
+
   const earthquakeReportRows = useMemo<UnifiedHazardReportRow[]>(() => {
-    return [...earthquakeEvents]
-      .sort((left, right) => right.rawTimestamp - left.rawTimestamp)
-      .map((event) => {
+    return [...nearbyEarthquakes]
+      .sort((left, right) => right.event.rawTimestamp - left.event.rawTimestamp)
+      .map(({ event, km }) => {
         const severity = getEarthquakeSeverity(event.magnitude)
         const dateValue = new Date(event.rawTimestamp).toISOString()
 
@@ -266,7 +283,7 @@ export function ReportsSection({
           // USGS event ID: stays the same across reloads, so it can be traced back to the source.
           reportId: `EQ-${event.id}`,
           reportType: 'Earthquake',
-          location: event.place,
+          location: `${event.place} (${Math.round(km)} km from Lucena)`,
           dateTime: formatReportDateTime(dateValue),
           responseTeam: 'Seismic Assessment Unit',
           magnitude: event.magnitude.toFixed(1),
@@ -281,7 +298,7 @@ export function ReportsSection({
           dateValue,
         }
       })
-  }, [earthquakeEvents])
+  }, [nearbyEarthquakes])
 
   // Newest first across all sources; rows without a valid date go last.
   const unifiedHazardReportRows = useMemo(
@@ -798,7 +815,7 @@ export function ReportsSection({
                     ? 'Loading earthquake feed'
                     : earthquakeFeedStatus === 'error'
                       ? 'Earthquake feed unavailable'
-                      : `${earthquakeEvents.length} live earthquake rows loaded`}
+                      : `${nearbyEarthquakes.length} earthquakes within ${REPORT_EARTHQUAKE_RADIUS_KM} km of Lucena (M${REPORT_EARTHQUAKE_MIN_MAGNITUDE}+)`}
                 </span>
 
                 <span className="rounded-full bg-blue-100 px-3 py-1 text-blue-700">
