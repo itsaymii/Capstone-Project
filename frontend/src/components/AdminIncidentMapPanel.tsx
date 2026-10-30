@@ -115,6 +115,9 @@ const hazardTabOrder: HazardType[] = ['FR', 'AC', 'EQ']
 
 // Report cards shown at first in the side list; scrolling down adds this many more.
 const LIST_PAGE_SIZE = 10
+// "On map" without any filter or search lists only this many of the newest reports: with thousands
+// plotted, listing them all would slow the page. A filter or search lists every match.
+const ON_MAP_LATEST_LIMIT = 20
 
 // Heatmap colors, from few to many reports or earthquakes (shared by the map and the legend).
 const heatGradient: Record<number, string> = {
@@ -863,9 +866,18 @@ export function AdminIncidentMapPanel({
     [matchesSearch, plottableMapIncidents],
   )
 
+  const isListNarrowed =
+    Boolean(selectedYear) || typeFilter !== 'all' || barangayFilter !== 'all' || severityFilter !== 'all' || listSearch.trim() !== ''
+  const showsLatestOnly = sideTab === 'map' && !isListNarrowed && onMapListIncidents.length > ON_MAP_LATEST_LIMIT
+
   // The side list shows LIST_PAGE_SIZE cards at first and adds more as the user scrolls,
   // so long lists do not slow the page down.
-  const sideListIncidents = sideTab === 'review' ? reviewIncidents : onMapListIncidents
+  const sideListIncidents =
+    sideTab === 'review'
+      ? reviewIncidents
+      : showsLatestOnly
+        ? onMapListIncidents.slice(0, ON_MAP_LATEST_LIMIT)
+        : onMapListIncidents
   const [visibleListCount, setVisibleListCount] = useState(LIST_PAGE_SIZE)
   const sideListRef = useRef<HTMLDivElement | null>(null)
   const sideListEndRef = useRef<HTMLDivElement | null>(null)
@@ -2107,11 +2119,22 @@ export function AdminIncidentMapPanel({
                   </article>
                 ))}
 
+                {showsLatestOnly && !hasMoreListItems ? (
+                  <div className="rounded-2xl border border-blue-100 bg-blue-50 px-3 py-3 text-center text-xs text-blue-800">
+                    <p className="font-semibold">
+                      The {ON_MAP_LATEST_LIMIT} newest of {onMapListIncidents.length.toLocaleString()} reports on the map.
+                    </p>
+                    <p className="mt-1 text-blue-700">Use the filters or the search above to list the others.</p>
+                  </div>
+                ) : null}
+
                 {sideListIncidents.length > LIST_PAGE_SIZE ? (
                   <div className="py-2 text-center text-[11px] font-semibold text-slate-400" ref={sideListEndRef}>
                     {hasMoreListItems
                       ? `Showing ${visibleListCount} of ${sideListIncidents.length}. Scroll for more...`
-                      : `All ${sideListIncidents.length} reports shown`}
+                      : showsLatestOnly
+                        ? null
+                        : `All ${sideListIncidents.length} matching reports shown`}
                   </div>
                 ) : null}
 
