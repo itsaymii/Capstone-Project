@@ -29,6 +29,8 @@ type ReportTableColumn<T> = {
   key: keyof T
   label: string
   align?: 'left' | 'center' | 'right'
+  // Share of the page width in the PDF table (default 1).
+  pdfWeight?: number
 }
 
 type UnifiedHazardReportRow = {
@@ -162,15 +164,15 @@ function formatReportDateTime(value: string): string {
 }
 
 const unifiedHazardReportColumns: ReportTableColumn<UnifiedHazardReportRow>[] = [
-  { key: 'reportId', label: 'Report ID' },
-  { key: 'reportType', label: 'Type' },
-  { key: 'location', label: 'Location / Barangay' },
-  { key: 'dateTime', label: 'Date and Time' },
+  { key: 'reportId', label: 'Report ID', pdfWeight: 1.2 },
+  { key: 'reportType', label: 'Type', pdfWeight: 1.4 },
+  { key: 'location', label: 'Location / Barangay', pdfWeight: 2 },
+  { key: 'dateTime', label: 'Date and Time', pdfWeight: 1.3 },
   { key: 'responseTeam', label: 'Response Team' },
   { key: 'magnitude', label: 'Magnitude' },
-  { key: 'cause', label: 'Cause' },
+  { key: 'cause', label: 'Cause', pdfWeight: 1.3 },
   { key: 'severity', label: 'Severity' },
-  { key: 'victims', label: 'Victims', align: 'center' },
+  { key: 'victims', label: 'Victims', align: 'center', pdfWeight: 0.7 },
   { key: 'incidentStatus', label: 'Incident Status' },
   { key: 'sentVia', label: 'Sent Via' },
   { key: 'status', label: 'Report Status' },
@@ -458,60 +460,105 @@ export function ReportsSection({
     return value.replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '').toLowerCase() || 'hazard-report'
   }
 
+  /**
+   * A landscape A4 PDF with the rows as a real table: wrapped cells, the header repeated on
+   * every page, and "Page X of Y". Drawn with jsPDF only (no table plugin).
+   */
   function buildReportPdf<T extends Record<string, string | number>>(
     title: string,
     description: string,
     columns: ReportTableColumn<T>[],
     rows: T[],
   ) {
-    const document = new jsPDF({ unit: 'mm', format: 'a4' })
+    const document = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'landscape' })
     const pageWidth = document.internal.pageSize.getWidth()
     const pageHeight = document.internal.pageSize.getHeight()
-    const margin = 14
-    const maxLineWidth = pageWidth - margin * 2
-    let cursorY = 18
+    const margin = 10
+    const bottom = pageHeight - 12
+    const fontSize = 7
+    const lineHeight = 3.1
+    const padding = 1.5
+    let cursorY = 14
 
-    const ensureSpace = (height: number): void => {
-      if (cursorY + height > pageHeight - 18) {
-        document.addPage()
-        cursorY = 18
-      }
-    }
+    const totalWeight = columns.reduce((sum, column) => sum + (column.pdfWeight ?? 1), 0)
+    const widths = columns.map((column) => ((column.pdfWeight ?? 1) / totalWeight) * (pageWidth - margin * 2))
 
-    const drawText = (text: string, fontSize: number, style: 'normal' | 'bold' = 'normal') => {
-      document.setFont('helvetica', style)
+    const wrap = (text: string, width: number): string[] => document.splitTextToSize(text, width - padding * 2) as string[]
+
+    const drawRow = (cells: string[], header: boolean): void => {
+      document.setFont('helvetica', header ? 'bold' : 'normal')
       document.setFontSize(fontSize)
-      const lines = document.splitTextToSize(text, maxLineWidth)
-      const lineHeight = fontSize * 0.42 + 1.4
-      ensureSpace(lines.length * lineHeight + 2)
-      document.text(lines, margin, cursorY)
-      cursorY += lines.length * lineHeight + 2
+      const lines = cells.map((cell, index) => wrap(cell, widths[index]))
+      const height = Math.max(...lines.map((cellLines) => cellLines.length)) * lineHeight + padding * 2
+
+      let x = margin
+      lines.forEach((cellLines, index) => {
+        if (header) {
+          document.setFillColor(226, 232, 240)
+          document.rect(x, cursorY, widths[index], height, 'FD')
+        } else {
+          document.rect(x, cursorY, widths[index], height)
+        }
+        const align = columns[index].align === 'center' ? 'center' : 'left'
+        const textX = align === 'center' ? x + widths[index] / 2 : x + padding
+        document.text(cellLines, textX, cursorY + padding + lineHeight * 0.75, { align })
+        x += widths[index]
+      })
+      cursorY += height
     }
 
-    const generatedAt = new Date().toLocaleString('en-PH', {
-      dateStyle: 'medium',
-      timeStyle: 'short',
-    })
+    const headerCells = columns.map((column) => column.label)
+    const startTablePage = (): void => {
+      document.setDrawColor(148, 163, 184)
+      document.setLineWidth(0.1)
+      drawRow(headerCells, true)
+    }
 
-    drawText(title, 16, 'bold')
-    drawText(description, 10)
-    drawText(`Generated: ${generatedAt}`, 8)
-    cursorY += 4
+    const generatedAt = new Date().toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' })
+
+    document.setFont('helvetica', 'bold')
+    document.setFontSize(14)
+    document.text(title, margin, cursorY)
+    cursorY += 6
+    document.setFont('helvetica', 'normal')
+    document.setFontSize(9)
+    const descriptionLines = document.splitTextToSize(description, pageWidth - margin * 2) as string[]
+    document.text(descriptionLines, margin, cursorY)
+    cursorY += descriptionLines.length * 4 + 1
+    document.setFontSize(8)
+    document.text(`Generated: ${generatedAt}  |  ${rows.length.toLocaleString()} report${rows.length === 1 ? '' : 's'}`, margin, cursorY)
+    cursorY += 5
 
     if (rows.length === 0) {
-      drawText('No report rows match the current filters.', 10)
-      return document
+      document.setFontSize(10)
+      document.text('No report rows match the current filters.', margin, cursorY + 4)
+    } else {
+      startTablePage()
+      rows.forEach((row) => {
+        const cells = columns.map((column) => String(row[column.key] ?? '-'))
+        document.setFont('helvetica', 'normal')
+        document.setFontSize(fontSize)
+        const height =
+          Math.max(...cells.map((cell, index) => wrap(cell, widths[index]).length)) * lineHeight + padding * 2
+        if (cursorY + height > bottom) {
+          document.addPage()
+          cursorY = 12
+          startTablePage()
+        }
+        drawRow(cells, false)
+      })
     }
 
-    rows.forEach((row, index) => {
-      ensureSpace(32)
-      drawText(`${index + 1}. ${String(row[columns[0].key] ?? '')}`, 11, 'bold')
-      columns.slice(1).forEach((column) => {
-        const value = String(row[column.key] ?? '-')
-        drawText(`${column.label}: ${value}`, 9)
-      })
-      cursorY += 4
-    })
+    const pageCount = document.getNumberOfPages()
+    for (let page = 1; page <= pageCount; page += 1) {
+      document.setPage(page)
+      document.setFont('helvetica', 'normal')
+      document.setFontSize(7)
+      document.setTextColor(100, 116, 139)
+      document.text(`Page ${page} of ${pageCount}`, pageWidth - margin, pageHeight - 6, { align: 'right' })
+      document.text(title, margin, pageHeight - 6)
+      document.setTextColor(0, 0, 0)
+    }
 
     return document
   }
