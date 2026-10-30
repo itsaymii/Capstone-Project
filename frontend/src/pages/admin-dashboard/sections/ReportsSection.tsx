@@ -9,6 +9,9 @@ import { distanceKm } from '../../../data/evacuation'
 
 type ReportHazardFilter = 'all' | 'FR' | 'EQ' | 'AC'
 
+// Approved only by default, so unverified reports are not printed as official ones.
+type ReportStatusFilter = 'approved' | 'pending' | 'all'
+
 // The earthquake feed covers the whole Philippines. The report only keeps earthquakes that can be
 // felt in Lucena: within this distance of the city center and at least this magnitude.
 const LUCENA_CENTER = { lat: 13.9414, lng: 121.6236 }
@@ -37,6 +40,8 @@ type UnifiedHazardReportRow = {
   sentVia: string
   status: string
   hazardCode: 'FR' | 'EQ' | 'AC'
+  // 'feed' for earthquakes: they come from USGS and are never reviewed by an admin.
+  approval: 'approved' | 'pending' | 'feed'
   locationKey: string
   dateValue: string
 }
@@ -149,6 +154,14 @@ function getSentViaLabel(createdByRole: string): string {
   }
 }
 
+/** Approved once an admin approved the report (or the incident is verified or later); otherwise pending. */
+function getApproval(rawStatus: string): 'approved' | 'pending' {
+  const status = rawStatus.trim().toLowerCase()
+  return ['approved', 'approve', 'verified', 'accepted', 'ongoing', 'on-going', 'contained', 'resolved'].includes(status)
+    ? 'approved'
+    : 'pending'
+}
+
 function toTitleCase(value: string): string {
   return value
     .replace(/[_-]+/g, ' ')
@@ -219,6 +232,7 @@ export function ReportsSection({
   const [reportEndDate, setReportEndDate] = useState('')
   const [reportHazardFilter, setReportHazardFilter] = useState<ReportHazardFilter>('all')
   const [reportLocationFilter, setReportLocationFilter] = useState('')
+  const [reportStatusFilter, setReportStatusFilter] = useState<ReportStatusFilter>('approved')
 
   const normalizedDashboardSearchQuery = searchQuery.trim().toLowerCase()
   const normalizedReportLocationFilter = reportLocationFilter.trim().toLowerCase()
@@ -256,6 +270,7 @@ export function ReportsSection({
         sentVia: isResponderReport ? getSentViaLabel(pickText(record, 'createdByRole')) : 'Admin',
         status: toTitleCase(rawStatus) || '-',
         hazardCode: incident.code,
+        approval: getApproval(rawStatus),
         locationKey: incident.location || '',
         dateValue,
       }
@@ -294,6 +309,7 @@ export function ReportsSection({
           sentVia: 'USGS API',
           status: getEarthquakeStatus(event),
           hazardCode: 'EQ',
+          approval: 'feed',
           locationKey: event.place,
           dateValue,
         }
@@ -337,6 +353,12 @@ export function ReportsSection({
     return reportHazardFilter === hazardCode
   }
 
+  function matchesReportStatus(approval: UnifiedHazardReportRow['approval']): boolean {
+    if (reportStatusFilter === 'all') return true
+    if (reportStatusFilter === 'pending') return approval === 'pending'
+    return approval !== 'pending'
+  }
+
   function matchesReportLocation(locationValue?: string): boolean {
     if (!normalizedReportLocationFilter) return true
     return (locationValue || '').toLowerCase().includes(normalizedReportLocationFilter)
@@ -366,6 +388,7 @@ export function ReportsSection({
       unifiedHazardReportRows.filter(
         (row) =>
           matchesReportHazard(row.hazardCode) &&
+          matchesReportStatus(row.approval) &&
           matchesReportLocation(row.locationKey) &&
           matchesDashboardSearch(row) &&
           matchesReportDateRange(row.dateValue),
@@ -374,6 +397,7 @@ export function ReportsSection({
     [
       unifiedHazardReportRows,
       reportHazardFilter,
+      reportStatusFilter,
       normalizedReportLocationFilter,
       normalizedDashboardSearchQuery,
       reportStartDate,
@@ -385,6 +409,7 @@ export function ReportsSection({
   // A change to any filter (or the dashboard search) starts again at page 1.
   const filterKey = [
     reportHazardFilter,
+    reportStatusFilter,
     normalizedReportLocationFilter,
     normalizedDashboardSearchQuery,
     reportStartDate,
@@ -410,8 +435,13 @@ export function ReportsSection({
     setReportStartDate('')
     setReportEndDate('')
     setReportHazardFilter('all')
+    setReportStatusFilter('approved')
     setReportLocationFilter('')
   }
+
+  // Shown under the filters so it is clear pending reports exist but are left out.
+  const hiddenPendingCount =
+    reportStatusFilter === 'approved' ? incidentReportRows.filter((row) => row.approval === 'pending').length : 0
 
   function downloadReportTableAsCsv<T extends Record<string, string | number>>(
     fileName: string,
@@ -839,7 +869,7 @@ export function ReportsSection({
             </button>
           </div>
 
-          <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
             <label className="grid gap-2 text-sm font-medium text-slate-700">
               Start date (optional)
               <input
@@ -875,6 +905,19 @@ export function ReportsSection({
             </label>
 
             <label className="grid gap-2 text-sm font-medium text-slate-700">
+              Status
+              <select
+                className="rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-700"
+                onChange={(event) => setReportStatusFilter(event.target.value as ReportStatusFilter)}
+                value={reportStatusFilter}
+              >
+                <option value="approved">Approved only</option>
+                <option value="pending">Pending review</option>
+                <option value="all">All reports</option>
+              </select>
+            </label>
+
+            <label className="grid gap-2 text-sm font-medium text-slate-700">
               Location / Barangay
               <input
                 className="rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-700"
@@ -885,6 +928,14 @@ export function ReportsSection({
               />
             </label>
           </div>
+
+          {hiddenPendingCount > 0 ? (
+            <p className="mt-3 text-xs text-slate-500">
+              {hiddenPendingCount} report{hiddenPendingCount === 1 ? ' is' : 's are'} still waiting for approval and{' '}
+              {hiddenPendingCount === 1 ? 'is' : 'are'} not included. Choose Status: Pending review or All reports to see{' '}
+              {hiddenPendingCount === 1 ? 'it' : 'them'}.
+            </p>
+          ) : null}
         </div>
 
         {renderReportTable({
