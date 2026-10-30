@@ -4,6 +4,8 @@ from django.db.utils import OperationalError, ProgrammingError
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 
+from incidents.teams import TEAM_NAMES
+
 
 class OneTimePassword(models.Model):
 	PURPOSE_REGISTER = 'register'
@@ -49,6 +51,8 @@ class AccountProfile(models.Model):
 	user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='account_profile')
 	role = models.CharField(max_length=20, choices=ROLE_CHOICES, default=ROLE_CITIZEN, db_index=True)
 	phone_number = models.CharField(max_length=20, blank=True, null=True, db_index=True)
+	# Responder (staff) accounts only: the team every report from this account is filed under.
+	team = models.CharField(max_length=20, choices=[(name, name) for name in TEAM_NAMES], blank=True, default='')
 	created_at = models.DateTimeField(auto_now_add=True)
 	updated_at = models.DateTimeField(auto_now=True)
 

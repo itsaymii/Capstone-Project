@@ -161,6 +161,8 @@ if DjangoTestCase is not None:
         def setUp(self):
             self.client = APIClient()
             responder = User.objects.create_user('responder_test', 'responder@test.local', 'Pass12345', is_staff=True)
+            responder.account_profile.team = 'Alpha'
+            responder.account_profile.save(update_fields=['team'])
             self.client.force_authenticate(responder)
             # Responders file reports; only an admin may approve them.
             self.admin_client = APIClient()

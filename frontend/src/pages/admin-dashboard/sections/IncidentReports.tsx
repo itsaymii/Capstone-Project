@@ -204,13 +204,8 @@ export function IncidentReports() {
     return ANALYTICS_TYPES.filter((type) => type.key !== 'earthquake' && (type.key !== 'other' || present.has('other')))
   }, [reports])
 
-  // Alpha, Bravo, Charlie, then any other team name found in the reports.
-  const teamOptions = useMemo(() => {
-    const others = Array.from(new Set(reports.map(getResponderTeam)))
-      .filter((team) => !(TEAM_NAMES as readonly string[]).includes(team))
-      .sort((a, b) => a.localeCompare(b))
-    return [...TEAM_NAMES, ...others]
-  }, [reports])
+  // Reports are filed only by responders, each under their account's team.
+  const teamOptions = TEAM_NAMES
 
   const filteredReports = useMemo(() => {
     const query = filters.search.trim().toLowerCase()

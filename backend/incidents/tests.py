@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 from django.test import TestCase
 from django.utils import timezone
 
@@ -15,7 +16,8 @@ class IncidentReportSerializerTests(TestCase):
             password='password123',
         )
         self.user.account_profile.role = AccountProfile.ROLE_STAFF
-        self.user.account_profile.save(update_fields=['role'])
+        self.user.account_profile.team = 'Alpha'
+        self.user.account_profile.save(update_fields=['role', 'team'])
 
     def test_create_preserves_explicit_victim_count_when_no_victims(self):
         data = {
@@ -31,8 +33,9 @@ class IncidentReportSerializerTests(TestCase):
             'status': 'Submitted',
         }
 
-        serializer = IncidentReportSerializer(data=data, context={'request': None})
+        serializer = IncidentReportSerializer(data=data, context={'request': SimpleNamespace(user=self.user)})
         self.assertTrue(serializer.is_valid(), serializer.errors)
 
         report = serializer.save()
         self.assertEqual(report.victim_count, 5)
+        self.assertEqual(report.responder_team, 'Alpha')  # the account's team, not the form's

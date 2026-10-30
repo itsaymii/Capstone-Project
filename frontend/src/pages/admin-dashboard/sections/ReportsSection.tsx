@@ -303,13 +303,8 @@ export function ReportsSection({
     [earthquakeReportRows, incidentReportRows, reportSortOrder],
   )
 
-  // Alpha, Bravo, Charlie, then any other team found in the reports.
-  const teamOptions = useMemo(() => {
-    const others = Array.from(new Set(incidentReportRows.map((row) => row.responseTeam)))
-      .filter((team) => team && team !== '-' && !(TEAM_NAMES as readonly string[]).includes(team))
-      .sort((a, b) => a.localeCompare(b))
-    return [...TEAM_NAMES, ...others]
-  }, [incidentReportRows])
+  // Reports are filed only by responders, each under their account's team.
+  const teamOptions = TEAM_NAMES
 
   function matchesReportDateRange(dateValue?: string): boolean {
     if (!reportStartDate && !reportEndDate) return true

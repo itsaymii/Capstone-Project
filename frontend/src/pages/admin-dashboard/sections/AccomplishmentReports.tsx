@@ -5,7 +5,7 @@ import {
   getIncidentCategoryKey,
   getIncidentCategoryMeta,
 } from '../../../data/incidentCategories'
-import { toTeamName } from '../../../data/teams'
+import { TEAM_NAMES, toTeamName } from '../../../data/teams'
 
 // Admin view of the accomplishment reports responders compile from their approved incident reports.
 
@@ -437,10 +437,8 @@ export function AccomplishmentReports() {
 
   const summaries = useMemo(() => reports.map(summarize), [reports])
 
-  const teamOptions = useMemo(
-    () => Array.from(new Set(summaries.flatMap((summary) => (summary.teams.length ? summary.teams : [summary.teamLabel])))).sort(),
-    [summaries],
-  )
+  // Reports are filed only by responders, each under their account's team.
+  const teamOptions = TEAM_NAMES
 
   const visible = useMemo(() => {
     const query = searchQuery.trim().toLowerCase()

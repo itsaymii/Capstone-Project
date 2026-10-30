@@ -33,18 +33,20 @@ class IsDashboardAdmin(permissions.BasePermission):
         return bool(user and user.is_authenticated and get_user_role(user) == AccountProfile.ROLE_ADMIN)
 
 
-class IsDashboardUserCreateAdminChange(permissions.BasePermission):
+class IsResponderCreateAdminChange(permissions.BasePermission):
     """
-    Admin and staff may list, read and create. Only admins may edit or delete,
-    which is also how reports get approved.
+    Admin and staff may list and read. Only responders (staff) may file reports, so every report
+    has a responder team. Only admins may edit or delete, which is also how reports get approved.
     """
     def has_permission(self, request, view):
         user = request.user
         if not (user and user.is_authenticated and user_has_dashboard_access(user)):
             return False
 
-        if request.method in permissions.SAFE_METHODS or request.method == 'POST':
+        if request.method in permissions.SAFE_METHODS:
             return True
+        if request.method == 'POST':
+            return get_user_role(user) == AccountProfile.ROLE_STAFF
 
         return get_user_role(user) == AccountProfile.ROLE_ADMIN
 

@@ -1,14 +1,13 @@
 import random
-import secrets
 from collections import Counter
 from datetime import timedelta
 
-from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 from django.utils import timezone
 from faker import Faker
 
+from accounts.models import AccountProfile
 from incidents.incident_types import validate_report_details
 from incidents.models import (
     AccomplishmentReport,
@@ -461,14 +460,15 @@ class Command(BaseCommand):
             random.seed(seed)  # helpers above (barangays, coordinates) use the random module
             Faker.seed(seed)
 
-        User = get_user_model()
-        responders = list(User.objects.filter(is_staff=True, is_superuser=False)) or list(User.objects.filter(is_staff=True))
+        # Only responder accounts file reports, each under its account's team (see the serializer).
+        responders = list(
+            AccountProfile.objects.filter(role=AccountProfile.ROLE_STAFF).exclude(team='').select_related('user')
+        )
         if not responders:
-            demo_password = secrets.token_urlsafe(12)
-            responders = [User.objects.create_user(
-                username='field_responder', email='responder@example.com', password=demo_password, is_staff=True,
-            )]
-            self.stdout.write(self.style.WARNING(f'No staff accounts found: created field_responder / {demo_password}'))
+            raise CommandError(
+                'No responder account has a team. In the admin dashboard, open Users and set each responder '
+                "account's team (Alpha, Bravo or Charlie), then run this command again."
+            )
 
         now = timezone.localtime()
         types = list(TYPE_WEIGHTS)
@@ -537,15 +537,12 @@ class Command(BaseCommand):
                     raise CommandError(f'Sample data failed validation for {incident_type}: {errors}')
 
                 responder = rng.choice(responders)
-                # Real reports use the logged-in responder account as the team (see the serializer),
-                # so the responder pages and team performance charts can match them.
-                responder_team = (f'{responder.first_name} {responder.last_name}'.strip() or responder.username)[:100]
                 report = IncidentReport.objects.create(
                     report_code=f'IR-{reported_at.year}-{next_report[reported_at.year]:05d}',
                     incident_code=f'INC-{year}-{next_incident[year]:05d}',
                     time_occurred=occurred_at.time().replace(second=0, microsecond=0),
                     incident_type=incident_type,
-                    responder_team=responder_team,
+                    responder_team=responder.team,
                     location=location,
                     barangay=barangay,
                     latitude=latitude,
@@ -555,7 +552,7 @@ class Command(BaseCommand):
                     action_taken=rng.choice(ACTIONS_BY_TYPE.get(incident_type, ACTIONS)),
                     status='Approved' if approved else 'Pending',
                     details=cleaned,
-                    created_by=responder,
+                    created_by=responder.user,
                 )
                 IncidentReport.objects.filter(id=report.id).update(created_at=reported_at)
 
@@ -586,7 +583,7 @@ class Command(BaseCommand):
                         Incident,
                         reference_code=report.incident_code, hazard_type=get_or_create_hazard_type(incident_type),
                         latitude=latitude, longitude=longitude, address=location, barangay=barangay,
-                        reported_by=responder, incident_datetime=occurred_at, severity_level=severity_level,
+                        reported_by=responder.user, incident_datetime=occurred_at, severity_level=severity_level,
                         status=final_incident_status(rng, occurred_at, now), impact_level=impact_level,
                         description=report.description,
                     ))

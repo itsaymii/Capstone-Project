@@ -17,7 +17,7 @@ import {
   type IncidentTypeConfig,
 } from "../../data/incidentTypeFields";
 import { LUCENA_BARANGAYS } from "../../data/barangays";
-import { toTeamName } from "../../data/teams";
+import { getAccountTeam } from "../../data/teams";
 
 interface VictimDetails {
   name: string;
@@ -121,21 +121,20 @@ const VICTIM_FIELD_LABELS: Record<Exclude<keyof VictimDetails, "details">, strin
 };
 
 
-// The responding team is the logged-in responder account (its full name, or username if it has none).
-function getAccountTeam(): { team: string; username: string } {
+// The responding team is the team an admin set on the logged-in responder account.
+function readAccount(): { team: string; username: string } {
   const profile = getCurrentUserProfile();
-  const username = profile?.username?.trim() || "";
-  return { team: toTeamName(profile?.fullName) || username, username };
+  return { team: getAccountTeam(profile), username: profile?.username?.trim() || "" };
 }
 
 export const CreateReport: FC = () => {
   const navigate = useNavigate();
-  const [account, setAccount] = useState(getAccountTeam);
+  const [account, setAccount] = useState(readAccount);
 
   const [formData, setFormData] = useState<IncidentReportForm>({
     timeOccurred: new Date().toTimeString().slice(0, 5),
     incidentType: "",
-    responderTeam: getAccountTeam().team,
+    responderTeam: readAccount().team,
     description: "",
     barangay: "",
     latitude: "",
@@ -149,18 +148,17 @@ export const CreateReport: FC = () => {
   useEffect(() => {
     let cancelled = false;
     const applyAccount = (next: { team: string; username: string }) => {
-      if (cancelled || !next.team) return;
+      if (cancelled) return;
       setAccount(next);
       setFormData((prev) => (prev.responderTeam === next.team ? prev : { ...prev, responderTeam: next.team }));
     };
-    const onAuthChanged = () => applyAccount(getAccountTeam());
+    const onAuthChanged = () => applyAccount(readAccount());
 
     fetchAccountProfile()
       .then((response) => {
         const user = response?.user;
         if (!user) return;
-        const username = user.username?.trim() || "";
-        applyAccount({ team: toTeamName(user.fullName) || username, username });
+        applyAccount({ team: getAccountTeam(user), username: user.username?.trim() || "" });
       })
       .catch(() => {
         // Offline or session check failed: keep the team from the stored login.
@@ -360,7 +358,7 @@ export const CreateReport: FC = () => {
   const validateIncidentOverview = (): string | null => {
     if (!formData.timeOccurred.trim()) return "Time occurred is required.";
     if (!formData.incidentType.trim()) return "Incident type is required.";
-    if (!formData.responderTeam.trim()) return "Responding team is required.";
+    if (!formData.responderTeam.trim()) return "Your account has no team yet. Ask an admin to set your team (Alpha, Bravo or Charlie) in Users.";
     if (!formData.description.trim()) return "Incident description is required.";
     if (!formData.barangay.trim()) return "Barangay is required.";
 
@@ -958,14 +956,14 @@ export const CreateReport: FC = () => {
                   value={formData.responderTeam}
                   readOnly
                   aria-readonly="true"
-                  placeholder="Log in with your team account to fill this in"
+                  placeholder="No team set on your account"
                   className="w-full text-sm border border-blue-200 rounded-xl px-3.5 py-2.5 bg-blue-50 text-slate-900 font-bold outline-none"
                   required
                 />
                 <p className="mt-1 text-[11px] text-slate-500">
                   {formData.responderTeam
-                    ? `From your account${account.username ? ` (@${account.username})` : ""}. Ask an admin to change the team name.`
-                    : "Your account has no team name. Log out and log in again, or ask an admin."}
+                    ? `From your account${account.username ? ` (@${account.username})` : ""}. Ask an admin to change your team.`
+                    : "Your account has no team yet. Ask an admin to set your team (Alpha, Bravo or Charlie) in Users."}
                 </p>
               </div>
             </div>
