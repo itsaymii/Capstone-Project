@@ -24,6 +24,8 @@ const LUCENA_CENTER = { lat: 13.9414, lng: 121.6236 }
 
 // Printed at the top of every exported report.
 const OFFICE_NAME = 'Lucena City Disaster Risk Reduction and Management Office'
+// Page heading, and the title of the saved PDF, the printout and the file names.
+const REPORT_TITLE = 'Incident and Hazard Reports'
 const REPORT_EARTHQUAKE_RADIUS_KM = 100
 const REPORT_EARTHQUAKE_MIN_MAGNITUDE = 3
 
@@ -62,21 +64,8 @@ type UnifiedHazardReportRow = {
   dateValue: string
 }
 
-type ResponderReport = {
-  id: string
-  reportCode?: string
-  incidentCode?: string
-  incidentType?: string
-  responderTeam?: string
-  location?: string
-  actionTaken?: string
-  createdAt?: string
-  status?: string
-}
-
 type ReportsSectionProps = {
   reports: HazardIncident[]
-  responderReports: ResponderReport[]
   earthquakeEvents: EarthquakeEvent[]
   earthquakeFeedStatus: 'loading' | 'ready' | 'error'
   earthquakeLastUpdated: Date | null
@@ -200,7 +189,6 @@ const detailReportColumns = pickColumns(['location', 'magnitude', 'cause', 'inci
 
 export function ReportsSection({
   reports,
-  responderReports,
   earthquakeEvents,
   earthquakeFeedStatus,
   earthquakeLastUpdated,
@@ -220,7 +208,7 @@ export function ReportsSection({
 
   // `reports` is already the single, de-duplicated source from the dashboard:
   // responder-submitted IncidentReports when there are any, otherwise admin Incidents.
-  // Do NOT also add `responderReports` here, or every responder report shows up twice.
+  // Do NOT also add the dashboard's separate responder report list here, or every report shows up twice.
   const incidentReportRows = useMemo<UnifiedHazardReportRow[]>(() => {
     return reports.map((incident) => {
       const record = incident as HazardIncident & Record<string, unknown>
@@ -458,6 +446,11 @@ export function ReportsSection({
   const typeOptions = ANALYTICS_TYPES.filter(
     (type) => type.key !== 'other' || incidentReportRows.some((row) => row.typeKey === 'other'),
   )
+
+  // Under the heading, and under the title of the PDF and printout.
+  const reportDescription =
+    `Incident reports from DRRMO responders and admins, plus earthquakes within ${REPORT_EARTHQUAKE_RADIUS_KM} km of Lucena City ` +
+    `(magnitude ${REPORT_EARTHQUAKE_MIN_MAGNITUDE} and up, from USGS).`
 
   // Totals for the summary cards, counted from the same rows as the table and exports.
   const reportSummary = useMemo(() => {
@@ -955,8 +948,11 @@ export function ReportsSection({
       <article className={`${glassPanelSoftClass} overflow-hidden p-0`}>
         <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-200 bg-[linear-gradient(180deg,#f8fafc_0%,#ffffff_100%)] px-5 py-4">
           <div>
-            <h3 className="text-lg font-semibold text-slate-900">{title}</h3>
-            <p className="mt-1 text-sm text-slate-600">{description}</p>
+            <h3 className="text-lg font-semibold text-slate-900">Report list</h3>
+            <p className="mt-1 text-sm text-slate-600">
+              Save PDF, Print and CSV include all {rows.length.toLocaleString()} matching report{rows.length === 1 ? '' : 's'} with every
+              column, not just this page.
+            </p>
           </div>
 
           <div className="flex flex-wrap gap-2">
@@ -973,7 +969,7 @@ export function ReportsSection({
               onClick={() => openPrintWindow(title, description, columns, rows)}
               type="button"
             >
-              Print Table
+              Print
             </button>
 
             <button
@@ -981,7 +977,7 @@ export function ReportsSection({
               onClick={() => downloadReportTableAsCsv(exportFileName, columns, rows)}
               type="button"
             >
-              Export Excel CSV
+              Export CSV (Excel)
             </button>
           </div>
         </div>
@@ -1081,11 +1077,8 @@ export function ReportsSection({
         <div className={`${glassPanelClass} p-6`}>
           <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-200 pb-5">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Reports Desk</p>
-              <h2 className="mt-1 text-2xl font-bold text-slate-900">Unified Hazard Report Table</h2>
-              <p className="mt-2 max-w-3xl text-sm leading-relaxed text-slate-600">
-                Fire, accident, earthquake, and responder-submitted reports are combined in one admin report table.
-              </p>
+              <h2 className="text-2xl font-bold text-slate-900">{REPORT_TITLE}</h2>
+              <p className="mt-2 max-w-3xl text-sm leading-relaxed text-slate-600">{reportDescription}</p>
 
               <div className="mt-3 flex flex-wrap items-center gap-2 text-xs font-medium">
                 <span
@@ -1104,13 +1097,9 @@ export function ReportsSection({
                       : `${nearbyEarthquakes.length} earthquakes within ${REPORT_EARTHQUAKE_RADIUS_KM} km of Lucena (M${REPORT_EARTHQUAKE_MIN_MAGNITUDE}+)`}
                 </span>
 
-                <span className="rounded-full bg-blue-100 px-3 py-1 text-blue-700">
-                  {responderReports.length} responder report rows loaded
-                </span>
-
                 {earthquakeLastUpdated ? (
                   <span className="text-slate-500">
-                    Updated {earthquakeLastUpdated.toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' })}
+                    Earthquakes updated {earthquakeLastUpdated.toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' })}
                   </span>
                 ) : null}
               </div>
@@ -1244,15 +1233,15 @@ export function ReportsSection({
         </div>
 
         {renderReportTable({
-          title: 'Hazard Incident Master Table',
-          description: 'Combined admin report table for earthquake, fire, accident, and responder-submitted records with print and export support.',
+          title: REPORT_TITLE,
+          description: reportDescription,
           columns: unifiedHazardReportColumns,
           screenColumns: screenReportColumns,
           detailColumns: detailReportColumns,
           rows: filteredUnifiedHazardReportRows,
           pageRows,
           emptyMessage: 'No hazard report rows match the current filters.',
-          exportFileName: 'hazard-incident-master-report',
+          exportFileName: 'incident-and-hazard-reports',
           rowKey: (row, index) => `${row.reportId}-${(currentPage - 1) * pageSize + index}`,
         })}
       </div>

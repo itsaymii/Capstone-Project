@@ -2382,7 +2382,6 @@ export function AdminDashboardPage() {
               earthquakeFeedStatus={eqCardStatus}
               earthquakeLastUpdated={eqLastUpdated}
               reports={filteredReports}
-              responderReports={responderReports}
               searchQuery={dashboardSearchQuery}
               onClearSearch={() => setDashboardSearchQuery('')}
             />
