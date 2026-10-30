@@ -18,7 +18,11 @@ interface IndividualReport {
   victimCount: number
   timeOccurred?: string
   responderTeam?: string
+  // Another team's report: the server leaves out the description and actions taken.
+  personalDataHidden?: boolean
 }
+
+const HIDDEN_FOR_OTHER_TEAMS = 'Only the filing team can see this. It may name the people involved.'
 
 interface CompiledReport {
   id: string
@@ -367,7 +371,7 @@ export const ResponderReportsPage: FC = () => {
                           Detailed Description Log
                         </span>
                         <p className="bg-slate-50/30 p-3 rounded-xl border border-slate-100 text-slate-600 leading-relaxed font-medium whitespace-pre-wrap">
-                          {report.description || 'No descriptive logs found.'}
+                          {report.personalDataHidden ? HIDDEN_FOR_OTHER_TEAMS : report.description || 'No descriptive logs found.'}
                         </p>
                       </div>
 
@@ -376,7 +380,7 @@ export const ResponderReportsPage: FC = () => {
                           Mitigation Action Measures
                         </span>
                         <p className="bg-blue-50/10 p-3 rounded-xl border border-blue-100/40 text-slate-700 leading-relaxed font-medium whitespace-pre-wrap">
-                          {report.actionTaken || 'No action mitigation sequence tracked.'}
+                          {report.personalDataHidden ? HIDDEN_FOR_OTHER_TEAMS : report.actionTaken || 'No action mitigation sequence tracked.'}
                         </p>
                       </div>
                     </div>

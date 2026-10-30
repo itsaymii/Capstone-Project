@@ -19,7 +19,11 @@ interface Incident {
   responderTeam?: string
   actionTaken?: string
   victims?: any[]
+  // Another team's report: the server leaves out the victims, description and actions taken.
+  personalDataHidden?: boolean
 }
+
+const HIDDEN_FOR_OTHER_TEAMS = 'Only the filing team can see this. It may name the people involved.'
 
 // Same type names and colors as Create Report and the admin pages.
 const mapIncidentType = (type: string) => {
@@ -66,6 +70,7 @@ export const ResponderDashboardPage: FC = () => {
             responderTeam: toTeamName(report.responderTeam || report.responder_team),
             actionTaken: report.actionTaken || report.action_taken || '',
             victims: report.victims || [],
+            personalDataHidden: Boolean(report.personalDataHidden),
           }
         })
 
@@ -331,7 +336,9 @@ export const ResponderDashboardPage: FC = () => {
                 <span className="text-slate-400 block font-bold uppercase tracking-wider text-[9px]">Incident Description</span>
                 <div className="bg-slate-50/40 p-3.5 rounded-xl border border-slate-100 min-h-[60px]">
                   <p className="text-xs text-slate-600 leading-relaxed whitespace-pre-line font-medium">
-                    {selectedIncident.description || 'No descriptive tactical log provided for this incident report.'}
+                    {selectedIncident.personalDataHidden
+                      ? HIDDEN_FOR_OTHER_TEAMS
+                      : selectedIncident.description || 'No descriptive tactical log provided for this incident report.'}
                   </p>
                 </div>
               </div>
@@ -340,7 +347,9 @@ export const ResponderDashboardPage: FC = () => {
                 <span className="text-slate-400 block font-bold uppercase tracking-wider text-[9px]">Mitigation & Action Taken</span>
                 <div className="bg-blue-50/10 p-3.5 rounded-xl border border-blue-100/50 min-h-[60px]">
                   <p className="text-xs text-slate-700 leading-relaxed whitespace-pre-line font-medium">
-                    {selectedIncident.actionTaken || 'Pending operational dispatch notes for mitigation steps.'}
+                    {selectedIncident.personalDataHidden
+                      ? HIDDEN_FOR_OTHER_TEAMS
+                      : selectedIncident.actionTaken || 'Pending operational dispatch notes for mitigation steps.'}
                   </p>
                 </div>
               </div>

@@ -37,6 +37,8 @@ interface IncidentReport {
   victims?: VictimDetails[]
   actionTaken?: string
   action_taken?: string
+  // Another team's report: the server leaves out the victims, description and actions taken.
+  personalDataHidden?: boolean
   status?: string
   status_update?: string
   createdAt?: string
@@ -127,6 +129,8 @@ function getActionTaken(report: IncidentReport): string {
 function normalizeName(value?: string | null): string {
   return String(value || '').trim().toLowerCase().replace(/\s+/g, ' ')
 }
+
+const HIDDEN_FOR_OTHER_TEAMS = "Only the filing team can see this. It may name the people involved."
 
 type CurrentResponder = { username: string; teamName: string }
 
@@ -593,7 +597,9 @@ const IncidentReportPage: FC = () => {
                 </span>
                 <div className="rounded-xl border border-slate-100 bg-slate-50/40 p-3.5">
                   <p className="whitespace-pre-wrap text-xs font-medium leading-relaxed text-slate-600">
-                    {detailsReport.description || 'No specific descriptive log submitted.'}
+                    {detailsReport.personalDataHidden
+                      ? HIDDEN_FOR_OTHER_TEAMS
+                      : detailsReport.description || 'No specific descriptive log submitted.'}
                   </p>
                 </div>
               </div>
@@ -604,7 +610,9 @@ const IncidentReportPage: FC = () => {
                 </span>
                 <div className="rounded-xl border border-blue-100/50 bg-blue-50/10 p-3.5">
                   <p className="whitespace-pre-wrap text-xs font-medium leading-relaxed text-slate-700">
-                    {getActionTaken(detailsReport) || 'No recorded action taken.'}
+                    {detailsReport.personalDataHidden
+                      ? HIDDEN_FOR_OTHER_TEAMS
+                      : getActionTaken(detailsReport) || 'No recorded action taken.'}
                   </p>
                 </div>
               </div>
@@ -619,7 +627,9 @@ const IncidentReportPage: FC = () => {
                   </span>
                 </div>
 
-                {!detailsReport.victims || detailsReport.victims.length === 0 ? (
+                {detailsReport.personalDataHidden ? (
+                  <p className="text-xs font-medium italic text-slate-400">{HIDDEN_FOR_OTHER_TEAMS}</p>
+                ) : !detailsReport.victims || detailsReport.victims.length === 0 ? (
                   <p className="text-xs font-medium italic text-slate-400">
                     No casualties or victim information recorded.
                   </p>

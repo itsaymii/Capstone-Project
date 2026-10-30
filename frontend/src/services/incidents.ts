@@ -159,6 +159,8 @@ export interface IncidentReport {
   victims?: IncidentReportVictim[]
   actionTaken?: string
   action_taken?: string
+  // Another team's report seen by a responder: victims, description and actions taken are left out.
+  personalDataHidden?: boolean
   status: string
   status_update?: string
   latitude?: string | number

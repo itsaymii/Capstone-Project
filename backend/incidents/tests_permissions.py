@@ -14,9 +14,14 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from accounts.models import AccountProfile, OneTimePassword, ensure_account_profile
-from incidents.models import IncidentReport
+from incidents.models import AccomplishmentReport, IncidentReport, VictimDetail
 
 REPORTS_URL = '/api/incidents/incident-reports/'
+
+
+def rows(response):
+    """The list rows, whether or not the endpoint is paginated."""
+    return response.data['results'] if isinstance(response.data, dict) else response.data
 
 
 def make_report(**fields):
@@ -245,3 +250,59 @@ class OtpAttemptTests(AccessTestCase):
         ]
         self.assertEqual(codes[:10], [401] * 10)
         self.assertEqual(codes[10], 429)
+
+
+class OtherTeamVictimTests(AccessTestCase):
+    """Responders see other teams' reports, but not the people in them."""
+
+    def setUp(self):
+        super().setUp()  # self.responder is on team Alpha
+        self.own = make_report(responder_team='Alpha', description='Juan, 40, burned hand', action_taken='Brought Juan to QMC')
+        self.other = make_report(responder_team='Bravo', description='Maria, 25, fainted', action_taken='Treated Maria on site')
+        for report in (self.own, self.other):
+            VictimDetail.objects.create(incident_report=report, name='Someone', age='30', gender='F', address='Purok 1', condition='Stable')
+
+    def report_from(self, client, report):
+        response = client.get(REPORTS_URL)
+        self.assertEqual(response.status_code, 200)
+        return next(item for item in rows(response) if item['id'] == str(report.id))
+
+    def test_responder_sees_own_team_victims_only(self):
+        client = self.client_for(self.responder)
+        own = self.report_from(client, self.own)
+        self.assertEqual(len(own['victims']), 1)
+        self.assertEqual(own['description'], 'Juan, 40, burned hand')
+        self.assertFalse(own['personalDataHidden'])
+
+        other = self.report_from(client, self.other)
+        self.assertEqual(other['victims'], [])
+        self.assertEqual(other['description'], '')
+        self.assertEqual(other['actionTaken'], '')
+        self.assertTrue(other['personalDataHidden'])
+        # What happened, where and when stays visible for coordination.
+        self.assertEqual((other['incidentType'], other['location'], other['victimCount']), ('Fire Incident', 'Barangay 1', 0))
+
+    def test_single_report_is_hidden_too(self):
+        response = self.client_for(self.responder).get(f'{REPORTS_URL}{self.other.id}/')
+        self.assertEqual(response.data['victims'], [])
+        self.assertTrue(response.data['personalDataHidden'])
+
+    def test_reports_inside_accomplishment_reports_are_hidden_too(self):
+        compiled = AccomplishmentReport.objects.create(title='October', compiled_by=self.responder)
+        compiled.incident_reports.set([self.own, self.other])
+        response = self.client_for(self.responder).get('/api/incidents/accomplishment-reports/')
+        nested = {item['id']: item for item in rows(response)[0]['reports']}
+        self.assertEqual(len(nested[str(self.own.id)]['victims']), 1)
+        self.assertEqual(nested[str(self.other.id)]['victims'], [])
+
+    def test_responder_without_a_team_sees_no_victims(self):
+        AccountProfile.objects.filter(user=self.responder).update(team='')
+        client = self.client_for(User.objects.get(pk=self.responder.pk))
+        self.assertTrue(self.report_from(client, self.own)['personalDataHidden'])
+
+    def test_admin_sees_every_victim(self):
+        client = self.client_for(self.admin)
+        for report in (self.own, self.other):
+            data = self.report_from(client, report)
+            self.assertEqual(len(data['victims']), 1)
+            self.assertFalse(data['personalDataHidden'])
