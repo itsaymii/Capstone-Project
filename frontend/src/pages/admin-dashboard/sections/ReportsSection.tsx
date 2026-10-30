@@ -8,6 +8,7 @@ import { glassPanelClass, glassPanelSoftClass } from './constants'
 import { LUCENA_BARANGAYS, toLucenaBarangay } from '../../../data/barangays'
 import { distanceKm } from '../../../data/evacuation'
 import { TEAM_NAMES } from '../../../data/teams'
+import { getCurrentUserProfile } from '../../../services/auth'
 import { ANALYTICS_TYPES, getIncidentCategoryKey, getIncidentCategoryLabel, type AnalyticsTypeKey } from '../../../data/incidentCategories'
 import { formatDetailValue, getIncidentTypeConfig, type DetailValues } from '../../../data/incidentTypeFields'
 
@@ -20,6 +21,9 @@ type ReportStatusFilter = 'approved' | 'pending' | 'all'
 // The earthquake feed covers the whole Philippines. The report only keeps earthquakes that can be
 // felt in Lucena: within this distance of the city center and at least this magnitude.
 const LUCENA_CENTER = { lat: 13.9414, lng: 121.6236 }
+
+// Printed at the top of every exported report.
+const OFFICE_NAME = 'Lucena City Disaster Risk Reduction and Management Office'
 const REPORT_EARTHQUAKE_RADIUS_KM = 100
 const REPORT_EARTHQUAKE_MIN_MAGNITUDE = 3
 
@@ -29,6 +33,8 @@ type ReportTableColumn<T> = {
   key: keyof T
   label: string
   align?: 'left' | 'center' | 'right'
+  // Share of the page width in the PDF table (default 1).
+  pdfWeight?: number
 }
 
 type UnifiedHazardReportRow = {
@@ -162,15 +168,15 @@ function formatReportDateTime(value: string): string {
 }
 
 const unifiedHazardReportColumns: ReportTableColumn<UnifiedHazardReportRow>[] = [
-  { key: 'reportId', label: 'Report ID' },
-  { key: 'reportType', label: 'Type' },
-  { key: 'location', label: 'Location / Barangay' },
-  { key: 'dateTime', label: 'Date and Time' },
+  { key: 'reportId', label: 'Report ID', pdfWeight: 1.2 },
+  { key: 'reportType', label: 'Type', pdfWeight: 1.4 },
+  { key: 'location', label: 'Location / Barangay', pdfWeight: 2 },
+  { key: 'dateTime', label: 'Date and Time', pdfWeight: 1.3 },
   { key: 'responseTeam', label: 'Response Team' },
   { key: 'magnitude', label: 'Magnitude' },
-  { key: 'cause', label: 'Cause' },
+  { key: 'cause', label: 'Cause', pdfWeight: 1.3 },
   { key: 'severity', label: 'Severity' },
-  { key: 'victims', label: 'Victims', align: 'center' },
+  { key: 'victims', label: 'Victims', align: 'center', pdfWeight: 0.7 },
   { key: 'incidentStatus', label: 'Incident Status' },
   { key: 'sentVia', label: 'Sent Via' },
   { key: 'status', label: 'Report Status' },
@@ -458,60 +464,166 @@ export function ReportsSection({
     return value.replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '').toLowerCase() || 'hazard-report'
   }
 
+  /** The filters behind an export, so a printed report says what it covers. */
+  function getFilterSummary(): Array<[string, string]> {
+    const formatDay = (value: string) =>
+      value ? new Date(`${value}T00:00:00`).toLocaleDateString('en-PH', { dateStyle: 'medium' }) : ''
+    const dateRange =
+      reportStartDate || reportEndDate
+        ? `${formatDay(reportStartDate) || 'Any date'} to ${formatDay(reportEndDate) || 'Any date'}`
+        : 'All dates'
+    const statusLabels: Record<ReportStatusFilter, string> = {
+      approved: 'Approved only',
+      pending: 'Pending review',
+      all: 'All reports',
+    }
+    const summary: Array<[string, string]> = [
+      ['Date', dateRange],
+      ['Type', reportTypeFilter === 'all' ? 'All types' : typeOptions.find((type) => type.key === reportTypeFilter)?.label ?? reportTypeFilter],
+      ['Status', statusLabels[reportStatusFilter]],
+      ['Barangay', reportBarangayFilter === 'all' ? 'All barangays' : reportBarangayFilter],
+      ['Team', reportTeamFilter === 'all' ? 'All teams' : reportTeamFilter],
+      ['Sort', reportSortOrder === 'newest' ? 'Newest first' : 'Oldest first'],
+    ]
+    if (searchQuery.trim()) summary.push(['Search', `"${searchQuery.trim()}"`])
+    return summary
+  }
+
+  function getPreparedBy(): string {
+    return getCurrentUserProfile()?.fullName?.trim() || 'Administrator'
+  }
+
+  /**
+   * A landscape A4 PDF with the rows as a real table: wrapped cells, the header repeated on
+   * every page, and "Page X of Y". Drawn with jsPDF only (no table plugin).
+   */
   function buildReportPdf<T extends Record<string, string | number>>(
     title: string,
     description: string,
     columns: ReportTableColumn<T>[],
     rows: T[],
   ) {
-    const document = new jsPDF({ unit: 'mm', format: 'a4' })
+    const document = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'landscape' })
     const pageWidth = document.internal.pageSize.getWidth()
     const pageHeight = document.internal.pageSize.getHeight()
-    const margin = 14
-    const maxLineWidth = pageWidth - margin * 2
-    let cursorY = 18
+    const margin = 10
+    const bottom = pageHeight - 12
+    const fontSize = 7
+    const lineHeight = 3.1
+    const padding = 1.5
+    let cursorY = 14
 
-    const ensureSpace = (height: number): void => {
-      if (cursorY + height > pageHeight - 18) {
-        document.addPage()
-        cursorY = 18
-      }
-    }
+    const totalWeight = columns.reduce((sum, column) => sum + (column.pdfWeight ?? 1), 0)
+    const widths = columns.map((column) => ((column.pdfWeight ?? 1) / totalWeight) * (pageWidth - margin * 2))
 
-    const drawText = (text: string, fontSize: number, style: 'normal' | 'bold' = 'normal') => {
-      document.setFont('helvetica', style)
+    const wrap = (text: string, width: number): string[] => document.splitTextToSize(text, width - padding * 2) as string[]
+
+    const drawRow = (cells: string[], header: boolean): void => {
+      document.setFont('helvetica', header ? 'bold' : 'normal')
       document.setFontSize(fontSize)
-      const lines = document.splitTextToSize(text, maxLineWidth)
-      const lineHeight = fontSize * 0.42 + 1.4
-      ensureSpace(lines.length * lineHeight + 2)
-      document.text(lines, margin, cursorY)
-      cursorY += lines.length * lineHeight + 2
+      const lines = cells.map((cell, index) => wrap(cell, widths[index]))
+      const height = Math.max(...lines.map((cellLines) => cellLines.length)) * lineHeight + padding * 2
+
+      let x = margin
+      lines.forEach((cellLines, index) => {
+        if (header) {
+          document.setFillColor(226, 232, 240)
+          document.rect(x, cursorY, widths[index], height, 'FD')
+        } else {
+          document.rect(x, cursorY, widths[index], height)
+        }
+        const align = columns[index].align === 'center' ? 'center' : 'left'
+        const textX = align === 'center' ? x + widths[index] / 2 : x + padding
+        document.text(cellLines, textX, cursorY + padding + lineHeight * 0.75, { align })
+        x += widths[index]
+      })
+      cursorY += height
     }
 
-    const generatedAt = new Date().toLocaleString('en-PH', {
-      dateStyle: 'medium',
-      timeStyle: 'short',
-    })
+    const headerCells = columns.map((column) => column.label)
+    const startTablePage = (): void => {
+      document.setDrawColor(148, 163, 184)
+      document.setLineWidth(0.1)
+      drawRow(headerCells, true)
+    }
 
-    drawText(title, 16, 'bold')
-    drawText(description, 10)
-    drawText(`Generated: ${generatedAt}`, 8)
+    const generatedAt = new Date().toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' })
+
+    document.setFont('helvetica', 'bold')
+    document.setFontSize(9)
+    document.setTextColor(11, 42, 87)
+    document.text(OFFICE_NAME.toUpperCase(), margin, cursorY)
+    document.setTextColor(0, 0, 0)
+    cursorY += 6
+    document.setFontSize(14)
+    document.text(title, margin, cursorY)
+    cursorY += 6
+    document.setFont('helvetica', 'normal')
+    document.setFontSize(9)
+    const descriptionLines = document.splitTextToSize(description, pageWidth - margin * 2) as string[]
+    document.text(descriptionLines, margin, cursorY)
+    cursorY += descriptionLines.length * 4 + 1
+    document.setFontSize(8)
+    document.text(`Generated: ${generatedAt}  |  ${rows.length.toLocaleString()} report${rows.length === 1 ? '' : 's'}`, margin, cursorY)
     cursorY += 4
+    const filterLines = document.splitTextToSize(
+      `Filters: ${getFilterSummary().map(([label, value]) => `${label}: ${value}`).join('  |  ')}`,
+      pageWidth - margin * 2,
+    ) as string[]
+    document.text(filterLines, margin, cursorY)
+    cursorY += filterLines.length * 3.6 + 2
 
     if (rows.length === 0) {
-      drawText('No report rows match the current filters.', 10)
-      return document
+      document.setFontSize(10)
+      document.text('No report rows match the current filters.', margin, cursorY + 4)
+    } else {
+      startTablePage()
+      rows.forEach((row) => {
+        const cells = columns.map((column) => String(row[column.key] ?? '-'))
+        document.setFont('helvetica', 'normal')
+        document.setFontSize(fontSize)
+        const height =
+          Math.max(...cells.map((cell, index) => wrap(cell, widths[index]).length)) * lineHeight + padding * 2
+        if (cursorY + height > bottom) {
+          document.addPage()
+          cursorY = 12
+          startTablePage()
+        }
+        drawRow(cells, false)
+      })
     }
 
-    rows.forEach((row, index) => {
-      ensureSpace(32)
-      drawText(`${index + 1}. ${String(row[columns[0].key] ?? '')}`, 11, 'bold')
-      columns.slice(1).forEach((column) => {
-        const value = String(row[column.key] ?? '-')
-        drawText(`${column.label}: ${value}`, 9)
-      })
-      cursorY += 4
-    })
+    // Signature block: who prepared the report and space for the approving officer.
+    if (cursorY + 28 > bottom) {
+      document.addPage()
+      cursorY = 16
+    }
+    cursorY += 14
+    document.setFont('helvetica', 'normal')
+    document.setFontSize(8)
+    document.setDrawColor(0, 0, 0)
+    const signatureWidth = 80
+    const rightX = pageWidth - margin - signatureWidth
+    document.text('Prepared by:', margin, cursorY - 9)
+    document.text('Noted by:', rightX, cursorY - 9)
+    document.line(margin, cursorY, margin + signatureWidth, cursorY)
+    document.line(rightX, cursorY, rightX + signatureWidth, cursorY)
+    document.setFont('helvetica', 'bold')
+    document.text(getPreparedBy(), margin, cursorY + 4)
+    document.setFont('helvetica', 'normal')
+    document.text('Signature over printed name', rightX, cursorY + 4)
+    document.text('Head, Lucena City DRRMO', rightX, cursorY + 8)
+
+    const pageCount = document.getNumberOfPages()
+    for (let page = 1; page <= pageCount; page += 1) {
+      document.setPage(page)
+      document.setFont('helvetica', 'normal')
+      document.setFontSize(7)
+      document.setTextColor(100, 116, 139)
+      document.text(`Page ${page} of ${pageCount}`, pageWidth - margin, pageHeight - 6, { align: 'right' })
+      document.text(title, margin, pageHeight - 6)
+      document.setTextColor(0, 0, 0)
+    }
 
     return document
   }
@@ -606,11 +718,14 @@ export function ReportsSection({
             th,
             td {
               border: 1px solid #374151;
-              padding: 8px 10px;
+              padding: 5px 6px;
               text-align: left;
               vertical-align: top;
-              font-size: 11px;
-              word-break: break-word;
+              font-size: 9px;
+              /* Wrap between words; only split a word that cannot fit on a line at all. */
+              word-break: normal;
+              overflow-wrap: break-word;
+              hyphens: none;
               white-space: pre-wrap;
             }
             th {
@@ -625,6 +740,35 @@ export function ReportsSection({
               font-size: 12px;
               color: #1f2937;
             }
+            .office {
+              margin: 0 0 6px;
+              font-size: 12px;
+              font-weight: 700;
+              letter-spacing: 0.08em;
+              text-transform: uppercase;
+              color: #0b2a57;
+            }
+            .filters {
+              margin-top: 6px;
+              font-size: 11px;
+              color: #374151;
+            }
+            .signatures {
+              display: flex;
+              justify-content: space-between;
+              gap: 40px;
+              margin-top: 48px;
+              font-size: 12px;
+              page-break-inside: avoid;
+            }
+            .signature {
+              width: 280px;
+            }
+            .signature .line {
+              margin-top: 36px;
+              border-top: 1px solid #111;
+              padding-top: 4px;
+            }
             @media print {
               body {
                 margin: 0;
@@ -632,8 +776,8 @@ export function ReportsSection({
               .no-print {
                 display: none;
               }
-              table {
-                page-break-inside: avoid;
+              thead {
+                display: table-header-group;
               }
               tr {
                 page-break-inside: avoid;
@@ -644,11 +788,15 @@ export function ReportsSection({
         </head>
         <body>
           <div class="report-header">
+            <p class="office">${escapeHtmlCell(OFFICE_NAME)}</p>
             <h1>${escapeHtmlCell(title)}</h1>
             <p>${escapeHtmlCell(description)}</p>
             <p class="summary">Generated: ${escapeHtmlCell(
               new Date().toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' }),
-            )}</p>
+            )}  |  ${rows.length.toLocaleString()} report${rows.length === 1 ? '' : 's'}</p>
+            <p class="filters">Filters: ${getFilterSummary()
+              .map(([label, value]) => `<strong>${escapeHtmlCell(label)}:</strong> ${escapeHtmlCell(value)}`)
+              .join(' &nbsp;|&nbsp; ')}</p>
           </div>
 
           <table>
@@ -657,6 +805,17 @@ export function ReportsSection({
             </thead>
             <tbody>${bodyRows}</tbody>
           </table>
+
+          <div class="signatures">
+            <div class="signature">
+              Prepared by:
+              <div class="line"><strong>${escapeHtmlCell(getPreparedBy())}</strong></div>
+            </div>
+            <div class="signature">
+              Noted by:
+              <div class="line">Signature over printed name<br />Head, Lucena City DRRMO</div>
+            </div>
+          </div>
 
           <script>
             window.onload = () => {
