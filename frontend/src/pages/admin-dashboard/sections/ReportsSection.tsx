@@ -95,15 +95,16 @@ function getReportCause(incidentType: string, details: unknown): string {
   return 'Not stated'
 }
 
+// createdByRole from the backend: 'admin', 'staff' (responder accounts), 'responder' or 'anonymous'.
 function getSentViaLabel(createdByRole: string): string {
   switch (createdByRole.toLowerCase()) {
     case 'admin':
       return 'Admin'
-    case 'staff':
-      return 'Staff'
     case 'anonymous':
-      return 'Public'
+      // No account is linked to the report (older data): nobody can say who sent it.
+      return 'Unknown'
     default:
+      // Responder accounts have the staff role; the system calls them responders everywhere.
       return 'Responder'
   }
 }
