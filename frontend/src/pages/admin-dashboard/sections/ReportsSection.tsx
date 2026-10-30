@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { Fragment, useMemo, useState } from 'react'
 import { TablePagination } from '../../../components/TablePagination'
 import { PAGE_SIZE_OPTIONS, clampPage } from '../../../components/pagination'
 import { jsPDF } from 'jspdf'
@@ -35,6 +35,8 @@ type ReportTableColumn<T> = {
   align?: 'left' | 'center' | 'right'
   // Share of the page width in the PDF table (default 1).
   pdfWeight?: number
+  // Keep the value on one line in the on-screen table (e.g. dates).
+  nowrap?: boolean
 }
 
 type UnifiedHazardReportRow = {
@@ -55,6 +57,8 @@ type UnifiedHazardReportRow = {
   approval: 'approved' | 'pending' | 'feed'
   // One of the 33 barangays, or '' when the location names none (earthquakes, old records).
   barangay: string
+  // Short place for the on-screen table: the barangay, or the location when there is none.
+  area: string
   dateValue: string
 }
 
@@ -172,7 +176,7 @@ const unifiedHazardReportColumns: ReportTableColumn<UnifiedHazardReportRow>[] = 
   { key: 'reportId', label: 'Report ID', pdfWeight: 1.2 },
   { key: 'reportType', label: 'Type', pdfWeight: 1.4 },
   { key: 'location', label: 'Location / Barangay', pdfWeight: 2 },
-  { key: 'dateTime', label: 'Date and Time', pdfWeight: 1.3 },
+  { key: 'dateTime', label: 'Date and Time', pdfWeight: 1.3, nowrap: true },
   { key: 'responseTeam', label: 'Response Team' },
   { key: 'magnitude', label: 'Magnitude' },
   { key: 'cause', label: 'Cause', pdfWeight: 1.3 },
@@ -182,6 +186,17 @@ const unifiedHazardReportColumns: ReportTableColumn<UnifiedHazardReportRow>[] = 
   { key: 'sentVia', label: 'Sent Via' },
   { key: 'status', label: 'Report Status' },
 ]
+
+// The on-screen table shows the main facts; the other columns open under a row with "Details".
+// PDF, Print and CSV keep every column above.
+const pickColumns = (keys: Array<keyof UnifiedHazardReportRow>) =>
+  keys.map((key) => unifiedHazardReportColumns.find((column) => column.key === key)!)
+const screenReportColumns: ReportTableColumn<UnifiedHazardReportRow>[] = [
+  ...pickColumns(['reportId', 'reportType']),
+  { key: 'area', label: 'Barangay' },
+  ...pickColumns(['dateTime', 'responseTeam', 'severity', 'victims', 'status']),
+]
+const detailReportColumns = pickColumns(['location', 'magnitude', 'cause', 'incidentStatus', 'sentVia'])
 
 export function ReportsSection({
   reports,
@@ -198,6 +213,7 @@ export function ReportsSection({
   const [reportBarangayFilter, setReportBarangayFilter] = useState('all')
   const [reportTeamFilter, setReportTeamFilter] = useState('all')
   const [reportSortOrder, setReportSortOrder] = useState<'newest' | 'oldest'>('newest')
+  const [openRowKey, setOpenRowKey] = useState<string | null>(null)
   const [reportStatusFilter, setReportStatusFilter] = useState<ReportStatusFilter>('approved')
 
   const normalizedDashboardSearchQuery = searchQuery.trim().toLowerCase()
@@ -238,6 +254,8 @@ export function ReportsSection({
         typeKey: getIncidentCategoryKey(record),
         approval: getApproval(rawStatus),
         barangay: toLucenaBarangay(pickText(record, 'barangayName')) ?? toLucenaBarangay(incident.location) ?? '',
+        area:
+          toLucenaBarangay(pickText(record, 'barangayName')) ?? toLucenaBarangay(incident.location) ?? (incident.location || '-'),
         dateValue,
       }
     })
@@ -277,6 +295,7 @@ export function ReportsSection({
           typeKey: 'earthquake',
           approval: 'feed',
           barangay: '',
+          area: `${Math.round(km)} km from Lucena`,
           dateValue,
         }
       })
@@ -862,14 +881,19 @@ export function ReportsSection({
     title: string
     description: string
     columns: ReportTableColumn<T>[]
+    screenColumns: ReportTableColumn<T>[]
+    detailColumns: ReportTableColumn<T>[]
     rows: T[]
     pageRows: T[]
     emptyMessage: string
     exportFileName: string
     rowKey: (row: T, index: number) => string
   }) {
-    // rows: every matching row, for Save PDF, Print and CSV. pageRows: the rows on the current page.
-    const { title, description, columns, rows, pageRows, emptyMessage, exportFileName, rowKey } = options
+    // rows: every matching row, for Save PDF, Print and CSV (all columns).
+    // pageRows: the rows on the current page, shown with screenColumns; detailColumns open under a row.
+    const { title, description, columns, screenColumns, detailColumns, rows, pageRows, emptyMessage, exportFileName, rowKey } = options
+    const alignClass = (align?: 'left' | 'center' | 'right') =>
+      align === 'right' ? 'text-right' : align === 'center' ? 'text-center' : 'text-left'
 
     return (
       <article className={`${glassPanelSoftClass} overflow-hidden p-0`}>
@@ -910,46 +934,68 @@ export function ReportsSection({
           <table className="min-w-full divide-y divide-slate-200 text-sm">
             <thead className="bg-slate-50/90">
               <tr>
-                {columns.map((column) => (
+                {screenColumns.map((column) => (
                   <th
-                    className={`px-4 py-3.5 text-xs font-semibold uppercase tracking-[0.14em] text-slate-500 ${
-                      column.align === 'right'
-                        ? 'text-right'
-                        : column.align === 'center'
-                          ? 'text-center'
-                          : 'text-left'
-                    }`}
+                    className={`px-4 py-3.5 text-xs font-semibold uppercase tracking-[0.14em] text-slate-500 ${alignClass(column.align)}`}
                     key={String(column.key)}
                   >
                     {column.label}
                   </th>
                 ))}
+                <th className="px-4 py-3.5">
+                  <span className="sr-only">Details</span>
+                </th>
               </tr>
             </thead>
 
             <tbody className="divide-y divide-slate-200 bg-white">
               {pageRows.length > 0 ? (
-                pageRows.map((row, index) => (
-                  <tr className="transition hover:bg-slate-50/80" key={rowKey(row, index)}>
-                    {columns.map((column) => (
-                      <td
-                        className={`px-4 py-4 align-top text-slate-700 ${
-                          column.align === 'right'
-                            ? 'text-right'
-                            : column.align === 'center'
-                              ? 'text-center'
-                              : 'text-left'
-                        }`}
-                        key={String(column.key)}
-                      >
-                        {String(row[column.key] ?? '-')}
-                      </td>
-                    ))}
-                  </tr>
-                ))
+                pageRows.map((row, index) => {
+                  const key = rowKey(row, index)
+                  const isOpen = openRowKey === key
+
+                  return (
+                    <Fragment key={key}>
+                      <tr className={`transition ${isOpen ? 'bg-blue-50/60' : 'hover:bg-slate-50/80'}`}>
+                        {screenColumns.map((column) => (
+                          <td
+                            className={`px-4 py-3 align-top text-slate-700 ${alignClass(column.align)} ${column.nowrap ? 'whitespace-nowrap' : ''}`}
+                            key={String(column.key)}
+                          >
+                            {String(row[column.key] ?? '-')}
+                          </td>
+                        ))}
+                        <td className="px-4 py-2 text-right align-top">
+                          <button
+                            aria-expanded={isOpen}
+                            className="whitespace-nowrap rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50"
+                            onClick={() => setOpenRowKey(isOpen ? null : key)}
+                            type="button"
+                          >
+                            {isOpen ? 'Hide' : 'Details'}
+                          </button>
+                        </td>
+                      </tr>
+                      {isOpen ? (
+                        <tr className="bg-blue-50/40">
+                          <td className="px-4 pb-4 pt-1" colSpan={screenColumns.length + 1}>
+                            <dl className="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2 lg:grid-cols-5">
+                              {detailColumns.map((column) => (
+                                <div key={String(column.key)}>
+                                  <dt className="text-[11px] font-semibold uppercase tracking-[0.13em] text-slate-500">{column.label}</dt>
+                                  <dd className="mt-0.5 text-slate-800">{String(row[column.key] ?? '-')}</dd>
+                                </div>
+                              ))}
+                            </dl>
+                          </td>
+                        </tr>
+                      ) : null}
+                    </Fragment>
+                  )
+                })
               ) : (
                 <tr>
-                  <td className="px-4 py-6 text-center text-sm text-slate-500" colSpan={columns.length}>
+                  <td className="px-4 py-6 text-center text-sm text-slate-500" colSpan={screenColumns.length + 1}>
                     {emptyMessage}
                   </td>
                 </tr>
@@ -1131,6 +1177,8 @@ export function ReportsSection({
           title: 'Hazard Incident Master Table',
           description: 'Combined admin report table for earthquake, fire, accident, and responder-submitted records with print and export support.',
           columns: unifiedHazardReportColumns,
+          screenColumns: screenReportColumns,
+          detailColumns: detailReportColumns,
           rows: filteredUnifiedHazardReportRows,
           pageRows,
           emptyMessage: 'No hazard report rows match the current filters.',
