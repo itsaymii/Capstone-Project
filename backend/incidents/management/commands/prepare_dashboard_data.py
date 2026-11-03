@@ -242,7 +242,6 @@ class Command(BaseCommand):
             month_name = timezone.localtime(reports[0].created_at).strftime('%B')
             accomplishment = AccomplishmentReport.objects.create(
                 title=f'{team} Team - {month_name} {year}'[:100],
-                total_reports=len(reports),
                 status='Compiled',
                 # Left empty on purpose: the Accomplishment page only lists reports that
                 # were not compiled by an admin/staff account.

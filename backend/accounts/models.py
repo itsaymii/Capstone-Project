@@ -3,6 +3,7 @@ from django.db import models
 from django.db.utils import OperationalError, ProgrammingError
 from django.db.models.signals import post_save
 from django.dispatch import receiver
+from locations.models import Barangay
 
 
 class OneTimePassword(models.Model):
@@ -48,6 +49,13 @@ class AccountProfile(models.Model):
 
 	user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='account_profile')
 	role = models.CharField(max_length=20, choices=ROLE_CHOICES, default=ROLE_CITIZEN, db_index=True)
+	responder_team = models.ForeignKey(
+		'incidents.ResponderTeam',
+		on_delete=models.SET_NULL,
+		blank=True,
+		null=True,
+		related_name='assigned_profiles',
+	)
 	phone_number = models.CharField(max_length=20, blank=True, null=True, db_index=True)
 	created_at = models.DateTimeField(auto_now_add=True)
 	updated_at = models.DateTimeField(auto_now=True)
@@ -79,7 +87,14 @@ class ResidencyVerification(models.Model):
 
 	user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='residency_verification', blank=True, null=True)
 	email = models.EmailField(unique=True, db_index=True)
-	barangay_name = models.CharField(max_length=200)
+	barangay_record = models.ForeignKey(
+		Barangay,
+		on_delete=models.SET_NULL,
+		blank=True,
+		null=True,
+		related_name='residency_verifications',
+	)
+	legacy_barangay_name = models.CharField(max_length=200, blank=True)
 	residential_address = models.TextField()
 	proof_document = models.FileField(upload_to='residency_verification_documents/')
 	proof_document_name = models.CharField(max_length=255)
@@ -95,6 +110,26 @@ class ResidencyVerification(models.Model):
 
 	def __str__(self):
 		return f"{self.email} - {self.status}"
+
+	@property
+	def barangay_name(self) -> str:
+		if self.barangay_record_id:
+			return self.barangay_record.name
+		return self.legacy_barangay_name
+
+	@barangay_name.setter
+	def barangay_name(self, value: str) -> None:
+		self.barangay_record = None
+		self.legacy_barangay_name = value
+
+	def save(self, *args, **kwargs):
+		update_fields = kwargs.get('update_fields')
+		if update_fields is not None and 'barangay_name' in update_fields:
+			kwargs['update_fields'] = (set(update_fields) - {'barangay_name'}) | {
+				'barangay_record',
+				'legacy_barangay_name',
+			}
+		super().save(*args, **kwargs)
 
 
 def ensure_account_profile(user: User, default_role: str | None = None) -> AccountProfile:

@@ -1,6 +1,6 @@
 import json
 from django.core.management.base import BaseCommand
-from locations.models import Barangay
+from locations.models import Barangay, get_or_create_city_municipality
 
 # This command imports barangays from a GeoJSON file. It can be run with:
 # python manage.py import_barangays path/to/barangays.geojson
@@ -53,19 +53,39 @@ class Command(BaseCommand):
             # Calculate centroid from geometry
             centroid_lat, centroid_lng = self._calculate_centroid(geom)
             
-            barangay, created = Barangay.objects.update_or_create(
-                name=brgy_name,
-                defaults={
-                    'city': props.get('city_name', props.get('city', 'Lucena City')),
-                    'province': props.get('prov_name', props.get('province', 'Quezon')),
-                    'boundary': geom,
-                    'latitude': centroid_lat,
-                    'longitude': centroid_lng,
-                    'brgy_code': props.get('brgy_code', ''),
-                    'reg_name': props.get('reg_name', ''),
-                    'population': props.get('population', 0),
-                }
+            city_name = str(props.get('city_name') or props.get('city') or 'Lucena City').strip()
+            province_name = str(props.get('prov_name') or props.get('province') or 'Quezon').strip()
+            region_name = str(props.get('reg_name') or 'Region IV-A (CALABARZON)').strip()
+            brgy_code = str(props.get('brgy_code') or '').strip()
+            city_municipality = get_or_create_city_municipality(
+                city_name=city_name,
+                province_name=province_name,
+                region_name=region_name,
             )
+
+            barangay = None
+            if brgy_code:
+                barangay = Barangay.objects.filter(brgy_code=brgy_code).first()
+            if barangay is None:
+                barangay = Barangay.objects.filter(
+                    name__iexact=brgy_name.strip(),
+                    city_municipality=city_municipality,
+                ).first()
+
+            created = barangay is None
+            if created:
+                barangay = Barangay(
+                    name=brgy_name.strip(),
+                    city_municipality=city_municipality,
+                )
+            barangay.name = brgy_name.strip()
+            barangay.city_municipality = city_municipality
+            barangay.boundary = geom
+            barangay.latitude = centroid_lat
+            barangay.longitude = centroid_lng
+            barangay.brgy_code = brgy_code
+            barangay.population = props.get('population', 0)
+            barangay.save()
             
             if created:
                 count += 1

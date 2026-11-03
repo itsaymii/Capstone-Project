@@ -1,9 +1,22 @@
 from django.contrib import admin
-from .models import SupplyCategory, Supply, EvacuationCenter, Equipment, Volunteer
+from .models import (
+    SupplyCategory,
+    Supply,
+    EvacuationCenter,
+    Equipment,
+    Volunteer,
+    VolunteerSkill,
+    VolunteerSkillAssignment,
+)
 
 
 class SupplyInline(admin.TabularInline):
     model = Supply
+    extra = 0
+
+
+class VolunteerSkillAssignmentInline(admin.TabularInline):
+    model = VolunteerSkillAssignment
     extra = 0
 
 
@@ -67,3 +80,10 @@ class VolunteerAdmin(admin.ModelAdmin):
     list_filter = ['status', 'barangay']
     search_fields = ['full_name', 'contact_number', 'email']
     ordering = ['full_name']
+    inlines = [VolunteerSkillAssignmentInline]
+
+
+@admin.register(VolunteerSkill)
+class VolunteerSkillAdmin(admin.ModelAdmin):
+    list_display = ['code', 'name']
+    search_fields = ['code', 'name']

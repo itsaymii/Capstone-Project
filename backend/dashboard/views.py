@@ -19,8 +19,19 @@ from accounts.models import AccountProfile, OneTimePassword, ResidencyVerificati
 from .models import (
     SimulationCertificate,
     SimulationCourseCatalog,
+    SimulationCourse,
+    SimulationCourseMaterial,
+    SimulationCourseObjective,
+    SimulationCoursePrerequisite,
+    SimulationCourseProgress,
+    SimulationLesson,
+    SimulationLessonExamChoice,
+    SimulationLessonExamQuestion,
+    SimulationLessonPoint,
+    SimulationLessonVideoCompletion,
     SimulationModuleQuiz,
     SimulationProgress,
+    SimulationQuizAnswer,
     SimulationQuizAttempt,
     SimulationQuizChoice,
     SimulationQuizQuestion,
@@ -190,33 +201,24 @@ def _sanitize_completed_courses(raw: object) -> dict[str, str]:
     return sanitized
 
 
-def _serialize_simulation_progress(progress: SimulationProgress) -> dict:
-    return {
-        'courseProgress': progress.course_progress,
-        'completedLessonVideos': progress.completed_lesson_videos,
-        'completedCourses': progress.completed_courses,
-        'updatedAt': timezone.localtime(progress.updated_at).isoformat() if progress.updated_at else None,
-    }
-
-
 def _serialize_simulation_admin_metrics() -> dict:
     metrics: dict[str, dict[str, int]] = {}
+    progress_ids: dict[str, set[int]] = {}
+    completed_progress_ids: dict[str, set[int]] = {}
 
-    for progress in SimulationProgress.objects.all().iterator():
-        course_progress = progress.course_progress if isinstance(progress.course_progress, dict) else {}
-        completed_courses = progress.completed_courses if isinstance(progress.completed_courses, dict) else {}
+    for record in SimulationCourseProgress.objects.only(
+        'progress_id', 'course_id', 'completed_at',
+    ).iterator():
+        progress_ids.setdefault(record.course_id, set()).add(record.progress_id)
+        if record.completed_at:
+            completed_progress_ids.setdefault(record.course_id, set()).add(record.progress_id)
 
-        course_ids = {
-            key.strip()
-            for key in [*course_progress.keys(), *completed_courses.keys()]
-            if isinstance(key, str) and key.strip()
+    for course_id, trainees in progress_ids.items():
+        metrics[course_id] = {
+            'trainees': len(trainees),
+            'completed': len(completed_progress_ids.get(course_id, set())),
+            'completionRate': 0,
         }
-
-        for course_id in course_ids:
-            course_metrics = metrics.setdefault(course_id, {'trainees': 0, 'completed': 0, 'completionRate': 0})
-            course_metrics['trainees'] += 1
-            if course_id in completed_courses:
-                course_metrics['completed'] += 1
 
     for course_metrics in metrics.values():
         trainees = course_metrics['trainees']
@@ -260,6 +262,7 @@ def _sanitize_exam_questions(raw_questions: object) -> list[dict]:
         return []
 
     sanitized_questions: list[dict] = []
+    seen_ids: set[str] = set()
     for q_index, raw_question in enumerate(raw_questions):
         if not isinstance(raw_question, dict):
             continue
@@ -274,9 +277,13 @@ def _sanitize_exam_questions(raw_questions: object) -> list[dict]:
         except (TypeError, ValueError):
             correct_option_index = 0
 
+        question_id = str(raw_question.get('id') or f'question-{q_index + 1}').strip() or f'question-{q_index + 1}'
+        if question_id in seen_ids:
+            raise ValidationError(f'Duplicate exam question id detected: {question_id}')
+        seen_ids.add(question_id)
         sanitized_questions.append(
             {
-                'id': str(raw_question.get('id') or f'question-{q_index + 1}').strip() or f'question-{q_index + 1}',
+                'id': question_id,
                 'prompt': prompt,
                 'options': options,
                 'correctOptionIndex': max(0, min(correct_option_index, len(options) - 1)),
@@ -292,6 +299,7 @@ def _sanitize_lessons(raw_lessons: object) -> list[dict]:
         return []
 
     sanitized_lessons: list[dict] = []
+    seen_ids: set[str] = set()
     for index, raw_lesson in enumerate(raw_lessons):
         if not isinstance(raw_lesson, dict):
             continue
@@ -300,9 +308,13 @@ def _sanitize_lessons(raw_lessons: object) -> list[dict]:
         if lesson_type not in ALLOWED_LESSON_TYPES:
             lesson_type = 'video'
 
+        lesson_id = str(raw_lesson.get('id') or f'lesson-{index + 1}').strip() or f'lesson-{index + 1}'
+        if lesson_id in seen_ids:
+            raise ValidationError(f'Duplicate lesson id detected: {lesson_id}')
+        seen_ids.add(lesson_id)
         sanitized_lessons.append(
             {
-                'id': str(raw_lesson.get('id') or f'lesson-{index + 1}').strip() or f'lesson-{index + 1}',
+                'id': lesson_id,
                 'lessonType': lesson_type,
                 'title': str(raw_lesson.get('title') or '').strip() or f'Lesson {index + 1}',
                 'duration': str(raw_lesson.get('duration') or '').strip() or '10 min',
@@ -324,6 +336,7 @@ def _sanitize_learning_materials(raw_materials: object) -> list[dict]:
         return []
 
     sanitized_materials: list[dict] = []
+    seen_ids: set[str] = set()
     for index, raw_material in enumerate(raw_materials):
         if not isinstance(raw_material, dict):
             continue
@@ -340,9 +353,13 @@ def _sanitize_learning_materials(raw_materials: object) -> list[dict]:
         if not (title or url or description or file_name):
             continue
 
+        material_id = str(raw_material.get('id') or f'material-{index + 1}').strip() or f'material-{index + 1}'
+        if material_id in seen_ids:
+            raise ValidationError(f'Duplicate learning material id detected: {material_id}')
+        seen_ids.add(material_id)
         sanitized_materials.append(
             {
-                'id': str(raw_material.get('id') or f'material-{index + 1}').strip() or f'material-{index + 1}',
+                'id': material_id,
                 'title': title or f'Material {index + 1}',
                 'type': material_type,
                 'url': url,
@@ -396,6 +413,230 @@ def _sanitize_simulation_course(raw_course: object, index: int) -> dict:
         'heroImageName': str(raw_course.get('heroImageName') or '').strip(),
         'lessonOutline': lessons,
         'learningMaterials': _sanitize_learning_materials(raw_course.get('learningMaterials')),
+    }
+
+
+def _get_or_create_simulation_course(course_id: str) -> SimulationCourse:
+    course, _ = SimulationCourse.objects.get_or_create(
+        course_id=course_id,
+        defaults={'title': f'Course {course_id}', 'is_archived': True, 'is_placeholder': True},
+    )
+    return course
+
+
+def _get_or_create_simulation_lesson(course: SimulationCourse, lesson_id: str) -> SimulationLesson:
+    lesson, _ = SimulationLesson.objects.get_or_create(
+        course=course,
+        lesson_id=lesson_id,
+        defaults={'title': lesson_id or 'Lesson', 'is_placeholder': True},
+    )
+    return lesson
+
+
+def _save_simulation_course(course_data: dict, archived: bool = False) -> SimulationCourse:
+    course, _ = SimulationCourse.objects.update_or_create(
+        course_id=course_data['id'],
+        defaults={
+            'title': course_data['title'],
+            'tag': course_data['tag'],
+            'difficulty': course_data['difficulty'],
+            'duration': course_data['duration'],
+            'description': course_data['description'],
+            'audience': course_data['audience'],
+            'accent': course_data['accent'],
+            'hero_image_url': course_data['heroImageUrl'],
+            'hero_image_name': course_data['heroImageName'],
+            'is_archived': archived,
+            'is_placeholder': False,
+        },
+    )
+
+    for model, values in (
+        (SimulationCourseObjective, course_data['objectives']),
+        (SimulationCoursePrerequisite, course_data['prerequisites']),
+    ):
+        model.objects.filter(course=course).delete()
+        model.objects.bulk_create([model(course=course, order=index, text=text) for index, text in enumerate(values)])
+
+    course.lessons.update(is_placeholder=True)
+    for lesson_index, lesson_data in enumerate(course_data['lessonOutline']):
+        lesson, _ = SimulationLesson.objects.get_or_create(
+            course=course,
+            lesson_id=lesson_data['id'],
+            defaults={'title': lesson_data['title']},
+        )
+        for field, value in {
+            'order': lesson_index,
+            'lesson_type': lesson_data['lessonType'],
+            'title': lesson_data['title'],
+            'duration': lesson_data['duration'],
+            'video_url': lesson_data['videoUrl'],
+            'video_file_name': lesson_data['videoFileName'],
+            'summary': lesson_data['summary'],
+            'content': lesson_data['content'],
+            'passing_score': lesson_data['passingScore'],
+            'is_placeholder': False,
+        }.items():
+            setattr(lesson, field, value)
+        lesson.save()
+
+        lesson.points.all().delete()
+        SimulationLessonPoint.objects.bulk_create(
+            [SimulationLessonPoint(lesson=lesson, order=index, text=text) for index, text in enumerate(lesson_data['points'])]
+        )
+
+        lesson.exam_questions.all().delete()
+        if lesson_data['lessonType'] == 'exam':
+            for question_index, question_data in enumerate(lesson_data['examQuestions']):
+                question = SimulationLessonExamQuestion.objects.create(
+                    lesson=lesson,
+                    question_id=question_data['id'],
+                    order=question_index,
+                    prompt=question_data['prompt'],
+                    explanation=question_data['explanation'],
+                )
+                SimulationLessonExamChoice.objects.bulk_create([
+                    SimulationLessonExamChoice(
+                        question=question,
+                        order=choice_index,
+                        text=choice_text,
+                        is_correct=choice_index == question_data['correctOptionIndex'],
+                    )
+                    for choice_index, choice_text in enumerate(question_data['options'])
+                ])
+
+    course.learning_materials.all().delete()
+    SimulationCourseMaterial.objects.bulk_create([
+        SimulationCourseMaterial(
+            course=course,
+            material_id=material['id'],
+            order=index,
+            title=material['title'],
+            material_type=material['type'],
+            url=material['url'],
+            file_name=material['fileName'],
+            mime_type=material['mimeType'],
+            description=material['description'],
+        )
+        for index, material in enumerate(course_data['learningMaterials'])
+    ])
+    return course
+
+
+def _serialize_simulation_course(course: SimulationCourse) -> dict:
+    return {
+        'id': course.course_id,
+        'title': course.title,
+        'tag': course.tag,
+        'difficulty': course.difficulty,
+        'duration': course.duration,
+        'description': course.description,
+        'audience': course.audience,
+        'objectives': [item.text for item in course.objectives.all()],
+        'prerequisites': [item.text for item in course.prerequisites.all()],
+        'accent': course.accent,
+        'heroImageUrl': course.hero_image_url,
+        'heroImageName': course.hero_image_name,
+        'lessonOutline': [
+            {
+                'id': lesson.lesson_id,
+                'lessonType': lesson.lesson_type,
+                'title': lesson.title,
+                'duration': lesson.duration,
+                'videoUrl': lesson.video_url,
+                'videoFileName': lesson.video_file_name,
+                'summary': lesson.summary,
+                'points': [point.text for point in lesson.points.all()],
+                'content': lesson.content,
+                'examQuestions': [
+                    {
+                        'id': question.question_id,
+                        'prompt': question.prompt,
+                        'options': [choice.text for choice in question.choices.all()],
+                        'correctOptionIndex': next(
+                            (index for index, choice in enumerate(question.choices.all()) if choice.is_correct),
+                            0,
+                        ),
+                        'explanation': question.explanation,
+                    }
+                    for question in lesson.exam_questions.all()
+                ],
+                'passingScore': lesson.passing_score,
+            }
+            for lesson in course.lessons.filter(is_placeholder=False)
+        ],
+        'learningMaterials': [
+            {
+                'id': material.material_id,
+                'title': material.title,
+                'type': material.material_type,
+                'url': material.url,
+                'fileName': material.file_name,
+                'mimeType': material.mime_type,
+                'description': material.description,
+            }
+            for material in course.learning_materials.all()
+        ],
+    }
+
+
+def _parse_progress_timestamp(value: str):
+    timestamp = timezone.datetime.fromisoformat(value.replace('Z', '+00:00'))
+    if timezone.is_naive(timestamp):
+        timestamp = timezone.make_aware(timestamp)
+    return timestamp
+
+
+def _save_simulation_progress(
+    progress: SimulationProgress,
+    course_progress: dict[str, int],
+    completed_lesson_videos: dict[str, bool],
+    completed_courses: dict[str, str],
+) -> None:
+    with transaction.atomic():
+        progress.course_records.all().delete()
+        progress.video_completions.all().delete()
+        course_ids = set(course_progress) | set(completed_courses)
+        for course_id in course_ids:
+            course = _get_or_create_simulation_course(course_id)
+            completed_at = _parse_progress_timestamp(completed_courses[course_id]) if course_id in completed_courses else None
+            SimulationCourseProgress.objects.create(
+                progress=progress,
+                course=course,
+                completion_percentage=course_progress.get(course_id),
+                completed_at=completed_at,
+            )
+
+        for key, is_completed in completed_lesson_videos.items():
+            course_id, separator, lesson_id = key.partition(':')
+            course = _get_or_create_simulation_course(course_id)
+            lesson = _get_or_create_simulation_lesson(course, lesson_id) if separator and lesson_id else None
+            SimulationLessonVideoCompletion.objects.create(
+                progress=progress,
+                course=course,
+                lesson=lesson,
+                completion_key=key,
+                is_completed=is_completed,
+            )
+
+
+def _serialize_simulation_progress(progress: SimulationProgress) -> dict:
+    course_progress: dict[str, int] = {}
+    completed_courses: dict[str, str] = {}
+    for row in progress.course_records.select_related('course').all():
+        if row.completion_percentage is not None:
+            course_progress[row.course_id] = row.completion_percentage
+        if row.completed_at:
+            completed_courses[row.course_id] = timezone.localtime(row.completed_at).isoformat()
+
+    return {
+        'courseProgress': course_progress,
+        'completedLessonVideos': {
+            row.completion_key: row.is_completed
+            for row in progress.video_completions.all()
+        },
+        'completedCourses': completed_courses,
+        'updatedAt': timezone.localtime(progress.updated_at).isoformat() if progress.updated_at else None,
     }
 
 
@@ -599,7 +840,7 @@ def _serialize_quiz_for_admin(quiz: SimulationModuleQuiz) -> dict:
     return {
         'id': quiz.id,
         'courseId': quiz.course_id,
-        'lessonId': quiz.lesson_id,
+        'lessonId': quiz.lesson_record.lesson_id,
         'lessonTitle': quiz.lesson_title,
         'title': quiz.title,
         'status': quiz.status,
@@ -630,7 +871,7 @@ def _serialize_quiz_for_learner(quiz: SimulationModuleQuiz) -> dict:
     return {
         'id': quiz.id,
         'courseId': quiz.course_id,
-        'lessonId': quiz.lesson_id,
+        'lessonId': quiz.lesson_record.lesson_id,
         'lessonTitle': quiz.lesson_title,
         'title': quiz.title,
         'version': quiz.version,
@@ -669,10 +910,8 @@ def simulation_progress(request):
     except ValidationError as error:
         return Response({'error': str(error)}, status=status.HTTP_400_BAD_REQUEST)
 
-    progress.course_progress = course_progress
-    progress.completed_lesson_videos = completed_lesson_videos
-    progress.completed_courses = completed_courses
-    progress.save(update_fields=['course_progress', 'completed_lesson_videos', 'completed_courses', 'updated_at'])
+    _save_simulation_progress(progress, course_progress, completed_lesson_videos, completed_courses)
+    progress.save(update_fields=['updated_at'])
 
     return Response(_serialize_simulation_progress(progress), status=status.HTTP_200_OK)
 
@@ -686,15 +925,14 @@ def simulation_admin_metrics(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def simulation_courses(request):
-    catalog = SimulationCourseCatalog.objects.filter(key='default').first()
-    courses = catalog.courses if catalog and isinstance(catalog.courses, list) else []
-
-    try:
-        sanitized_courses = _sanitize_simulation_courses(courses)
-    except ValidationError:
-        sanitized_courses = []
-
-    return Response({'courses': sanitized_courses}, status=status.HTTP_200_OK)
+    courses = SimulationCourse.objects.filter(is_archived=False, is_placeholder=False).prefetch_related(
+        'objectives',
+        'prerequisites',
+        'lessons__points',
+        'lessons__exam_questions__choices',
+        'learning_materials',
+    )
+    return Response({'courses': [_serialize_simulation_course(course) for course in courses]}, status=status.HTTP_200_OK)
 
 
 @api_view(['PUT'])
@@ -706,35 +944,30 @@ def simulation_admin_sync_courses(request):
         return Response({'error': str(error)}, status=status.HTTP_400_BAD_REQUEST)
 
     catalog, _ = SimulationCourseCatalog.objects.get_or_create(key='default')
-    previous_courses = catalog.courses if isinstance(catalog.courses, list) else []
     new_course_ids = {course.get('id') for course in sanitized_courses}
-    removed_courses = [
-        course for course in previous_courses
-        if isinstance(course, dict) and course.get('id') not in new_course_ids
-    ]
+    with transaction.atomic():
+        SimulationCourse.objects.filter(
+            is_archived=False,
+            is_placeholder=False,
+        ).exclude(course_id__in=new_course_ids).update(is_archived=True)
+        courses = [_save_simulation_course(course) for course in sanitized_courses]
+        catalog.updated_by = request.user
+        catalog.save(update_fields=['updated_by', 'updated_at'])
 
-    if removed_courses:
-        archived_courses = catalog.archived_courses if isinstance(catalog.archived_courses, list) else []
-        archived_ids = {course.get('id') for course in archived_courses if isinstance(course, dict)}
-        for course in removed_courses:
-            if course.get('id') not in archived_ids:
-                archived_courses.append(course)
-                archived_ids.add(course.get('id'))
-        catalog.archived_courses = archived_courses
-
-    catalog.courses = sanitized_courses
-    catalog.updated_by = request.user
-    catalog.save(update_fields=['courses', 'archived_courses', 'updated_by', 'updated_at'])
-
-    return Response({'courses': sanitized_courses}, status=status.HTTP_200_OK)
+    return Response({'courses': [_serialize_simulation_course(course) for course in courses]}, status=status.HTTP_200_OK)
 
 
 @api_view(['GET'])
 @permission_classes([HasDashboardAdminAccess])
 def simulation_admin_archived_courses(request):
-    catalog = SimulationCourseCatalog.objects.filter(key='default').first()
-    archived_courses = catalog.archived_courses if catalog and isinstance(catalog.archived_courses, list) else []
-    return Response({'courses': archived_courses}, status=status.HTTP_200_OK)
+    courses = SimulationCourse.objects.filter(is_archived=True, is_placeholder=False).prefetch_related(
+        'objectives',
+        'prerequisites',
+        'lessons__points',
+        'lessons__exam_questions__choices',
+        'learning_materials',
+    )
+    return Response({'courses': [_serialize_simulation_course(course) for course in courses]}, status=status.HTTP_200_OK)
 
 
 @api_view(['POST'])
@@ -744,23 +977,32 @@ def simulation_admin_restore_course(request):
     if not course_id:
         return Response({'error': 'courseId is required.'}, status=status.HTTP_400_BAD_REQUEST)
 
-    catalog, _ = SimulationCourseCatalog.objects.get_or_create(key='default')
-    archived_courses = catalog.archived_courses if isinstance(catalog.archived_courses, list) else []
-    restored_course = next((course for course in archived_courses if isinstance(course, dict) and course.get('id') == course_id), None)
-
+    restored_course = SimulationCourse.objects.filter(
+        course_id=course_id,
+        is_archived=True,
+        is_placeholder=False,
+    ).first()
     if not restored_course:
         return Response({'error': 'Archived course not found.'}, status=status.HTTP_404_NOT_FOUND)
 
-    active_courses = catalog.courses if isinstance(catalog.courses, list) else []
-    if not any(isinstance(course, dict) and course.get('id') == course_id for course in active_courses):
-        active_courses = [*active_courses, restored_course]
-
-    catalog.archived_courses = [course for course in archived_courses if course is not restored_course]
-    catalog.courses = active_courses
+    restored_course.is_archived = False
+    restored_course.save(update_fields=['is_archived', 'updated_at'])
+    catalog, _ = SimulationCourseCatalog.objects.get_or_create(key='default')
     catalog.updated_by = request.user
-    catalog.save(update_fields=['courses', 'archived_courses', 'updated_by', 'updated_at'])
-
-    return Response({'courses': catalog.courses, 'archivedCourses': catalog.archived_courses}, status=status.HTTP_200_OK)
+    catalog.save(update_fields=['updated_by', 'updated_at'])
+    active_courses = SimulationCourse.objects.filter(is_archived=False, is_placeholder=False).prefetch_related(
+        'objectives', 'prerequisites', 'lessons__points', 'lessons__exam_questions__choices', 'learning_materials',
+    )
+    archived_courses = SimulationCourse.objects.filter(is_archived=True, is_placeholder=False).prefetch_related(
+        'objectives', 'prerequisites', 'lessons__points', 'lessons__exam_questions__choices', 'learning_materials',
+    )
+    return Response(
+        {
+            'courses': [_serialize_simulation_course(course) for course in active_courses],
+            'archivedCourses': [_serialize_simulation_course(course) for course in archived_courses],
+        },
+        status=status.HTTP_200_OK,
+    )
 
 
 @api_view(['GET'])
@@ -773,7 +1015,7 @@ def simulation_admin_quiz_detail(request):
         return Response({'error': 'course_id and lesson_id are required.'}, status=status.HTTP_400_BAD_REQUEST)
 
     quiz = (
-        SimulationModuleQuiz.objects.filter(course_id=course_id, lesson_id=lesson_id)
+        SimulationModuleQuiz.objects.filter(course_record_id=course_id, lesson_record__lesson_id=lesson_id)
         .prefetch_related('questions__choices')
         .order_by('-version', '-updated_at')
         .first()
@@ -809,13 +1051,15 @@ def simulation_admin_upload_quiz_pdf(request):
         return Response({'error': str(error)}, status=status.HTTP_400_BAD_REQUEST)
 
     current_max_version = (
-        SimulationModuleQuiz.objects.filter(course_id=course_id, lesson_id=lesson_id).aggregate(max_version=Max('version')).get('max_version')
+        SimulationModuleQuiz.objects.filter(course_record_id=course_id, lesson_record__lesson_id=lesson_id).aggregate(max_version=Max('version')).get('max_version')
         or 0
     )
 
+    course = _get_or_create_simulation_course(course_id)
+    lesson = _get_or_create_simulation_lesson(course, lesson_id)
     quiz = SimulationModuleQuiz.objects.create(
-        course_id=course_id,
-        lesson_id=lesson_id,
+        course_record=course,
+        lesson_record=lesson,
         lesson_title=lesson_title,
         title=title,
         passing_score=passing_score,
@@ -883,8 +1127,8 @@ def simulation_admin_quiz_publish(request, quiz_id: int):
 
     with transaction.atomic():
         SimulationModuleQuiz.objects.filter(
-            course_id=quiz.course_id,
-            lesson_id=quiz.lesson_id,
+            course_record_id=quiz.course_id,
+            lesson_record__lesson_id=quiz.lesson_record.lesson_id,
             status=SimulationModuleQuiz.STATUS_PUBLISHED,
         ).exclude(id=quiz.id).update(status=SimulationModuleQuiz.STATUS_ARCHIVED)
 
@@ -906,8 +1150,8 @@ def simulation_module_quiz(request):
 
     quiz = (
         SimulationModuleQuiz.objects.filter(
-            course_id=course_id,
-            lesson_id=lesson_id,
+            course_record_id=course_id,
+            lesson_record__lesson_id=lesson_id,
             status=SimulationModuleQuiz.STATUS_PUBLISHED,
         )
         .prefetch_related('questions__choices')
@@ -960,7 +1204,7 @@ def simulation_submit_quiz_attempt(request, quiz_id: int):
     correct_count = 0
     unanswered = 0
     details = []
-    normalized_answers: dict[str, int] = {}
+    answer_records: list[SimulationQuizAnswer] = []
 
     for question in questions:
         question_key = str(question.id)
@@ -981,7 +1225,15 @@ def simulation_submit_quiz_attempt(request, quiz_id: int):
             correct_count += 1
 
         if selected_choice_id is not None:
-            normalized_answers[question_key] = selected_choice_id
+            selected_choice = next((choice for choice in choices if choice.id == selected_choice_id), None)
+            answer_records.append(
+                SimulationQuizAnswer(
+                    question=question,
+                    question_key=question_key,
+                    selected_choice=selected_choice,
+                    selected_choice_key='' if selected_choice else str(selected_choice_id),
+                )
+            )
 
         details.append(
             {
@@ -996,22 +1248,31 @@ def simulation_submit_quiz_attempt(request, quiz_id: int):
     score = round((correct_count / total_questions) * 100)
     passed = unanswered == 0 and score >= quiz.passing_score
 
-    SimulationQuizAttempt.objects.create(
+    attempt = SimulationQuizAttempt.objects.create(
         user=request.user,
         quiz=quiz,
-        answers=normalized_answers,
         score=score,
         total_questions=total_questions,
         passed=passed,
         unanswered=unanswered,
     )
+    for answer in answer_records:
+        answer.attempt = attempt
+    SimulationQuizAnswer.objects.bulk_create(answer_records)
 
     if passed:
         progress, _ = SimulationProgress.objects.get_or_create(user=request.user)
-        completed_map = progress.completed_lesson_videos if isinstance(progress.completed_lesson_videos, dict) else {}
-        completed_map[f'{quiz.course_id}:{quiz.lesson_id}'] = True
-        progress.completed_lesson_videos = completed_map
-        progress.save(update_fields=['completed_lesson_videos', 'updated_at'])
+        completion_key = f'{quiz.course_id}:{quiz.lesson_record.lesson_id}'
+        SimulationLessonVideoCompletion.objects.update_or_create(
+            progress=progress,
+            completion_key=completion_key,
+            defaults={
+                'course': quiz.course_record,
+                'lesson': quiz.lesson_record,
+                'is_completed': True,
+            },
+        )
+        progress.save(update_fields=['updated_at'])
 
     return Response(
         {
@@ -1062,24 +1323,20 @@ def simulation_request_certificate(request):
         return Response({'error': 'courseId is required.'}, status=status.HTTP_400_BAD_REQUEST)
 
     progress, _ = SimulationProgress.objects.get_or_create(user=request.user)
-    completed_courses = progress.completed_courses if isinstance(progress.completed_courses, dict) else {}
-    completed_at_raw = completed_courses.get(course_id)
-
-    if not completed_at_raw:
+    course_progress = progress.course_records.filter(course_id=course_id).first()
+    if not course_progress or not course_progress.completed_at:
         return Response(
             {'error': 'Complete the DRRMO training course before requesting a training ticket.'},
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    try:
-        completed_at = timezone.datetime.fromisoformat(str(completed_at_raw).replace('Z', '+00:00'))
-    except ValueError:
-        completed_at = timezone.now()
+    completed_at = course_progress.completed_at
 
     certificate, created = SimulationCertificate.objects.get_or_create(
         user=request.user,
-        course_id=course_id,
+        course_record_id=course_id,
         defaults={
+            'course_record': _get_or_create_simulation_course(course_id),
             'course_title': course_title,
             'ticket_code': _generate_ticket_code(),
             'completed_at': completed_at,
@@ -1169,14 +1426,17 @@ def simulation_admin_reset_progress(request):
         certificates_qs = certificates_qs.filter(user_id=user_id)
 
     reset_users = progress_qs.count()
-    progress_qs.update(course_progress={}, completed_lesson_videos={}, completed_courses={})
-    deleted_attempts, _ = attempts_qs.delete()
+    for progress in progress_qs:
+        progress.course_records.all().delete()
+        progress.video_completions.all().delete()
+    deleted_attempt_count = attempts_qs.count()
+    attempts_qs.delete()
     deleted_certificates, _ = certificates_qs.delete()
 
     return Response(
         {
             'resetUsers': reset_users,
-            'deletedAttempts': deleted_attempts,
+            'deletedAttempts': deleted_attempt_count,
             'deletedCertificates': deleted_certificates,
         },
         status=status.HTTP_200_OK,

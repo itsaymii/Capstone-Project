@@ -9,7 +9,7 @@ class AccountProfileInline(admin.StackedInline):
 	model = AccountProfile
 	can_delete = False
 	extra = 0
-	fields = ('role', 'phone_number')
+	fields = ('role', 'responder_team', 'phone_number')
 
 
 class CustomUserAdmin(DjangoUserAdmin):
@@ -25,7 +25,7 @@ class OneTimePasswordAdmin(admin.ModelAdmin):
 
 @admin.register(AccountProfile)
 class AccountProfileAdmin(admin.ModelAdmin):
-	list_display = ('user', 'role', 'phone_number')
+	list_display = ('user', 'role', 'responder_team', 'phone_number')
 	list_select_related = ('user',)
 	search_fields = ('user__username', 'user__email', 'phone_number')
 	list_filter = ('role',)

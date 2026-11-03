@@ -153,7 +153,9 @@ if DjangoTestCase is not None:
         Incident,
         IncidentReport,
         MedicalEmergency,
+        ResponderTeam,
     )
+    from accounts.models import AccountProfile
 
     REPORTS_URL = '/api/incidents/incident-reports/'
 
@@ -161,6 +163,9 @@ if DjangoTestCase is not None:
         def setUp(self):
             self.client = APIClient()
             responder = User.objects.create_user('responder_test', 'responder@test.local', 'Pass12345', is_staff=True)
+            responder.account_profile.role = AccountProfile.ROLE_STAFF
+            responder.account_profile.responder_team = ResponderTeam.objects.get(code='alpha')
+            responder.account_profile.save()
             self.client.force_authenticate(responder)
             # Responders file reports; only an admin may approve them.
             self.admin_client = APIClient()

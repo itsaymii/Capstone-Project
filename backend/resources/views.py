@@ -4,7 +4,14 @@ from rest_framework.response import Response
 from rest_framework.authentication import TokenAuthentication, SessionAuthentication
 from django.db.models import Count, Sum
 from django.db import transaction
-from .models import SupplyCategory, Supply, EvacuationCenter, Equipment, Volunteer
+from .models import (
+    SupplyCategory,
+    Supply,
+    EvacuationCenter,
+    Equipment,
+    Volunteer,
+    VolunteerSkillAssignment,
+)
 from locations.models import Barangay
 from .serializers import (
     SupplyCategorySerializer,
@@ -224,7 +231,9 @@ class EquipmentViewSet(viewsets.ModelViewSet):
 
 
 class VolunteerViewSet(viewsets.ModelViewSet):
-    queryset = Volunteer.objects.select_related('barangay').all()
+    queryset = Volunteer.objects.select_related('barangay').prefetch_related(
+        'skill_assignments__skill'
+    )
     serializer_class = VolunteerSerializer
     authentication_classes = [SessionAuthentication, TokenAuthentication]
     # Volunteers' contact details are personal data, so even reads need a dashboard account.

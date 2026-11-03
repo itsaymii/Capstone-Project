@@ -4,6 +4,9 @@ from .models import Barangay, Location, PopulationDensity, EarthquakeFaultLine
 
 class BarangaySerializer(serializers.ModelSerializer):
     coordinates = serializers.SerializerMethodField()
+    city = serializers.CharField(required=False, default='Lucena City')
+    province = serializers.CharField(required=False, default='Quezon')
+    reg_name = serializers.CharField(required=False, default='Region IV-A (CALABARZON)')
     
     class Meta:
         model = Barangay

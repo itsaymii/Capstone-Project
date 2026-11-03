@@ -4,6 +4,7 @@ from .utils import get_nearest_barangay
 
 from django.utils import timezone
 from rest_framework import serializers
+from accounts.models import AccountProfile
 
 from .models import (
     HazardType,
@@ -11,6 +12,7 @@ from .models import (
     Alert,
     ResponderReport,
     IncidentReport,
+    responder_team_for_legacy_name,
     AccomplishmentReport,
     VictimDetail,
     FireDetails,
@@ -168,6 +170,8 @@ class EarthquakeDetailsSerializer(serializers.ModelSerializer):
 
 
 class VehicularAccidentSerializer(serializers.ModelSerializer):
+    vehicle_types = serializers.CharField(read_only=True)
+
     class Meta:
         model = VehicularAccident
         fields = [
@@ -333,7 +337,6 @@ class ResponderReportSerializer(serializers.ModelSerializer):
             validated_data['incident'] = incident
 
         return super().create(validated_data)
-
 
 class IncidentSerializer(serializers.ModelSerializer):
     hazard_type = HazardTypeSerializer(read_only=True)
@@ -522,12 +525,22 @@ class IncidentReportSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
 
         if request and request.user and request.user.is_authenticated:
+            profile = AccountProfile.objects.select_related('responder_team').filter(
+                user=request.user
+            ).first()
+            if not profile or not profile.responder_team_id:
+                raise serializers.ValidationError({
+                    'responderTeam': 'No responder team is assigned to your account. Ask an administrator to assign one.'
+                })
+            validated_data['responder_team_record'] = profile.responder_team
+            validated_data['responder_team'] = profile.responder_team.name
             validated_data['created_by'] = request.user
-            # The responding team is the logged-in account, whatever the form sent.
-            full_name = f"{request.user.first_name} {request.user.last_name}".strip()
-            validated_data['responder_team'] = (full_name or request.user.username)[:100]
         elif not (validated_data.get('responder_team') or '').strip():
             raise serializers.ValidationError({'responderTeam': 'Responding team is required.'})
+
+        if not validated_data.get('responder_team_record'):
+            team_name = validated_data.get('responder_team', '')
+            validated_data['responder_team_record'] = responder_team_for_legacy_name(team_name)
 
         incoming_victim_count = validated_data.pop('victim_count', None)
         if incoming_victim_count is None:
@@ -554,6 +567,19 @@ class IncidentReportSerializer(serializers.ModelSerializer):
         # Incidents are created only when status transitions to 'Approved'.
 
         return incident_report
+
+    def update(self, instance, validated_data):
+        if 'responder_team' in validated_data:
+            instance.responder_team_record = responder_team_for_legacy_name(
+                validated_data['responder_team']
+            )
+        return super().update(instance, validated_data)
+
+    def to_representation(self, instance):
+        representation = super().to_representation(instance)
+        if instance.responder_team_record_id:
+            representation['responderTeam'] = instance.responder_team_record.name
+        return representation
 
     def get_createdByRole(self, obj):
         # Return a simple role for frontend consumption: 'anonymous', 'admin', 'staff', or 'responder'
@@ -681,7 +707,7 @@ class PublicIncidentReportSerializer(serializers.ModelSerializer):
     incidentCode = serializers.CharField(source='incident_code', read_only=True)
     timeOccurred = serializers.TimeField(source='time_occurred', read_only=True)
     incidentType = serializers.CharField(source='incident_type', read_only=True)
-    responderTeam = serializers.CharField(source='responder_team', read_only=True)
+    responderTeam = serializers.SerializerMethodField()
     victimCount = serializers.IntegerField(source='victim_count', read_only=True)
     barangayName = serializers.CharField(source='barangay.name', read_only=True, default=None)
     createdAt = serializers.DateTimeField(source='created_at', read_only=True)
@@ -705,6 +731,11 @@ class PublicIncidentReportSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = fields
 
+    def get_responderTeam(self, obj):
+        if obj.responder_team_record_id:
+            return obj.responder_team_record.name
+        return obj.responder_team
+
 
 class AccomplishmentReportSerializer(serializers.ModelSerializer):
     reports = IncidentReportSerializer(source='incident_reports', many=True, read_only=True)
@@ -715,7 +746,7 @@ class AccomplishmentReportSerializer(serializers.ModelSerializer):
     )
 
     compiledCode = serializers.CharField(source='compiled_code', read_only=True)
-    totalReports = serializers.IntegerField(source='total_reports', read_only=True)
+    totalReports = serializers.SerializerMethodField()
     createdAt = serializers.DateTimeField(source='created_at', read_only=True)
     compiledBy = serializers.CharField(source='compiled_by.username', read_only=True, default=None)
     compiledByName = serializers.SerializerMethodField()
@@ -741,6 +772,9 @@ class AccomplishmentReportSerializer(serializers.ModelSerializer):
         if not user:
             return None
         return f"{user.first_name} {user.last_name}".strip() or user.username
+
+    def get_totalReports(self, obj):
+        return obj.total_reports
 
     def create(self, validated_data):
         report_ids = validated_data.pop('reportIds', [])
@@ -818,7 +852,6 @@ class AccomplishmentReportSerializer(serializers.ModelSerializer):
 
         accomplishment = AccomplishmentReport.objects.create(
             title=validated_data.get('title', 'Accomplishment Report'),
-            total_reports=eligible_reports.count(),
             status=validated_data.get('status', 'Compiled'),
             compiled_by=request.user if request and request.user.is_authenticated else None,
         )

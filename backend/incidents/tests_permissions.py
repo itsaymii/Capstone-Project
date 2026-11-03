@@ -14,7 +14,7 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from accounts.models import AccountProfile, OneTimePassword, ensure_account_profile
-from incidents.models import IncidentReport
+from incidents.models import IncidentReport, ResponderTeam
 
 REPORTS_URL = '/api/incidents/incident-reports/'
 
@@ -36,6 +36,7 @@ class AccessTestCase(TestCase):
         self.responder = User.objects.create_user('resp', 'resp@test.local', 'Pass12345', is_staff=True)
         profile = ensure_account_profile(self.responder)
         profile.role = AccountProfile.ROLE_STAFF
+        profile.responder_team = ResponderTeam.objects.get(code='alpha')
         profile.save()
         self.citizen = User.objects.create_user('cit', 'cit@test.local', 'Pass12345')
         ensure_account_profile(self.citizen)
@@ -80,6 +81,20 @@ class IncidentReportAccessTests(AccessTestCase):
         }, format='json')
         self.assertEqual(response.status_code, 201, response.data)
         self.assertEqual(IncidentReport.objects.get(id=response.data['id']).status, 'Pending')
+        report = IncidentReport.objects.get(id=response.data['id'])
+        self.assertEqual(report.responder_team_record.code, 'alpha')
+        self.assertEqual(response.data['responderTeam'], 'Team Alpha')
+
+    def test_responder_without_team_assignment_cannot_file_report(self):
+        unassigned = User.objects.create_user('unassigned', 'unassigned@test.local', 'Pass12345', is_staff=True)
+        response = self.client_for(unassigned).post(REPORTS_URL, {
+            'timeOccurred': '14:30', 'incidentType': 'Stand-by Medical Team', 'location': 'Perez Park',
+            'latitude': 13.9339, 'longitude': 121.6172, 'description': 'Event', 'actionTaken': 'Stand-by',
+            'victims': [],
+            'details': {'event_name': 'Fun Run', 'venue': 'Perez Park', 'persons_assisted': 0},
+        }, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('responderTeam', response.data)
 
     def test_admin_can_approve_and_delete(self):
         client = self.client_for(self.admin)

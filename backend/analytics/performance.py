@@ -181,7 +181,10 @@ def _approved_reports(filters):
 
     team = (filters.get('team') or '').strip()
     if team:
-        queryset = queryset.filter(responder_team__iexact=team)
+        queryset = queryset.filter(
+            Q(responder_team__iexact=team) |
+            Q(responder_team_record__name__iexact=team)
+        )
 
     return queryset
 
@@ -192,7 +195,7 @@ def collect_rows(filters=None):
     from incidents.models import Incident
 
     filters = filters or {}
-    reports = list(_approved_reports(filters))
+    reports = list(_approved_reports(filters).select_related('responder_team_record'))
     codes = [report.incident_code for report in reports if report.incident_code]
 
     incidents = {
@@ -218,7 +221,11 @@ def collect_rows(filters=None):
 
         created_at = timezone.localtime(report.created_at) if report.created_at else None
         rows.append({
-            'team': (report.responder_team or '').strip() or 'Unassigned',
+            'team': (
+                report.responder_team_record.name
+                if report.responder_team_record_id
+                else (report.responder_team or '').strip() or 'Unassigned'
+            ),
             'incident_type': report.incident_type,
             'severity': severity,
             'resolved': is_resolved(incident.status if incident else None),
