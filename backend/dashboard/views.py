@@ -1041,7 +1041,6 @@ def simulation_admin_metrics(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def simulation_courses(request):
-<<<<<<< HEAD
     catalog = SimulationCourseCatalog.objects.filter(key='default').first()
     courses = catalog.courses if catalog and isinstance(catalog.courses, list) else []
 
@@ -1055,16 +1054,6 @@ def simulation_courses(request):
         sanitized_courses = _hide_exam_answers(sanitized_courses)
 
     return Response({'courses': sanitized_courses}, status=status.HTTP_200_OK)
-=======
-    courses = SimulationCourse.objects.filter(is_archived=False, is_placeholder=False).prefetch_related(
-        'objectives',
-        'prerequisites',
-        'lessons__points',
-        'lessons__exam_questions__choices',
-        'learning_materials',
-    )
-    return Response({'courses': [_serialize_simulation_course(course) for course in courses]}, status=status.HTTP_200_OK)
->>>>>>> f1cb84bd463e4ad4338a1cdd47d0927e338c2e84
 
 
 @api_view(['PUT'])
@@ -1570,7 +1559,6 @@ def simulation_request_certificate(request):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-<<<<<<< HEAD
     # The browser only says the course is finished; the server checks every exam and quiz was passed.
     missing, last_passed_at = _missing_course_requirements(request.user, course_id, course)
     if missing:
@@ -1586,9 +1574,6 @@ def simulation_request_certificate(request):
             completed_at = timezone.datetime.fromisoformat(str(completed_at_raw).replace('Z', '+00:00'))
         except ValueError:
             completed_at = timezone.now()
-=======
-    completed_at = course_progress.completed_at
->>>>>>> f1cb84bd463e4ad4338a1cdd47d0927e338c2e84
 
     certificate, created = SimulationCertificate.objects.get_or_create(
         user=request.user,
@@ -1686,18 +1671,10 @@ def simulation_admin_reset_progress(request):
         certificates_qs = certificates_qs.filter(user_id=user_id)
 
     reset_users = progress_qs.count()
-<<<<<<< HEAD
     progress_qs.update(course_progress={}, completed_lesson_videos={}, completed_courses={})
     deleted_attempts, _ = attempts_qs.delete()
     deleted_exam_attempts, _ = exam_attempts_qs.delete()
     deleted_attempts += deleted_exam_attempts
-=======
-    for progress in progress_qs:
-        progress.course_records.all().delete()
-        progress.video_completions.all().delete()
-    deleted_attempt_count = attempts_qs.count()
-    attempts_qs.delete()
->>>>>>> f1cb84bd463e4ad4338a1cdd47d0927e338c2e84
     deleted_certificates, _ = certificates_qs.delete()
 
     return Response(
