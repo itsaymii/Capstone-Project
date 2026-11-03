@@ -22,20 +22,7 @@ from incidents.teams import TEAM_NAMES, team_name
 from .models import (
     SimulationCertificate,
     SimulationCourseCatalog,
-<<<<<<< HEAD
     SimulationExamAttempt,
-=======
-    SimulationCourse,
-    SimulationCourseMaterial,
-    SimulationCourseObjective,
-    SimulationCoursePrerequisite,
-    SimulationCourseProgress,
-    SimulationLesson,
-    SimulationLessonExamChoice,
-    SimulationLessonExamQuestion,
-    SimulationLessonPoint,
-    SimulationLessonVideoCompletion,
->>>>>>> f1cb84bd463e4ad4338a1cdd47d0927e338c2e84
     SimulationModuleQuiz,
     SimulationProgress,
     SimulationQuizAnswer,
