@@ -279,6 +279,25 @@ class SimulationExamAttempt(models.Model):
 		return f"Exam attempt {self.user_id} - {self.course_id}:{self.lesson_id} ({self.score}%)"
 
 
+class SimulationQuizAnswer(models.Model):
+	attempt = models.ForeignKey(SimulationQuizAttempt, on_delete=models.CASCADE, related_name='answer_records')
+	question = models.ForeignKey(SimulationQuizQuestion, on_delete=models.SET_NULL, blank=True, null=True, related_name='answers')
+	selected_choice = models.ForeignKey(
+		'SimulationQuizChoice',
+		on_delete=models.SET_NULL,
+		blank=True,
+		null=True,
+		related_name='selected_answers',
+	)
+	question_key = models.TextField()
+	selected_choice_key = models.TextField(blank=True)
+
+	class Meta:
+		constraints = [
+			models.UniqueConstraint(fields=['attempt', 'question_key'], name='dashboard_attempt_question_key_uniq'),
+		]
+
+
 class SimulationCourseCatalog(models.Model):
 	key = models.CharField(max_length=64, unique=True, default='default')
 	updated_by = models.ForeignKey(User, on_delete=models.SET_NULL, blank=True, null=True, related_name='updated_simulation_course_catalogs')

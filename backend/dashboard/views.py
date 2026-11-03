@@ -21,8 +21,18 @@ from accounts.models import AccountProfile, OneTimePassword, ResidencyVerificati
 from incidents.teams import TEAM_NAMES, team_name
 from .models import (
     SimulationCertificate,
+    SimulationCourse,
     SimulationCourseCatalog,
+    SimulationCourseMaterial,
+    SimulationCourseObjective,
+    SimulationCoursePrerequisite,
+    SimulationCourseProgress,
     SimulationExamAttempt,
+    SimulationLesson,
+    SimulationLessonExamChoice,
+    SimulationLessonExamQuestion,
+    SimulationLessonPoint,
+    SimulationLessonVideoCompletion,
     SimulationModuleQuiz,
     SimulationProgress,
     SimulationQuizAnswer,
