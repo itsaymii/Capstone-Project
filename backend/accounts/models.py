@@ -5,9 +5,6 @@ from django.db.models.signals import post_save
 from django.dispatch import receiver
 from locations.models import Barangay
 
-from incidents.teams import TEAM_NAMES
-
-
 class OneTimePassword(models.Model):
 	PURPOSE_REGISTER = 'register'
 	PURPOSE_LOGIN = 'login'
@@ -59,8 +56,6 @@ class AccountProfile(models.Model):
 		related_name='assigned_profiles',
 	)
 	phone_number = models.CharField(max_length=20, blank=True, null=True, db_index=True)
-	# Responder (staff) accounts only: the team every report from this account is filed under.
-	team = models.CharField(max_length=20, choices=[(name, name) for name in TEAM_NAMES], blank=True, default='')
 	created_at = models.DateTimeField(auto_now_add=True)
 	updated_at = models.DateTimeField(auto_now=True)
 

@@ -36,6 +36,7 @@ from incidents.models import (
     AccomplishmentReport,
     Incident,
     IncidentReport,
+    responder_team_for_legacy_name,
     ResponderReport,
     VictimDetail,
 )
@@ -173,6 +174,7 @@ class Command(BaseCommand):
                 time_occurred=occurred.time().replace(microsecond=0),
                 incident_type=incident_type_for(incident),
                 responder_team=team_for_responder[old.responder_id],
+                responder_team_record=responder_team_for_legacy_name(team_for_responder[old.responder_id]),
                 location=location,
                 barangay=incident.barangay,
                 latitude=incident.latitude,

@@ -26,6 +26,7 @@ from .models import (
 )
 from .permissions import IsAdminOrStaff
 from incidents.models import Incident, HazardType
+from incidents.teams import team_name
 from locations.models import Barangay
 
 
@@ -82,6 +83,9 @@ def _serialize_user(user: User, fallback_identifier: str = '') -> dict:
 			responder_team = user.account_profile.responder_team.name
 	except Exception:
 		phone_number = None
+	team = None
+	if responder_team:
+		team = team_name(responder_team)
 	verification = ResidencyVerification.objects.filter(user=user).first()
 	return {
 		'id': user.id,
@@ -96,7 +100,7 @@ def _serialize_user(user: User, fallback_identifier: str = '') -> dict:
 		'isAdmin': bool(user.is_superuser) or role == AccountProfile.ROLE_ADMIN,
 		'isStaff': role == AccountProfile.ROLE_STAFF,
 		# Responders only: the team their reports are filed under.
-		'team': getattr(getattr(user, 'account_profile', None), 'team', '') or None,
+		'team': team,
 		'hasDashboardAccess': user_has_dashboard_access(user),
 		'residencyStatus': verification.status if verification else None,
 		'barangay': verification.barangay_name if verification else None,

@@ -18,6 +18,7 @@ from rest_framework import status
 from rest_framework.response import Response
 
 from accounts.models import AccountProfile, OneTimePassword, ResidencyVerification, ensure_account_profile, get_user_role, user_has_dashboard_access
+from incidents.models import ResponderTeam
 from incidents.teams import TEAM_NAMES, team_name
 from .models import (
     SimulationCertificate,
@@ -82,6 +83,11 @@ def _get_user_full_name(user: User) -> str:
 
 def _serialize_dashboard_user(user: User, request=None) -> dict:
     role = get_user_role(user)
+    profile = getattr(user, 'account_profile', None)
+    responder_team = (
+        team_name(profile.responder_team.name)
+        if profile and profile.responder_team_id else None
+    )
     residency = ResidencyVerification.objects.filter(user=user).first()
     # The ID or bill is only served to admins through the API (see dashboard_account_residency_proof),
     # never from the public /media/ folder.
@@ -97,7 +103,7 @@ def _serialize_dashboard_user(user: User, request=None) -> dict:
         'role': role,
         'isAdmin': role == AccountProfile.ROLE_ADMIN,
         'isStaff': role == AccountProfile.ROLE_STAFF,
-        'team': getattr(getattr(user, 'account_profile', None), 'team', '') or None,
+        'team': responder_team,
         'hasDashboardAccess': user_has_dashboard_access(user),
         'isActive': user.is_active,
         'dateJoined': timezone.localtime(user.date_joined).isoformat() if user.date_joined else None,
@@ -144,25 +150,28 @@ def _role_has_dashboard_access(role: str) -> bool:
     return role in AccountProfile.DASHBOARD_ROLES
 
 
-def _account_team(raw_team: object, role: str) -> tuple[str, str | None]:
+def _account_team(raw_team: object, role: str) -> tuple[ResponderTeam | None, str | None]:
     """
-    The team for an account: (team, error). Responders (staff) must be in Alpha, Bravo or Charlie,
-    because every report they file is filed under it. Other roles have no team.
+    Resolve an account's submitted team label to its canonical record. Responders (staff) must
+    have one of the configured teams because every report they file is assigned to it.
     """
     if role != AccountProfile.ROLE_STAFF:
-        return '', None
-    team = team_name(raw_team)
-    if team not in TEAM_NAMES:
-        return '', 'Choose the responder team: Alpha, Bravo or Charlie.'
+        return None, None
+    team_label = team_name(raw_team)
+    if team_label not in TEAM_NAMES:
+        return None, 'Choose the responder team: Alpha, Bravo or Charlie.'
+    team = ResponderTeam.objects.filter(code=team_label.lower()).first()
+    if team is None:
+        return None, 'The responder team catalog is unavailable. Please contact an administrator.'
     return team, None
 
 
-def _save_profile(user: User, role: str, team: str) -> None:
+def _save_profile(user: User, role: str, team: ResponderTeam | None) -> None:
     profile = ensure_account_profile(user, default_role=role)
-    if profile.role != role or profile.team != team:
+    if profile.role != role or profile.responder_team_id != (team.pk if team else None):
         profile.role = role
-        profile.team = team
-        profile.save(update_fields=['role', 'team', 'updated_at'])
+        profile.responder_team = team
+        profile.save(update_fields=['role', 'responder_team', 'updated_at'])
     user.account_profile = profile  # the serializer reads the team from here
 
 

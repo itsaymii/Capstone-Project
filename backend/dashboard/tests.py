@@ -307,6 +307,10 @@ class DashboardViewsTests(TestCase):
         self.assertEqual(payload['user']['role'], AccountProfile.ROLE_STAFF)
         self.assertEqual(payload['user']['team'], 'Bravo')
         self.assertTrue(payload['user']['hasDashboardAccess'])
+        self.assertEqual(
+            User.objects.get(email='staff@example.com').account_profile.responder_team.code,
+            'bravo',
+        )
 
     def test_staff_accounts_need_a_team(self):
         admin_user = User.objects.create_user(username='admin-user', password='secret123', is_staff=True)

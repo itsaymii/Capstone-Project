@@ -14,7 +14,7 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from accounts.models import AccountProfile, OneTimePassword, ensure_account_profile
-from incidents.models import AccomplishmentReport, IncidentReport, VictimDetail
+from incidents.models import AccomplishmentReport, IncidentReport, ResponderTeam, VictimDetail
 
 REPORTS_URL = '/api/incidents/incident-reports/'
 
@@ -41,7 +41,7 @@ class AccessTestCase(TestCase):
         self.responder = User.objects.create_user('resp', 'resp@test.local', 'Pass12345', is_staff=True)
         profile = ensure_account_profile(self.responder)
         profile.role = AccountProfile.ROLE_STAFF
-        profile.team = 'Alpha'
+        profile.responder_team = ResponderTeam.objects.get(code='alpha')
         profile.save()
         self.citizen = User.objects.create_user('cit', 'cit@test.local', 'Pass12345')
         ensure_account_profile(self.citizen)
@@ -88,7 +88,7 @@ class IncidentReportAccessTests(AccessTestCase):
         self.assertEqual(IncidentReport.objects.get(id=response.data['id']).status, 'Pending')
         report = IncidentReport.objects.get(id=response.data['id'])
         self.assertEqual(report.responder_team_record.code, 'alpha')
-        self.assertEqual(response.data['responderTeam'], 'Team Alpha')
+        self.assertEqual(response.data['responderTeam'], 'Alpha')
 
     def test_responder_without_team_assignment_cannot_file_report(self):
         unassigned = User.objects.create_user('unassigned', 'unassigned@test.local', 'Pass12345', is_staff=True)
@@ -296,6 +296,15 @@ class OtherTeamVictimTests(AccessTestCase):
         # What happened, where and when stays visible for coordination.
         self.assertEqual((other['incidentType'], other['location'], other['victimCount']), ('Fire Incident', 'Barangay 1', 0))
 
+    def test_team_access_uses_the_canonical_record_not_legacy_text(self):
+        IncidentReport.objects.filter(pk=self.own.pk).update(responder_team='Bravo')
+
+        own = self.report_from(self.client_for(self.responder), self.own)
+
+        self.assertEqual(own['responderTeam'], 'Alpha')
+        self.assertEqual(len(own['victims']), 1)
+        self.assertFalse(own['personalDataHidden'])
+
     def test_single_report_is_hidden_too(self):
         response = self.client_for(self.responder).get(f'{REPORTS_URL}{self.other.id}/')
         self.assertEqual(response.data['victims'], [])
@@ -310,7 +319,7 @@ class OtherTeamVictimTests(AccessTestCase):
         self.assertEqual(nested[str(self.other.id)]['victims'], [])
 
     def test_responder_without_a_team_sees_no_victims(self):
-        AccountProfile.objects.filter(user=self.responder).update(team='')
+        AccountProfile.objects.filter(user=self.responder).update(responder_team=None)
         client = self.client_for(User.objects.get(pk=self.responder.pk))
         self.assertTrue(self.report_from(client, self.own)['personalDataHidden'])
 

@@ -213,6 +213,7 @@ class AccountLoginFlowTests(TestCase):
 
 		self.assertEqual(response.status_code, 200)
 		self.assertEqual(response.json()['user']['responderTeam'], 'Team Alpha')
+		self.assertEqual(response.json()['user']['team'], 'Alpha')
 
 	def test_current_user_profile_patch_updates_phone_number(self):
 		user = User.objects.create_user(

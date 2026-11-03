@@ -71,7 +71,7 @@ if DjangoTestCase is not None:
     from django.contrib.auth.models import User
 
     from incidents.management.commands.generate_accomplishment_reports import BARANGAY_NAMES
-    from incidents.models import Incident, IncidentReport, VehicularAccident, VictimDetail
+    from incidents.models import Incident, IncidentReport, ResponderTeam, VehicularAccident, VictimDetail
     from locations.models import Barangay
 
     class GenerateCommandTests(DjangoTestCase):
@@ -80,8 +80,8 @@ if DjangoTestCase is not None:
                 Barangay.objects.create(name=name)
             for username, team in (('responder_a', 'Alpha'), ('responder_b', 'Bravo')):
                 user = User.objects.create_user(username, f'{username}@test.local', 'Pass12345', is_staff=True)
-                user.account_profile.team = team
-                user.account_profile.save(update_fields=['team'])
+                user.account_profile.responder_team = ResponderTeam.objects.get(code=team.lower())
+                user.account_profile.save(update_fields=['responder_team'])
             # Admins and responders without a team never file reports.
             User.objects.create_superuser('boss', 'boss@test.local', 'Pass12345')
             User.objects.create_user('no_team', 'no_team@test.local', 'Pass12345', is_staff=True)

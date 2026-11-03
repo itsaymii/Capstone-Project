@@ -411,8 +411,14 @@ class IncidentReport(models.Model):
         self.__dict__['_pending_details'] = values or {}
 
     def save(self, *args, **kwargs):
-        # Teams are "Alpha", "Bravo", "Charlie", never "Team Alpha" (the team is the account's name).
-        self.responder_team = team_name(self.responder_team)
+        is_adding = self._state.adding
+        has_pending_details = '_pending_details' in self.__dict__
+        pending_details = self.__dict__.pop('_pending_details', {})
+        if self.responder_team_record_id:
+            self.responder_team = team_name(self.responder_team_record.name)
+        else:
+            self.responder_team = team_name(self.responder_team)
+            self.responder_team_record = responder_team_for_legacy_name(self.responder_team)
         with transaction.atomic():
             if not self.incident_code:
                 year = timezone.now().year

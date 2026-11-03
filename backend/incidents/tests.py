@@ -6,6 +6,7 @@ from accounts.models import AccountProfile
 from django.contrib.auth.models import User
 
 from incidents.serializers import IncidentReportSerializer
+from incidents.models import ResponderTeam
 
 
 class IncidentReportSerializerTests(TestCase):
@@ -16,8 +17,8 @@ class IncidentReportSerializerTests(TestCase):
             password='password123',
         )
         self.user.account_profile.role = AccountProfile.ROLE_STAFF
-        self.user.account_profile.team = 'Alpha'
-        self.user.account_profile.save(update_fields=['role', 'team'])
+        self.user.account_profile.responder_team = ResponderTeam.objects.get(code='alpha')
+        self.user.account_profile.save(update_fields=['role', 'responder_team'])
 
     def test_create_preserves_explicit_victim_count_when_no_victims(self):
         data = {

@@ -25,7 +25,6 @@ class TeamNameTests(PlainTestCase):
 
 
 try:
-    from django.apps import apps as django_apps
     from django.contrib.auth.models import User
     from django.test import TestCase as DjangoTestCase
 except ImportError:  # running without Django installed
@@ -35,7 +34,7 @@ except ImportError:  # running without Django installed
 if DjangoTestCase is not None:
     from rest_framework.test import APIClient
 
-    from incidents.models import IncidentReport
+    from incidents.models import IncidentReport, ResponderTeam
 
     def make_report(**fields):
         values = {
@@ -64,12 +63,16 @@ if DjangoTestCase is not None:
 
         def test_report_is_filed_under_the_account_team_not_its_name(self):
             responder = User.objects.create_user('juan', 'juan@test.local', 'Pass12345', is_staff=True, first_name='Juan Dela Cruz')
-            responder.account_profile.team = 'Charlie'
-            responder.account_profile.save(update_fields=['team'])
+            responder.account_profile.responder_team = ResponderTeam.objects.get(code='charlie')
+            responder.account_profile.save(update_fields=['responder_team'])
 
             response = self.file_report(responder, responderTeam='Rescue 9')
             self.assertEqual(response.status_code, 201, response.data)
             self.assertEqual(response.data['responderTeam'], 'Charlie')
+            self.assertEqual(
+                IncidentReport.objects.get(pk=response.data['id']).responder_team_record.code,
+                'charlie',
+            )
 
         def test_responder_without_a_team_cannot_file(self):
             responder = User.objects.create_user('juan', 'juan@test.local', 'Pass12345', is_staff=True, first_name='Juan Dela Cruz')
@@ -82,31 +85,13 @@ if DjangoTestCase is not None:
             admin = User.objects.create_superuser('boss', 'boss@test.local', 'Pass12345')
             self.assertEqual(self.file_report(admin).status_code, 403)
 
-        def test_migration_sets_teams_from_account_names_and_fixes_old_reports(self):
-            named = User.objects.create_user('alpha', 'alpha@test.local', 'Pass12345', is_staff=True, first_name='Team Alpha')
-            unnamed = User.objects.create_user('juan', 'juan@test.local', 'Pass12345', is_staff=True, first_name='Juan')
-            old = make_report(responder_team='Team Alpha', created_by=named)
-            IncidentReport.objects.filter(pk=old.pk).update(responder_team='Team Alpha Unit')
-            other = make_report(responder_team='Juan', created_by=unnamed)
-
-            import_module('accounts.migrations.0007_accountprofile_team').team_from_account_name(django_apps, None)
-            import_module('incidents.migrations.0010_report_team_from_account').team_from_filing_account(django_apps, None)
-
-            named.account_profile.refresh_from_db()
-            unnamed.account_profile.refresh_from_db()
-            self.assertEqual(named.account_profile.team, 'Alpha')
-            self.assertEqual(unnamed.account_profile.team, '')  # an admin sets it in Users
-            old.refresh_from_db()
-            other.refresh_from_db()
-            self.assertEqual(old.responder_team, 'Alpha')
-            self.assertEqual(other.responder_team, 'Juan')
-
-        def test_migration_cleans_existing_reports(self):
-            report = make_report()
-            IncidentReport.objects.filter(pk=report.pk).update(responder_team='Team Charlie')
-
-            migration = import_module('incidents.migrations.0009_team_names_without_prefix')
-            migration.remove_team_prefix(django_apps, None)
-
-            report.refresh_from_db()
-            self.assertEqual(report.responder_team, 'Charlie')
+        def test_account_team_migration_normalizes_known_legacy_labels(self):
+            migration = import_module('accounts.migrations.0010_remove_accountprofile_team')
+            for value, expected in (
+                ('Alpha', 'alpha'),
+                ('Team Bravo', 'bravo'),
+                ('TEAM: Charlie', 'charlie'),
+                ('Team Delta', None),
+                ('Juan Dela Cruz', None),
+            ):
+                self.assertEqual(migration.team_code_for_legacy_value(value), expected, value)

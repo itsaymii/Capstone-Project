@@ -12,7 +12,6 @@ from .models import (
     Alert,
     ResponderReport,
     IncidentReport,
-    responder_team_for_legacy_name,
     AccomplishmentReport,
     VictimDetail,
     FireDetails,
@@ -25,6 +24,7 @@ from .models import (
 
 from locations.serializers import BarangaySerializer
 from .incident_types import validate_report_details
+from .teams import team_name
 import re
 
 
@@ -436,7 +436,7 @@ class IncidentReportSerializer(serializers.ModelSerializer):
     timeOccurred = serializers.TimeField(source='time_occurred')
     incidentType = serializers.CharField(source='incident_type')
     # Always the filing responder's team (see create); a value sent by the form is ignored.
-    responderTeam = serializers.CharField(source='responder_team', read_only=True)
+    responderTeam = serializers.SerializerMethodField()
     victimCount = serializers.IntegerField(source='victim_count', required=False)
     actionTaken = serializers.CharField(source='action_taken')
     latitude = serializers.DecimalField(max_digits=9, decimal_places=6, required=True)
@@ -491,6 +491,11 @@ class IncidentReportSerializer(serializers.ModelSerializer):
             'lng': float(obj.longitude) if obj.longitude is not None else None,
         }
 
+    def get_responderTeam(self, obj):
+        if obj.responder_team_record_id:
+            return team_name(obj.responder_team_record.name)
+        return obj.responder_team
+
     def validate(self, attrs):
         latitude = attrs.get('latitude')
         longitude = attrs.get('longitude')
@@ -525,24 +530,19 @@ class IncidentReportSerializer(serializers.ModelSerializer):
         victims_data = validated_data.pop('victims', [])
         request = self.context.get('request')
 
-        from accounts.models import AccountProfile
-
         user = getattr(request, 'user', None)
-        # The team set on the responder's account (Alpha, Bravo or Charlie), never the account name.
-        team = (
-            AccountProfile.objects.filter(user=user).values_list('team', flat=True).first()
-            if user and user.is_authenticated else ''
+        profile = (
+            AccountProfile.objects.select_related('responder_team').filter(user=user).first()
+            if user and user.is_authenticated else None
         )
-        if not team:
+        if not profile or not profile.responder_team_id:
             raise serializers.ValidationError({
                 'responderTeam': 'Your account has no team yet. Ask an admin to set your team (Alpha, Bravo or Charlie) in Users.',
             })
+        team = team_name(profile.responder_team.name)
         validated_data['created_by'] = user
         validated_data['responder_team'] = team
-
-        if not validated_data.get('responder_team_record'):
-            team_name = validated_data.get('responder_team', '')
-            validated_data['responder_team_record'] = responder_team_for_legacy_name(team_name)
+        validated_data['responder_team_record'] = profile.responder_team
 
         incoming_victim_count = validated_data.pop('victim_count', None)
         if incoming_victim_count is None:
@@ -572,8 +572,8 @@ class IncidentReportSerializer(serializers.ModelSerializer):
 
     def _viewer_team(self):
         """
-        None when the viewer may see every report in full (admins, or no request such as in a
-        management command); otherwise the responder's own team ('' when they have none).
+        Return (may_see_all, team_id). No request is used by management commands and may see all;
+        authenticated non-admin viewers are restricted to their assigned team.
         Worked out once per request and shared with nested serializers through the context.
         """
         if 'viewer_team' not in self.context:
@@ -581,21 +581,26 @@ class IncidentReportSerializer(serializers.ModelSerializer):
 
             request = self.context.get('request')
             user = getattr(request, 'user', None)
-            if user is None or (user.is_authenticated and get_user_role(user) == AccountProfile.ROLE_ADMIN):
-                self.context['viewer_team'] = None
+            if request is None:
+                self.context['viewer_team'] = (True, None)
+            elif user and user.is_authenticated and get_user_role(user) == AccountProfile.ROLE_ADMIN:
+                self.context['viewer_team'] = (True, None)
             else:
-                self.context['viewer_team'] = (
-                    AccountProfile.objects.filter(user=user).values_list('team', flat=True).first() or ''
-                    if user.is_authenticated else ''
+                team_id = (
+                    AccountProfile.objects.filter(user=user).values_list('responder_team_id', flat=True).first()
+                    if user and user.is_authenticated else None
                 )
+                self.context['viewer_team'] = (False, team_id)
         return self.context['viewer_team']
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
         # Responders see other teams' reports (type, place, time, victim count) but not the people
         # involved: the victim list, and the free text that can name them.
-        viewer_team = self._viewer_team()
-        if viewer_team is not None and instance.responder_team != viewer_team:
+        may_see_all, viewer_team_id = self._viewer_team()
+        if not may_see_all and (
+            viewer_team_id is None or instance.responder_team_record_id != viewer_team_id
+        ):
             data['victims'] = []
             data['description'] = ''
             data['actionTaken'] = ''

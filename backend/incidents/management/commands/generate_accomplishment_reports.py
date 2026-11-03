@@ -20,6 +20,7 @@ from incidents.sample_details import (
     sample_victim_details,
     victim_count_for,
 )
+from incidents.teams import team_name
 
 try:
     from incidents.models import Incident, HazardType
@@ -462,7 +463,10 @@ class Command(BaseCommand):
 
         # Only responder accounts file reports, each under its account's team (see the serializer).
         responders = list(
-            AccountProfile.objects.filter(role=AccountProfile.ROLE_STAFF).exclude(team='').select_related('user')
+            AccountProfile.objects.filter(
+                role=AccountProfile.ROLE_STAFF,
+                responder_team__isnull=False,
+            ).select_related('user', 'responder_team')
         )
         if not responders:
             raise CommandError(
@@ -542,7 +546,8 @@ class Command(BaseCommand):
                     incident_code=f'INC-{year}-{next_incident[year]:05d}',
                     time_occurred=occurred_at.time().replace(second=0, microsecond=0),
                     incident_type=incident_type,
-                    responder_team=responder.team,
+                    responder_team=team_name(responder.responder_team.name),
+                    responder_team_record=responder.responder_team,
                     location=location,
                     barangay=barangay,
                     latitude=latitude,
