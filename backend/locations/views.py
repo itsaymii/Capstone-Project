@@ -17,12 +17,20 @@ class BarangayViewSet(viewsets.ModelViewSet):
     GET: List all barangays
     POST: Create new barangay (staff/admin only)
     """
-    queryset = Barangay.objects.all()
+    queryset = Barangay.objects.select_related(
+        'city_municipality__province__region',
+    ).all()
     serializer_class = BarangaySerializer
     authentication_classes = [SessionAuthentication, TokenAuthentication]
+<<<<<<< HEAD
     permission_classes = [IsDashboardAdminOrReadOnly]
     search_fields = ['name', 'city', 'province']
     ordering_fields = ['name', 'province', 'city']
+=======
+    permission_classes = [IsStaffOrReadOnly]
+    search_fields = ['name', 'city_municipality__name', 'city_municipality__province__name']
+    ordering_fields = ['name', 'city_municipality__province__name', 'city_municipality__name']
+>>>>>>> f1cb84bd463e4ad4338a1cdd47d0927e338c2e84
     
     @action(detail=False, methods=['get'])
     def geojson(self, request):

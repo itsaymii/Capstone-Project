@@ -86,6 +86,20 @@ class IncidentReportAccessTests(AccessTestCase):
         }, format='json')
         self.assertEqual(response.status_code, 201, response.data)
         self.assertEqual(IncidentReport.objects.get(id=response.data['id']).status, 'Pending')
+        report = IncidentReport.objects.get(id=response.data['id'])
+        self.assertEqual(report.responder_team_record.code, 'alpha')
+        self.assertEqual(response.data['responderTeam'], 'Team Alpha')
+
+    def test_responder_without_team_assignment_cannot_file_report(self):
+        unassigned = User.objects.create_user('unassigned', 'unassigned@test.local', 'Pass12345', is_staff=True)
+        response = self.client_for(unassigned).post(REPORTS_URL, {
+            'timeOccurred': '14:30', 'incidentType': 'Stand-by Medical Team', 'location': 'Perez Park',
+            'latitude': 13.9339, 'longitude': 121.6172, 'description': 'Event', 'actionTaken': 'Stand-by',
+            'victims': [],
+            'details': {'event_name': 'Fun Run', 'venue': 'Perez Park', 'persons_assisted': 0},
+        }, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('responderTeam', response.data)
 
     def test_admin_can_approve_and_delete(self):
         client = self.client_for(self.admin)

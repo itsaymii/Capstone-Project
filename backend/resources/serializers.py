@@ -1,5 +1,14 @@
 from rest_framework import serializers
-from .models import SupplyCategory, Supply, EvacuationCenter, Equipment, Volunteer
+from django.db import transaction
+from .models import (
+    SupplyCategory,
+    Supply,
+    EvacuationCenter,
+    Equipment,
+    Volunteer,
+    VolunteerSkill,
+    VolunteerSkillAssignment,
+)
 from locations.serializers import BarangaySerializer
 
 class SupplyCategorySerializer(serializers.ModelSerializer):
@@ -78,6 +87,11 @@ class EquipmentSerializer(serializers.ModelSerializer):
 class VolunteerSerializer(serializers.ModelSerializer):
     barangay = BarangaySerializer(read_only=True)
     barangay_id = serializers.UUIDField(write_only=True, required=False)
+    skills = serializers.ListField(
+        child=serializers.CharField(max_length=255),
+        required=False,
+        allow_empty=True,
+    )
     
     class Meta:
         model = Volunteer
@@ -88,3 +102,43 @@ class VolunteerSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
+
+    @staticmethod
+    @transaction.atomic
+    def _save_skills(volunteer, skill_codes):
+        assignments = []
+        seen_codes = set()
+
+        for position, code in enumerate(skill_codes):
+            if code in seen_codes:
+                continue
+            seen_codes.add(code)
+            skill, _created = VolunteerSkill.objects.get_or_create(
+                code=code,
+                defaults={'name': code},
+            )
+            assignments.append(
+                VolunteerSkillAssignment(
+                    volunteer=volunteer,
+                    skill=skill,
+                    position=position,
+                )
+            )
+
+        VolunteerSkillAssignment.objects.filter(volunteer=volunteer).delete()
+        VolunteerSkillAssignment.objects.bulk_create(assignments)
+
+    @transaction.atomic
+    def create(self, validated_data):
+        skill_codes = validated_data.pop('skills', [])
+        volunteer = super().create(validated_data)
+        self._save_skills(volunteer, skill_codes)
+        return volunteer
+
+    @transaction.atomic
+    def update(self, instance, validated_data):
+        skill_codes = validated_data.pop('skills', None)
+        volunteer = super().update(instance, validated_data)
+        if skill_codes is not None:
+            self._save_skills(volunteer, skill_codes)
+        return volunteer

@@ -2,7 +2,7 @@ from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.authentication import TokenAuthentication, SessionAuthentication
-from django.db.models import Count, Q
+from django.db.models import Count, Prefetch, Q
 from django.core.exceptions import ValidationError as DjangoValidationError
 
 from .models import (
@@ -12,6 +12,7 @@ from .models import (
     ResponderReport,
     IncidentReport,
     AccomplishmentReport,
+    VehicularAccidentVehicleType,
 )
 
 from .serializers import (
@@ -53,6 +54,10 @@ class IncidentViewSet(viewsets.ModelViewSet):
             'fire_details',
             'earthquake_details',
             'vehicular_accident_details',
+            Prefetch(
+                'vehicular_accident_details__vehicle_type_links',
+                queryset=VehicularAccidentVehicleType.objects.select_related('vehicle_type').order_by('position', 'id'),
+            ),
             'crime_details',
             'medical_details',
             'drowning_details',
@@ -144,8 +149,25 @@ class ResponderReportViewSet(viewsets.ModelViewSet):
 
 
 class IncidentReportViewSet(viewsets.ModelViewSet):
-    queryset = IncidentReport.objects.prefetch_related('victims', 'accomplishment_reports').select_related(
-        'created_by', 'barangay'
+    queryset = IncidentReport.objects.select_related(
+        'created_by',
+        'barangay',
+        'responder_team_record',
+        'road_crash_details',
+        'fire_report_details',
+        'crime_report_details',
+        'medical_report_details',
+        'ambulance_report_details',
+        'standby_medical_details',
+        'drowning_report_details',
+    ).prefetch_related(
+        'victims',
+        'victims__road_crash_details',
+        'victims__fire_details',
+        'victims__medical_details',
+        'road_crash_details__vehicle_types',
+        'standby_medical_details__cases_handled',
+        'accomplishment_reports',
     ).all()
     serializer_class = IncidentReportSerializer
     authentication_classes = [SessionAuthentication, TokenAuthentication]
@@ -194,7 +216,7 @@ class IncidentReportViewSet(viewsets.ModelViewSet):
     def public(self, request):
         """Approved reports for the public Landing page and Disaster Map, without personal data."""
         reports = (
-            IncidentReport.objects.select_related('barangay')
+            IncidentReport.objects.select_related('barangay', 'responder_team_record')
             .filter(status__iexact='approved')
             .order_by('-created_at')[:500]
         )
@@ -204,7 +226,20 @@ class IncidentReportViewSet(viewsets.ModelViewSet):
 class AccomplishmentReportViewSet(viewsets.ModelViewSet):
     queryset = AccomplishmentReport.objects.prefetch_related(
         'incident_reports',
+        'incident_reports__responder_team_record',
         'incident_reports__victims',
+        'incident_reports__victims__road_crash_details',
+        'incident_reports__victims__fire_details',
+        'incident_reports__victims__medical_details',
+        'incident_reports__road_crash_details',
+        'incident_reports__road_crash_details__vehicle_types',
+        'incident_reports__fire_report_details',
+        'incident_reports__crime_report_details',
+        'incident_reports__medical_report_details',
+        'incident_reports__ambulance_report_details',
+        'incident_reports__standby_medical_details',
+        'incident_reports__standby_medical_details__cases_handled',
+        'incident_reports__drowning_report_details',
         'incident_reports__accomplishment_reports',
         'incident_reports__created_by__account_profile',
         'incident_reports__barangay',

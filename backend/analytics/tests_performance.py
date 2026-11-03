@@ -112,7 +112,7 @@ if DjangoTestCase is not None:
 
             data = self.client.get('/api/analytics/performance/').json()
             self.assertEqual(data['overall']['assignments'], 3)  # pending report not counted
-            alpha = next(team for team in data['teams'] if team['team'] == 'Alpha')
+            alpha = next(team for team in data['teams'] if team['team'] == 'Team Alpha')
             self.assertEqual(alpha['assignments'], 2)
             self.assertEqual(alpha['average_minutes'], 30.0)
             self.assertEqual(alpha['on_time'], 1)
@@ -123,7 +123,7 @@ if DjangoTestCase is not None:
             self.assertEqual(this_year['overall']['assignments'], 2)
 
             isabang = self.client.get('/api/analytics/performance/', {'barangay': 'Barangay Isabang'}).json()
-            self.assertEqual([team['team'] for team in isabang['teams']], ['Bravo'])
+            self.assertEqual([team['team'] for team in isabang['teams']], ['Team Bravo'])
 
             bad = self.client.get('/api/analytics/performance/', {'month': '13', 'year': '2026'})
             self.assertEqual(bad.status_code, 400)

@@ -9,6 +9,16 @@ from .evacuation import (
     resolve_status,
 )
 
+VOLUNTEER_SKILL_CHOICES = [
+    ('medical', 'Medical/First Aid'),
+    ('rescue', 'Search and Rescue'),
+    ('logistics', 'Logistics/Supply'),
+    ('communication', 'Communication'),
+    ('counseling', 'Psychological Support'),
+    ('driving', 'Driving'),
+    ('general', 'General Support'),
+]
+
 
 class SupplyCategory(models.Model):
     """Categories for organizing supplies"""
@@ -194,6 +204,20 @@ class Equipment(models.Model):
         return f"{self.name} ({self.get_status_display()})"
 
 
+class VolunteerSkill(models.Model):
+    """A skill code that can be assigned to volunteers."""
+
+    code = models.CharField(max_length=255, unique=True)
+    name = models.CharField(max_length=255)
+
+    class Meta:
+        db_table = 'volunteer_skills'
+        ordering = ['code']
+
+    def __str__(self):
+        return self.name
+
+
 class Volunteer(models.Model):
     """Community volunteers for disaster response"""
     
@@ -201,16 +225,6 @@ class Volunteer(models.Model):
         ('active', 'Active'),
         ('inactive', 'Inactive'),
         ('on_deployment', 'On Deployment'),
-    ]
-
-    SKILL_CHOICES = [
-        ('medical', 'Medical/First Aid'),
-        ('rescue', 'Search and Rescue'),
-        ('logistics', 'Logistics/Supply'),
-        ('communication', 'Communication'),
-        ('counseling', 'Psychological Support'),
-        ('driving', 'Driving'),
-        ('general', 'General Support'),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -235,7 +249,12 @@ class Volunteer(models.Model):
     )
     
     # Skills
-    skills = models.JSONField(default=list, help_text="List of skill codes")
+    skill_records = models.ManyToManyField(
+        VolunteerSkill,
+        through='VolunteerSkillAssignment',
+        related_name='volunteers',
+        blank=True,
+    )
     certifications = models.TextField(blank=True)
     
     # Status
@@ -254,3 +273,37 @@ class Volunteer(models.Model):
 
     def __str__(self):
         return f"{self.full_name} (Volunteer)"
+
+    @property
+    def skills(self):
+        assignments = self.skill_assignments.all()
+        if 'skill_assignments' in getattr(self, '_prefetched_objects_cache', {}):
+            return [assignment.skill.code for assignment in assignments]
+        return list(
+            assignments.select_related('skill').order_by('position', 'pk')
+            .values_list('skill__code', flat=True)
+        )
+
+
+class VolunteerSkillAssignment(models.Model):
+    volunteer = models.ForeignKey(
+        Volunteer,
+        on_delete=models.CASCADE,
+        related_name='skill_assignments',
+    )
+    skill = models.ForeignKey(
+        VolunteerSkill,
+        on_delete=models.CASCADE,
+        related_name='volunteer_assignments',
+    )
+    position = models.PositiveIntegerField()
+
+    class Meta:
+        db_table = 'volunteer_skill_assignments'
+        ordering = ['position', 'pk']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['volunteer', 'skill'],
+                name='unique_volunteer_skill',
+            ),
+        ]

@@ -75,8 +75,11 @@ def _serialize_user(user: User, fallback_identifier: str = '') -> dict:
 	role = get_user_role(user)
 	contact_value = (user.email or '').strip() or fallback_identifier or user.username
 	phone_number = None
+	responder_team = None
 	try:
 		phone_number = user.account_profile.phone_number
+		if user.account_profile.responder_team_id:
+			responder_team = user.account_profile.responder_team.name
 	except Exception:
 		phone_number = None
 	verification = ResidencyVerification.objects.filter(user=user).first()
@@ -87,6 +90,7 @@ def _serialize_user(user: User, fallback_identifier: str = '') -> dict:
 		'email': contact_value,
 		'role': role,
 		'phoneNumber': phone_number,
+		'responderTeam': responder_team,
 		# Prefer explicit Django flags when available so frontend routing
 		# works even if AccountProfile hasn't been synchronized.
 		'isAdmin': bool(user.is_superuser) or role == AccountProfile.ROLE_ADMIN,
@@ -367,7 +371,10 @@ def register_user(request):
 	if not resident_confirmation:
 		return Response({'error': 'You must confirm that you are a Lucena City resident.'}, status=status.HTTP_400_BAD_REQUEST)
 
-	barangay = Barangay.objects.filter(id=barangay_id, city__iexact='Lucena City').first()
+	barangay = Barangay.objects.filter(
+		id=barangay_id,
+		city_municipality__name__iexact='Lucena City',
+	).first()
 	if not barangay:
 		return Response({'error': 'Select a valid barangay in Lucena City.'}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -413,7 +420,8 @@ def register_user(request):
 	verification, _ = ResidencyVerification.objects.get_or_create(
 		email=email,
 		defaults={
-			'barangay_name': barangay.name,
+			'barangay_record': barangay,
+			'legacy_barangay_name': '',
 			'residential_address': residential_address,
 			'proof_document': proof_document,
 			'proof_document_name': document_name,
@@ -424,7 +432,8 @@ def register_user(request):
 		return Response({'error': 'This email is already registered.'}, status=status.HTTP_400_BAD_REQUEST)
 
 	if not _:
-		verification.barangay_name = barangay.name
+		verification.barangay_record = barangay
+		verification.legacy_barangay_name = ''
 		verification.residential_address = residential_address
 		verification.proof_document = proof_document
 		verification.proof_document_name = document_name
@@ -432,7 +441,18 @@ def register_user(request):
 		verification.rejection_reason = ''
 		verification.reviewed_by = None
 		verification.reviewed_at = None
-		verification.save()
+		verification.save(update_fields=[
+			'barangay_record',
+			'legacy_barangay_name',
+			'residential_address',
+			'proof_document',
+			'proof_document_name',
+			'status',
+			'rejection_reason',
+			'reviewed_by',
+			'reviewed_at',
+			'updated_at',
+		])
 
 	# Store registration data temporarily until the OTP has been verified.
 	otp_code = _create_otp(

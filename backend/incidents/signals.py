@@ -1,4 +1,7 @@
 from django.db.models.signals import post_save
+from django.apps import apps
+from django.db import connections
+from django.db.models.signals import post_migrate
 from .utils import get_nearest_barangay
 from .incident_types import detail_table_values, fit_detail_values
 from django.dispatch import receiver
@@ -10,6 +13,7 @@ from accounts.models import ResidencyVerification
 
 from .models import (
     IncidentReport,
+    DEFAULT_RESPONDER_TEAMS,
     Incident,
     HazardType,
     FireDetails,
@@ -18,6 +22,21 @@ from .models import (
     MedicalEmergency,
     DrowningIncident,
 )
+
+
+@receiver(post_migrate, dispatch_uid='incidents.ensure_default_responder_teams')
+def ensure_default_responder_teams(sender, using, **kwargs):
+    if sender.name != 'incidents':
+        return
+
+    ResponderTeam = apps.get_model('incidents', 'ResponderTeam')
+    if ResponderTeam._meta.db_table not in connections[using].introspection.table_names():
+        return
+    for code, name in DEFAULT_RESPONDER_TEAMS:
+        ResponderTeam.objects.using(using).get_or_create(
+            code=code,
+            defaults={'name': name},
+        )
 
 
 def _get_coords_for_report(report):
@@ -64,6 +83,9 @@ def create_incident_on_approval(sender, instance: IncidentReport, created, **kwa
         if str(instance.status).lower() == 'approved':
             existing = Incident.objects.filter(reference_code__iexact=instance.incident_code).first()
             if existing:
+                if instance.incident_id != existing.pk:
+                    IncidentReport.objects.filter(pk=instance.pk).update(incident=existing)
+                    instance.incident = existing
                 return
 
             hazard_name = instance.incident_type or 'Medical Emergency'
@@ -110,6 +132,8 @@ def create_incident_on_approval(sender, instance: IncidentReport, created, **kwa
                 impact_level='minor' if instance.victim_count > 0 else 'minimal',
                 description=instance.description or '',
             )
+            IncidentReport.objects.filter(pk=instance.pk).update(incident=incident)
+            instance.incident = incident
 
             # Copy the report's type-specific details into the matching detail table.
             table, values = detail_table_values(
@@ -144,13 +168,14 @@ def notify_affected_barangay_residents(sender, instance: Incident, created, **kw
     if instance.severity_level != 'critical' or not instance.barangay:
         return
 
-    barangay_name = instance.barangay.name
+    barangay = instance.barangay
+    barangay_name = barangay.name
     
     # 2. Find all citizens with VERIFIED residency in this specific barangay
     verified_residents = ResidencyVerification.objects.filter(
         status=ResidencyVerification.STATUS_VERIFIED,
-        barangay_name__iexact=barangay_name
-    ).select_related('user__account_profile')
+        barangay_record_id=barangay.pk,
+    ).select_related('user__account_profile', 'barangay_record')
     
     if not verified_residents.exists():
         return

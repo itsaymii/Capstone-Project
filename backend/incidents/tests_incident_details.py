@@ -153,7 +153,9 @@ if DjangoTestCase is not None:
         Incident,
         IncidentReport,
         MedicalEmergency,
+        ResponderTeam,
     )
+    from accounts.models import AccountProfile
 
     REPORTS_URL = '/api/incidents/incident-reports/'
 

@@ -2,7 +2,7 @@ from django.contrib import admin
 from .models import (
     HazardType, Incident, FireDetails, EarthquakeDetails,
     VehicularAccident, CrimeReport, MedicalEmergency,
-    DrowningIncident, Alert, ResponderReport
+    DrowningIncident, Alert, ResponderReport, ResponderTeam
 )
 
 
@@ -137,6 +137,12 @@ class ResponderReportAdmin(admin.ModelAdmin):
     ordering = ['-report_time']
     date_hierarchy = 'report_time'
     readonly_fields = ['incident', 'responder', 'report_time']
+
+
+@admin.register(ResponderTeam)
+class ResponderTeamAdmin(admin.ModelAdmin):
+    list_display = ['name', 'code']
+    search_fields = ['name', 'code']
 
 
 # Register detail models (accessible separately if needed)

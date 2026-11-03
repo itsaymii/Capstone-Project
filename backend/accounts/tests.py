@@ -7,6 +7,9 @@ from django.test import TestCase
 from django.utils import timezone
 from django.urls import reverse
 
+from locations.models import Barangay
+from incidents.models import ResponderTeam
+
 from .models import AccountProfile, OneTimePassword, ResidencyVerification, get_user_role
 
 
@@ -110,6 +113,38 @@ class AccountLoginFlowTests(TestCase):
 		self.assertEqual(user.residency_verification.status, ResidencyVerification.STATUS_PENDING)
 		self.assertEqual(self.client.session.get_expiry_age(), 24 * 60 * 60)
 
+	def test_residency_verification_resolves_barangay_name_from_relation(self):
+		barangay = Barangay.objects.create(name='Cotta')
+		verification = ResidencyVerification.objects.create(
+			email='resident@example.com',
+			barangay_record=barangay,
+			residential_address='123 Sample Street',
+			proof_document=SimpleUploadedFile('resident-id.jpg', b'proof-image', content_type='image/jpeg'),
+			proof_document_name='resident-id.jpg',
+		)
+
+		self.assertEqual(verification.barangay_name, 'Cotta')
+		self.assertEqual(ResidencyVerification.objects.select_related('barangay_record').get(pk=verification.pk).barangay_name, 'Cotta')
+
+		verification.barangay_name = 'Legacy value'
+		verification.save(update_fields=['barangay_name'])
+		verification.refresh_from_db()
+		self.assertIsNone(verification.barangay_record_id)
+		self.assertEqual(verification.barangay_name, 'Legacy value')
+
+	def test_unmatched_legacy_residency_barangay_name_is_preserved(self):
+		verification = ResidencyVerification.objects.create(
+			email='legacy-resident@example.com',
+			barangay_name='Former Barangay Name',
+			residential_address='123 Sample Street',
+			proof_document=SimpleUploadedFile('resident-id.jpg', b'proof-image', content_type='image/jpeg'),
+			proof_document_name='resident-id.jpg',
+		)
+
+		self.assertIsNone(verification.barangay_record_id)
+		self.assertEqual(verification.legacy_barangay_name, 'Former Barangay Name')
+		self.assertEqual(verification.barangay_name, 'Former Barangay Name')
+
 	def test_pending_resident_cannot_start_login(self):
 		user = User.objects.create_user(username='pending-user', email='pending@example.com', password='secret123')
 		ResidencyVerification.objects.create(
@@ -165,7 +200,19 @@ class AccountLoginFlowTests(TestCase):
 		self.assertEqual(response.status_code, 200)
 		payload = response.json()
 		self.assertEqual(payload['user']['email'], 'profile@example.com')
+		self.assertIsNone(payload['user']['responderTeam'])
 		self.assertEqual(payload['user']['phoneNumber'], '+639171234567')
+
+	def test_current_user_profile_includes_admin_assigned_responder_team(self):
+		user = User.objects.create_user(username='assigned-responder', email='team@example.com', password='secret123')
+		user.account_profile.responder_team = ResponderTeam.objects.get(code='alpha')
+		user.account_profile.save(update_fields=['responder_team'])
+		self.client.force_login(user)
+
+		response = self.client.get(reverse('current-user-profile'))
+
+		self.assertEqual(response.status_code, 200)
+		self.assertEqual(response.json()['user']['responderTeam'], 'Team Alpha')
 
 	def test_current_user_profile_patch_updates_phone_number(self):
 		user = User.objects.create_user(
