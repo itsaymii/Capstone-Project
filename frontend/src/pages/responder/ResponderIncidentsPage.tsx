@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { FC } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { MobileNavBar } from '../../components/MobileNavBar'
 import { ResponderPageHeader } from '../../components/ResponderPageHeader'
+import { clampPage } from '../../components/pagination'
 import {
   STAGE_BADGE_CLASSES,
   STAGE_LABELS,
@@ -19,6 +20,9 @@ import { getIncidentCategoryMeta, getIncidentCategoryKey } from '../../data/inci
 import { getAccountTeam, toTeamName } from '../../data/teams'
 
 type ViewFilter = 'all' | ReportStage
+
+// Reports per page on the phone list.
+const PAGE_SIZE = 10
 
 interface VictimDetails {
   name: string
@@ -180,6 +184,18 @@ const IncidentReportPage: FC = () => {
   const [isLoading, setIsLoading] = useState(true)
 
   const [isCompiling, setIsCompiling] = useState(false)
+  const [page, setPage] = useState(1)
+  const listTopRef = useRef<HTMLElement | null>(null)
+
+  // A new search or filter starts again on the first page.
+  useEffect(() => {
+    setPage(1)
+  }, [searchQuery, hazardFilter, viewFilter, sortOrder])
+
+  const goToPage = (next: number) => {
+    setPage(next)
+    listTopRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
 
   const fetchReports = useCallback(async (showError = true) => {
     try {
@@ -321,7 +337,16 @@ const IncidentReportPage: FC = () => {
     { value: 'awaiting', label: STAGE_LABELS.awaiting },
     { value: 'compiled', label: STAGE_LABELS.compiled },
   ]
+  const currentPage = clampPage(page, filteredAndSortedReports.length, PAGE_SIZE)
+  const totalPages = Math.max(1, Math.ceil(filteredAndSortedReports.length / PAGE_SIZE))
+  const pageStart = (currentPage - 1) * PAGE_SIZE
+  const pagedReports = filteredAndSortedReports.slice(pageStart, pageStart + PAGE_SIZE)
   const selectableInView = filteredAndSortedReports.filter((report) => canSelectReport(report))
+  const total = filteredAndSortedReports.length
+  const showingLabel =
+    totalPages > 1
+      ? `Showing ${pageStart + 1}–${Math.min(pageStart + PAGE_SIZE, total)} of ${total} reports`
+      : `${total} report${total === 1 ? '' : 's'}`
   const allInViewSelected = selectableInView.length > 0 && selectableInView.every((report) => selectedIds.includes(report.id))
 
   return (
@@ -338,7 +363,7 @@ const IncidentReportPage: FC = () => {
 
         {!isLoading && reports.length > 0 ? (
           <section className="space-y-3 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm" aria-label="Filter reports">
-            <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1" role="tablist" aria-label="Show">
+            <div className="flex flex-wrap gap-2" role="tablist" aria-label="Show">
               {viewOptions.map((option) => {
                 const isOn = viewFilter === option.value
                 return (
@@ -417,24 +442,20 @@ const IncidentReportPage: FC = () => {
             <p className="mt-1 text-xs text-slate-500">Change the search, the incident type, or pick All above.</p>
           </div>
         ) : (
-          <section aria-label="Reports" className="space-y-2.5">
+          <section aria-label="Reports" className="scroll-mt-4 space-y-2.5" ref={listTopRef}>
             {selectableInView.length > 0 ? (
               <div className="flex items-center justify-between px-1">
-                <p className="text-xs font-semibold text-slate-500">
-                  {filteredAndSortedReports.length} report{filteredAndSortedReports.length === 1 ? '' : 's'}
-                </p>
+                <p className="text-xs font-semibold text-slate-500">{showingLabel}</p>
                 <button type="button" onClick={toggleSelectAll} className="text-xs font-bold text-blue-700">
                   {allInViewSelected ? 'Clear selection' : `Select all ready (${selectableInView.length})`}
                 </button>
               </div>
             ) : (
-              <p className="px-1 text-xs font-semibold text-slate-500">
-                {filteredAndSortedReports.length} report{filteredAndSortedReports.length === 1 ? '' : 's'}
-              </p>
+              <p className="px-1 text-xs font-semibold text-slate-500">{showingLabel}</p>
             )}
 
             <ul className="space-y-2.5">
-              {filteredAndSortedReports.map((report) => {
+              {pagedReports.map((report) => {
                 const stage = getReportStage(report, me)
                 const selectable = stage === 'ready'
                 const isSelected = selectedIds.includes(report.id)
@@ -500,6 +521,36 @@ const IncidentReportPage: FC = () => {
                 )
               })}
             </ul>
+
+            {totalPages > 1 ? (
+              <nav className="flex items-center justify-between gap-2 pt-1" aria-label="Report pages">
+                <button
+                  type="button"
+                  onClick={() => goToPage(currentPage - 1)}
+                  disabled={currentPage === 1}
+                  className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 shadow-sm transition-colors hover:bg-slate-50 disabled:opacity-40"
+                >
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden="true">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+                  </svg>
+                  Previous
+                </button>
+                <span className="text-sm font-semibold text-slate-600" aria-current="page">
+                  Page {currentPage} of {totalPages}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => goToPage(currentPage + 1)}
+                  disabled={currentPage === totalPages}
+                  className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 shadow-sm transition-colors hover:bg-slate-50 disabled:opacity-40"
+                >
+                  Next
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden="true">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                  </svg>
+                </button>
+              </nav>
+            ) : null}
           </section>
         )}
       </main>
