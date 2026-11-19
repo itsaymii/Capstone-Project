@@ -572,6 +572,7 @@ class StandbyMedicalDetails(models.Model):
     crowd_estimate = models.PositiveIntegerField(null=True, blank=True)
     team_members = models.PositiveIntegerField(null=True, blank=True)
     persons_assisted = models.PositiveIntegerField(null=True, blank=True)
+    hospital = models.CharField(max_length=200, null=True, blank=True)
 
 
 class StandbyMedicalCase(models.Model):

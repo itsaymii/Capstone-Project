@@ -9,15 +9,7 @@ No Django imports, so it is easy to test.
 
 from datetime import datetime, timedelta
 
-from .incident_types import get_incident_type
-
-LUCENA_HOSPITALS = [
-    'Quezon Medical Center',
-    'Mt. Carmel Diocesan General Hospital',
-    'Lucena United Doctors Hospital',
-    'MMG Hospital and Health Center',
-    'St. Anne General Hospital',
-]
+from .incident_types import LUCENA_HOSPITALS, get_incident_type
 
 STANDBY_EVENTS = [
     ('Pasayahan sa Lucena', 'Perez Park', 'City Government of Lucena'),
@@ -176,6 +168,8 @@ def sample_details(rng, incident_type, victim_count, occurred_at, barangay_name)
         }
         if cases:
             details['cases_handled'] = cases
+            if rng.random() < 0.3:
+                details['hospital'] = rng.choice(LUCENA_HOSPITALS)
 
     elif incident_type == 'Drowning':
         outcomes = {'rescued_alive': 0, 'revived_cpr': 0, 'fatalities': 0, 'missing': 0}

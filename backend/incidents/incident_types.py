@@ -18,10 +18,24 @@ from decimal import Decimal, InvalidOperation
 TEXT_MAX_LENGTH = 200
 
 
+# Hospitals in Lucena City, for the hospital dropdowns. The form also has "Others" with a text box,
+# so a hospital outside this list can still be typed in. Keep in step with incidentTypeFields.ts.
+LUCENA_HOSPITALS = [
+    'Quezon Medical Center',
+    'Lucena United Doctors Hospital and Medical Center',
+    'Mount Carmel Diocesan General Hospital',
+    'Lucena MMG General Hospital',
+    'St. Anne General Hospital',
+    'Camp Nakar Station Hospital',
+]
+HOSPITAL_CHOICES = [(name, name) for name in LUCENA_HOSPITALS]
+
+
 def field(name, label, kind, required=False, choices=None, minimum=0, maximum=None):
     """
-    kind: 'choice' (one value), 'multi_choice' (list), 'int', 'decimal', 'text', 'bool', or 'time' (HH:MM).
-    choices: list of (value, label) for 'choice' and 'multi_choice'.
+    kind: 'choice' (one value), 'multi_choice' (list), 'int', 'decimal', 'text', 'bool', 'time' (HH:MM),
+    or 'choice_other' (pick from choices or type another value; saved as text).
+    choices: list of (value, label) for 'choice', 'multi_choice' and 'choice_other'.
     """
     return {
         'name': name,
@@ -141,7 +155,7 @@ INCIDENT_TYPES = {
                 ('unresponsive', 'Unresponsive'),
             ]),
             field('transported', 'Transported to hospital', 'bool'),
-            field('hospital', 'Hospital', 'text'),
+            field('hospital', 'Hospital', 'choice_other', choices=HOSPITAL_CHOICES),
         ],
         'victim_fields': [
             field('blood_pressure', 'Blood pressure (e.g. 120/80)', 'text'),
@@ -158,7 +172,7 @@ INCIDENT_TYPES = {
         'victims': {'allowed': True, 'label': 'Patient', 'min': 1, 'max': 1},
         'fields': [
             field('pickup_location', 'Pick-up location', 'text', required=True),
-            field('destination_hospital', 'Destination hospital', 'text', required=True),
+            field('destination_hospital', 'Destination hospital', 'choice_other', required=True, choices=HOSPITAL_CHOICES),
             field('transport_reason', 'Reason for transport', 'choice', required=True, choices=[
                 ('referral', 'Referral'), ('dialysis', 'Dialysis'), ('discharge', 'Discharge / going home'),
                 ('transfer', 'Hospital transfer'), ('check_up', 'Check-up'), ('other', 'Other'),
@@ -192,6 +206,7 @@ INCIDENT_TYPES = {
                 ('dizziness', 'Dizziness'), ('fainting', 'Fainting'), ('hypertension', 'High blood pressure'),
                 ('other', 'Other'),
             ]),
+            field('hospital', 'Hospital referred to', 'choice_other', choices=HOSPITAL_CHOICES),
         ],
         'victim_fields': [],
     },
@@ -237,7 +252,8 @@ def _clean_value(spec, value):
     if value is None or (isinstance(value, str) and value.strip() == '') or (kind == 'multi_choice' and value == []):
         return None, None
 
-    if kind == 'text':
+    if kind in ('text', 'choice_other'):
+        # choice_other: a listed choice or any other typed value, so it is checked like text.
         text = str(value).strip()
         if len(text) > TEXT_MAX_LENGTH:
             return None, f'must be {TEXT_MAX_LENGTH} characters or fewer'

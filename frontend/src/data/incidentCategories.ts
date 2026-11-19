@@ -273,7 +273,7 @@ export function countDetailValues(
     if (!hasValue(value)) return
     if (spec.kind === 'multi_choice' && Array.isArray(value)) {
       value.forEach((item) => add(item, formatDetailValue(spec, [item])))
-    } else if (spec.kind === 'text') {
+    } else if (spec.kind === 'text' || spec.kind === 'choice_other') {
       const label = String(value).trim()
       add(label.toLowerCase(), label)
     } else {
