@@ -7,6 +7,8 @@ import { addNotification } from "../../services/notifications";
 import { AUTH_CHANGED_EVENT, getCurrentUserProfile } from "../../services/auth";
 import { getCurrentUserProfile as fetchAccountProfile } from "../../services/api";
 import { createIncidentReport } from "../../services/incidents";
+import type { CreateIncidentReportPayload } from "../../services/incidents";
+import { isConnectionError, saveReportForLater } from "../../services/offlineReports";
 import {
   cleanDetailValues,
   getIncidentTypeConfig,
@@ -506,32 +508,44 @@ export const CreateReport: FC = () => {
     const latitude = Number(formData.latitude);
     const longitude = Number(formData.longitude);
 
+    // Only send this type's fields; victims are left out for types without a victim list.
+    const victims = victimRules.allowed
+      ? formData.victims.map((victim) => ({
+          ...victim,
+          details: typeConfig ? cleanDetailValues(typeConfig.victimFields, victim.details) : {},
+        }))
+      : [];
+
+    const payload: CreateIncidentReportPayload = {
+      timeOccurred: formData.timeOccurred,
+      incidentType: formData.incidentType,
+      responderTeam: formData.responderTeam,
+      description: formData.description,
+      location: `${formData.barangay}, Lucena City`,
+      latitude,
+      longitude,
+      victimCount: victims.length,
+      victims,
+      actionTaken: formData.actionTaken,
+      details: typeConfig ? cleanDetailValues(typeConfig.fields, details) : {},
+      status: "Pending",
+    };
+
+    // No signal at the scene: keep the report on this phone; it is sent once the phone is online.
+    const keepForLater = () => {
+      if (!saveReportForLater(payload)) return false;
+      addNotification("No connection. The report is saved on this phone and will be sent when you are back online.");
+      navigate("/responder-dashboard", { state: { message: "Report saved on this phone", success: true } });
+      return true;
+    };
+
+    if (!navigator.onLine && keepForLater()) return;
+
     try {
       setIsLoading(true);
       setError(null);
 
-      // Only send this type's fields; victims are left out for types without a victim list.
-      const victims = victimRules.allowed
-        ? formData.victims.map((victim) => ({
-            ...victim,
-            details: typeConfig ? cleanDetailValues(typeConfig.victimFields, victim.details) : {},
-          }))
-        : [];
-
-      await createIncidentReport({
-        timeOccurred: formData.timeOccurred,
-        incidentType: formData.incidentType,
-        responderTeam: formData.responderTeam,
-        description: formData.description,
-        location: `${formData.barangay}, Lucena City`,
-        latitude,
-        longitude,
-        victimCount: victims.length,
-        victims,
-        actionTaken: formData.actionTaken,
-        details: typeConfig ? cleanDetailValues(typeConfig.fields, details) : {},
-        status: "Pending",
-      });
+      await createIncidentReport(payload);
 
       addNotification("Report submitted successfully!");
 
@@ -543,6 +557,7 @@ export const CreateReport: FC = () => {
       });
     } catch (err) {
       console.error("[CreateReport] Error saving report:", err);
+      if (isConnectionError(err) && keepForLater()) return;
       showServerError(err);
     } finally {
       setIsLoading(false);

@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import { getCurrentUserProfile, logoutUser } from '../../services/auth'
 import { MobileNavBar } from '../../components/MobileNavBar'
 import { ResponderPageHeader } from '../../components/ResponderPageHeader'
+import { InstallAppCard } from '../../components/InstallAppCard'
 import { getAccountTeam } from '../../data/teams'
 
 interface TeamMember {
@@ -360,6 +361,8 @@ const ProfileSettingsPage: FC = () => {
             )}
           </ul>
         </section>
+
+        <InstallAppCard variant="section" />
 
         <button
           type="button"

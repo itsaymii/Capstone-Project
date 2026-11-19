@@ -1,42 +1,10 @@
 // services/incidents.ts
 import axios from 'axios'
-import { ensureCsrfCookie } from './api'
+import { API_BASE_URL, ensureCsrfCookie } from './api'
 import type { DetailValues } from '../data/incidentTypeFields'
 
-function getDefaultApiBaseUrl(): string {
-  if (typeof window === 'undefined') return 'http://localhost:8000'
-
-  const hostname = window.location.hostname === '127.0.0.1' ? '127.0.0.1' : 'localhost'
-  return `${window.location.protocol}//${hostname}:8000`
-}
-
-function normalizeApiBaseUrl(rawBaseUrl?: string): string {
-  const trimmedBaseUrl = rawBaseUrl?.trim()
-  if (!trimmedBaseUrl) return getDefaultApiBaseUrl()
-
-  if (typeof window === 'undefined') return trimmedBaseUrl
-
-  try {
-    const parsedUrl = new URL(trimmedBaseUrl)
-    const currentHost = window.location.hostname
-    const isLocalBrowserHost = currentHost === 'localhost' || currentHost === '127.0.0.1'
-    const isLocalApiHost = parsedUrl.hostname === 'localhost' || parsedUrl.hostname === '127.0.0.1'
-
-    if (isLocalBrowserHost && isLocalApiHost) {
-      parsedUrl.hostname = currentHost
-      return parsedUrl.toString().replace(/\/$/, '')
-    }
-
-    return trimmedBaseUrl
-  } catch {
-    return trimmedBaseUrl
-  }
-}
-
-const apiBaseUrl = normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_URL)
-
 const api = axios.create({
-  baseURL: apiBaseUrl,
+  baseURL: API_BASE_URL,
   withCredentials: true,
   xsrfCookieName: 'csrftoken',
   xsrfHeaderName: 'X-CSRFToken',

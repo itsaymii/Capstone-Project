@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import type { FC } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { MobileNavBar } from '../../components/MobileNavBar'
+import { WaitingReportsCard } from '../../components/WaitingReportsCard'
+import { InstallAppCard } from '../../components/InstallAppCard'
 import { getCurrentUserProfile } from '../../services/auth'
 import { getIncidentReports } from '../../services/incidents'
 import { getIncidentCategoryKey, getIncidentCategoryMeta } from '../../data/incidentCategories'
@@ -163,6 +165,10 @@ export const ResponderDashboardPage: FC = () => {
           </div>
 
         </section>
+
+        <WaitingReportsCard />
+
+        <InstallAppCard />
 
         <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm" aria-labelledby="recent-reports">
           <div className="flex items-baseline justify-between gap-3 border-b border-slate-100 px-4 py-3">

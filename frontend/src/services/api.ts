@@ -62,46 +62,44 @@ function getApiErrorMessage(error: unknown, fallback: string): string {
   return fallback
 }
 
-function getDefaultApiBaseUrl(): string {
-  if (typeof window === 'undefined') {
-    return 'http://localhost:8000'
-  }
+const isLocalHostname = (hostname: string) => hostname === 'localhost' || hostname === '127.0.0.1'
 
-  const hostname = window.location.hostname === '127.0.0.1' ? '127.0.0.1' : 'localhost'
-  return `${window.location.protocol}//${hostname}:8000`
-}
+/**
+ * Where API calls go.
+ * - On the laptop (localhost): straight to Django on port 8000, as before.
+ * - On a phone (the laptop's IP or an HTTPS tunnel): this same address. The Vite server passes
+ *   /api, /accounts, /dashboard and /media on to Django (vite.config.ts), so the phone needs one URL.
+ * - A real server URL in VITE_API_BASE_URL (e.g. after deployment) is used as given.
+ */
+export function getApiBaseUrl(rawBaseUrl?: string): string {
+  const configured = rawBaseUrl?.trim() || ''
+  if (typeof window === 'undefined') return configured || 'http://localhost:8000'
 
-function normalizeApiBaseUrl(rawBaseUrl?: string): string {
-  const trimmedBaseUrl = rawBaseUrl?.trim()
-  if (!trimmedBaseUrl) {
-    return getDefaultApiBaseUrl()
-  }
-
-  if (typeof window === 'undefined') {
-    return trimmedBaseUrl
-  }
-
+  const pageHost = window.location.hostname
+  let configuredHost = ''
   try {
-    const parsedUrl = new URL(trimmedBaseUrl)
-    const currentHost = window.location.hostname
-    const isLocalBrowserHost = currentHost === 'localhost' || currentHost === '127.0.0.1'
-    const isLocalApiHost = parsedUrl.hostname === 'localhost' || parsedUrl.hostname === '127.0.0.1'
-
-    if (isLocalBrowserHost && isLocalApiHost) {
-      parsedUrl.hostname = currentHost
-      return parsedUrl.toString().replace(/\/$/, '')
-    }
-
-    return trimmedBaseUrl
+    configuredHost = configured ? new URL(configured).hostname : ''
   } catch {
-    return trimmedBaseUrl
+    return configured
   }
+
+  if (!isLocalHostname(pageHost)) {
+    return !configured || isLocalHostname(configuredHost) ? '' : configured
+  }
+
+  if (!configured) return `${window.location.protocol}//${pageHost}:8000`
+  if (isLocalHostname(configuredHost)) {
+    const url = new URL(configured)
+    url.hostname = pageHost
+    return url.toString().replace(/\/$/, '')
+  }
+  return configured
 }
 
-const apiBaseUrl = normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_URL)
+export const API_BASE_URL = getApiBaseUrl(import.meta.env.VITE_API_BASE_URL)
 
 const api = axios.create({
-  baseURL: apiBaseUrl,
+  baseURL: API_BASE_URL,
   withCredentials: true,
   xsrfCookieName: 'csrftoken',
   xsrfHeaderName: 'X-CSRFToken',

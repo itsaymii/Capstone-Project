@@ -111,7 +111,7 @@ function parseApiError(
 
     if (!error.response) {
       return {
-        message: 'Cannot connect to the backend server. Make sure Django is running on http://127.0.0.1:8000.',
+        message: 'Cannot reach the server. Check your internet connection, or that the server is running.',
       }
     }
 
