@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react'
-import type { FC, KeyboardEvent } from 'react'
+import type { FC } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { MobileNavBar } from '../../components/MobileNavBar'
 import { getCurrentUserProfile } from '../../services/auth'
 import { getIncidentReports } from '../../services/incidents'
 import { getIncidentCategoryKey, getIncidentCategoryMeta } from '../../data/incidentCategories'
-import { toTeamName } from '../../data/teams'
+import { getAccountTeam, toTeamName } from '../../data/teams'
 
 interface Incident {
   id: string
@@ -13,7 +13,7 @@ interface Incident {
   typeColor: string
   location: string
   timeOccurred: string
-  status: 'Pending Report' | 'Completed'
+  status: 'Awaiting approval' | 'Approved'
   victimCount: number
   description?: string
   responderTeam?: string
@@ -64,7 +64,7 @@ export const ResponderDashboardPage: FC = () => {
             ...mapIncidentType(report.incidentType || report.incident_type || ''),
             location: report.location || 'Unknown location',
             timeOccurred: formatTimeOfDay(report.timeOccurred || report.time_occurred || ''),
-            status: isApproved ? 'Completed' : 'Pending Report',
+            status: isApproved ? 'Approved' : 'Awaiting approval',
             victimCount: report.victimCount || report.victim_count || report.victims?.length || 0,
             description: report.description,
             responderTeam: toTeamName(report.responderTeam || report.responder_team),
@@ -89,193 +89,119 @@ export const ResponderDashboardPage: FC = () => {
   // "Team Alpha" is greeted as "Alpha", not "Team".
   const firstName =
     toTeamName(profile?.fullName).split(/\s+/).filter(Boolean)[0] || 'Responder'
+  const teamName = getAccountTeam(profile)
+  const hour = new Date().getHours()
+  const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening'
 
   // Refactored row activation logic to open details seamlessly
   const handleRowActivation = (incident: Incident) => {
     setSelectedIncident(incident)
   }
 
-  const handleRowKeyDown = (e: KeyboardEvent, incident: Incident) => {
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault()
-      handleRowActivation(incident)
-    }
-  }
-
   const renderIncidentRow = (incident: Incident) => {
-    const typeStyle = getIncidentTypeStyle(incident.typeColor)
-
+    const isPending = incident.status === 'Awaiting approval'
     return (
-      <div
-        key={incident.id}
-        role="button"
-        tabIndex={0}
-        onClick={() => handleRowActivation(incident)}
-        onKeyDown={(e) => handleRowKeyDown(e, incident)}
-        className="flex flex-col sm:flex-row sm:items-center justify-between p-5 px-6 gap-4 hover:bg-slate-50/50 transition-colors cursor-pointer focus:bg-slate-50/80 focus:outline-none group"
-      >
-        <div className="flex-1 min-w-0 flex items-start gap-3.5">
-          <div style={typeStyle} className="p-2.5 rounded-xl border shrink-0 mt-0.5">
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
-            </svg>
-          </div>
-          <div className="min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <p className="font-bold text-sm text-slate-900 group-hover:text-blue-600 transition-colors font-mono">{incident.id}</p>
-              <span className="text-slate-300 text-xs hidden sm:inline">•</span>
-              <p className="text-xs font-semibold text-slate-400">{incident.timeOccurred}</p>
-              {incident.victimCount > 0 && (
-                <span className="text-[9px] font-extrabold bg-rose-50 border border-rose-100 text-rose-600 px-1.5 py-0.5 rounded uppercase tracking-wider">
-                  {casualtyLabel(incident.victimCount)}
-                </span>
-              )}
-            </div>
-            <p className="text-xs font-medium text-slate-500 mt-1 truncate">{incident.location}</p>
-          </div>
-        </div>
-
-        <div className="flex items-center justify-between sm:justify-end gap-6 border-t border-slate-50 sm:border-t-0 pt-3 sm:pt-0">
-          <span style={typeStyle} className="inline-flex items-center text-[9px] font-extrabold tracking-wider uppercase px-2.5 py-0.5 border rounded-md">
-            {incident.type}
-          </span>
-
-          <div className="text-right sm:min-w-[120px]">
-            <span className={`inline-flex items-center text-xs font-bold ${incident.status === 'Pending Report' ? 'text-amber-600' : 'text-emerald-600'}`}>
-              <span className={`w-1.5 h-1.5 rounded-full mr-2 ${incident.status === 'Pending Report' ? 'bg-amber-500' : 'bg-emerald-500'}`}></span>
-              {incident.status}
+      <li key={incident.id}>
+        <button
+          type="button"
+          onClick={() => handleRowActivation(incident)}
+          className="flex w-full items-stretch gap-3 px-4 py-3 text-left transition-colors hover:bg-slate-50 focus:outline-none focus-visible:bg-slate-50"
+        >
+          <span className="w-1 shrink-0 rounded-full" style={{ backgroundColor: incident.typeColor }} aria-hidden="true" />
+          <span className="min-w-0 flex-1">
+            <span className="flex items-center justify-between gap-2">
+              <span className="truncate text-sm font-bold text-slate-900">{incident.type}</span>
+              <span className="shrink-0 text-xs font-semibold text-slate-400">{incident.timeOccurred}</span>
             </span>
-          </div>
-
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              setSelectedIncident(incident)
-            }}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-blue-600 hover:text-blue-700 bg-blue-50 hover:bg-blue-100/70 border border-blue-100 rounded-xl transition-all active:scale-95 tracking-wide shadow-sm group/btn shrink-0"
-          >
-            <span>Details</span>
-            <svg className="w-3.5 h-3.5 transform group-hover/btn:translate-x-0.5 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
-            </svg>
-          </button>
-        </div>
-      </div>
+            <span className="mt-0.5 block truncate text-xs text-slate-500">{incident.location}</span>
+            <span className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-semibold">
+              <span className={`inline-flex items-center gap-1.5 ${isPending ? 'text-amber-700' : 'text-emerald-700'}`}>
+                <span className={`h-1.5 w-1.5 rounded-full ${isPending ? 'bg-amber-500' : 'bg-emerald-500'}`} aria-hidden="true" />
+                {incident.status}
+              </span>
+              {incident.responderTeam ? <span className="text-slate-400">Team {incident.responderTeam}</span> : null}
+              {incident.victimCount > 0 ? <span className="text-rose-600">{casualtyLabel(incident.victimCount)}</span> : null}
+            </span>
+          </span>
+        </button>
+      </li>
     )
   }
 
   const getIncidentTypeStyle = (color: string) => ({ color, borderColor: `${color}55`, backgroundColor: `${color}14` })
 
   return (
-    <div className="min-h-screen bg-slate-100 pb-28 sm:pb-12 pt-6 antialiased text-slate-800">
-      <main className="max-w-6xl mx-auto p-4 sm:p-6 space-y-6">
-        
-        {/* Call to Action Banner */}
-        <button
-          onClick={() => navigate('/create-report')}
-          className="w-full text-left bg-gradient-to-br from-slate-900 via-blue-950 to-slate-900 text-white p-6 sm:p-8 rounded-2xl shadow-md hover:shadow-lg transition-all duration-300 group relative overflow-hidden flex flex-col sm:flex-row sm:items-center sm:justify-between gap-6 active:scale-[0.99]"
-        >
-          <div className="absolute inset-0 bg-gradient-to-r from-blue-600/10 to-indigo-600/10 opacity-60 pointer-events-none" />
-          <div className="absolute right-0 bottom-0 opacity-[0.03] pointer-events-none transform translate-x-4 translate-y-4 group-hover:scale-105 transition-transform duration-500">
-            <svg className="w-80 h-80" fill="currentColor" viewBox="0 0 24 24">
-              <path d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-            </svg>
-          </div>
-
-          <div className="space-y-1 relative z-10 max-w-2xl">
-            <span className="inline-flex text-[10px] font-bold uppercase tracking-widest text-blue-400 bg-blue-500/10 border border-blue-500/20 px-2.5 py-0.5 rounded-md">
-              Primary Dispatch Action
-            </span>
-            <h2 className="text-2xl sm:text-3xl font-black tracking-tight mt-2.5">
-              Create Incident Report
-            </h2>
-            <p className="text-sm text-slate-400 leading-relaxed font-medium pt-0.5">
-              Welcome back, Commander {firstName}. File a new incident report from the field. Once it is approved, you can compile it into an accomplishment report.
-            </p>
-          </div>
-
-          <div className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-5 py-3 rounded-xl text-sm font-bold shadow-sm group-hover:scale-[1.02] active:scale-95 transition-all self-start sm:self-center shrink-0 relative z-10">
-            <span>Create New Report</span>
-            <svg className="w-4 h-4 transform group-hover:translate-x-0.5 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-            </svg>
-          </div>
-        </button>
-
-        {/* Quick Route Cards Ecosystem */}
-        <div className="hidden sm:grid grid-cols-2 gap-5">
-          <button onClick={() => navigate('/responder-incidents')} className="group flex items-center justify-between bg-white hover:bg-slate-50/40 p-5 rounded-2xl border border-slate-200 shadow-sm transition-all duration-200 text-left active:scale-[0.99]">
-            <div className="flex items-center gap-4">
-              <div className="p-3 bg-blue-50 text-blue-600 rounded-xl group-hover:bg-blue-100/60 border border-blue-100/50 transition-colors shadow-sm">
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.25}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 112-2h2a2 2 0 012 2" />
-                </svg>
-              </div>
-              <div>
-                <span className="text-sm font-bold text-slate-900 block tracking-tight">Incident Central</span>
-                <span className="text-xs text-slate-400 font-medium mt-0.5 block">Monitor operational deployment sector zones.</span>
-              </div>
+    <div className="min-h-screen bg-slate-100 pb-28 pt-4 text-slate-800 antialiased">
+      <main className="mx-auto max-w-lg space-y-4 px-4">
+        <section className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-slate-900 via-blue-950 to-slate-900 text-white shadow-md">
+          <div className="absolute inset-0 bg-gradient-to-r from-blue-600/10 to-indigo-600/10 opacity-60" aria-hidden="true" />
+          <div className="relative space-y-4 p-5">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-sm font-medium text-slate-300">
+                {greeting}, <span className="font-bold text-white">{firstName}</span>
+              </p>
+              <span className="rounded-full border border-white/15 bg-white/10 px-2.5 py-0.5 text-xs font-bold text-blue-200">
+                {teamName ? `Team ${teamName}` : 'No team yet'}
+              </span>
             </div>
-          </button>
-
-          <button onClick={() => navigate('/responder-reports')} className="group flex items-center justify-between bg-white hover:bg-slate-50/40 p-5 rounded-2xl border border-slate-200 shadow-sm transition-all duration-200 text-left active:scale-[0.99]">
-            <div className="flex items-center gap-4">
-              <div className="p-3 bg-emerald-50 text-emerald-600 rounded-xl group-hover:bg-emerald-100/60 border border-emerald-100/50 transition-colors shadow-sm">
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.25}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                </svg>
-              </div>
-              <div>
-                <span className="text-sm font-bold text-slate-900 block tracking-tight">Accomplishment Ledger</span>
-                <span className="text-xs text-slate-400 font-medium mt-0.5 block">Review field summaries and archivelog assets.</span>
-              </div>
-            </div>
-          </button>
-        </div>
-
-        {/* Realtime Local Incident Feed Frame */}
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-          <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-slate-50 to-white">
             <div>
-              <h3 className="text-xs font-black text-slate-900 uppercase tracking-widest">Live Incident Feed</h3>
-              <p className="text-xs text-slate-400 font-medium mt-0.5">Recent submitted incident reports.</p>
+              <h1 className="text-2xl font-black tracking-tight">Create incident report</h1>
+              <p className="mt-1 text-sm leading-relaxed text-slate-300">
+                File it from the scene. Once an admin approves it, you can compile it into an accomplishment report.
+              </p>
             </div>
-            <span className="inline-flex items-center gap-1.5 text-[10px] font-bold text-emerald-600 px-3 py-1 bg-emerald-50 rounded-full border border-emerald-100 ring-2 ring-emerald-500/10">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-              Live Tracking
-            </span>
-          </div>
-
-          <div className="divide-y divide-slate-100">
-            {isLoadingReports ? (
-              <div className="p-6 text-slate-500">Loading incident feed...</div>
-            ) : reportError ? (
-              <div className="p-6 text-red-700">{reportError}</div>
-            ) : recentIncidents.length === 0 ? (
-              <div className="p-6 text-slate-500">No incident reports available.</div>
-            ) : (
-              recentIncidents.slice(0, 5).map(renderIncidentRow)
-            )}
-          </div>
-
-          <div className="border-t border-slate-100 bg-slate-50/50">
             <button
-              onClick={() => navigate('/responder-incidents')}
-              className="w-full py-4 text-xs font-bold text-blue-600 hover:text-blue-700 hover:bg-slate-100/50 transition-all flex items-center justify-center gap-1.5 uppercase tracking-wider"
+              type="button"
+              onClick={() => navigate('/create-report')}
+              className="flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 py-3.5 text-sm font-bold text-white shadow-sm transition-colors hover:bg-blue-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-white"
             >
-              <span>View Full Incident Reports</span>
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden="true">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+              </svg>
+              New incident report
             </button>
           </div>
-        </div>
+
+        </section>
+
+        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm" aria-labelledby="recent-reports">
+          <div className="flex items-baseline justify-between gap-3 border-b border-slate-100 px-4 py-3">
+            <h2 id="recent-reports" className="text-sm font-black text-slate-900">Latest reports</h2>
+            <span className="text-xs text-slate-400">All teams</span>
+          </div>
+
+          {isLoadingReports ? (
+            <p className="p-5 text-sm text-slate-500">Loading reports…</p>
+          ) : reportError ? (
+            <p className="p-5 text-sm text-red-700">{reportError}</p>
+          ) : recentIncidents.length === 0 ? (
+            <p className="p-5 text-sm text-slate-500">No reports yet. Reports filed by any team show up here.</p>
+          ) : (
+            <ul className="divide-y divide-slate-100">{recentIncidents.slice(0, 5).map(renderIncidentRow)}</ul>
+          )}
+
+          <button
+            type="button"
+            onClick={() => navigate('/responder-incidents')}
+            className="w-full border-t border-slate-100 bg-slate-50/60 py-3.5 text-sm font-bold text-blue-700 transition-colors hover:bg-slate-100/60"
+          >
+            See all incident reports
+          </button>
+        </section>
       </main>
 
       {/* Premium Incident Ledger Review Modal */}
       {selectedIncident && (
-        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-xl max-w-xl w-full max-h-[90vh] overflow-hidden flex flex-col border border-slate-100">
-            
-            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+        <div className="fixed inset-0 z-[60] flex items-end justify-center bg-slate-900/40 backdrop-blur-sm" onClick={() => setSelectedIncident(null)}>
+          <div
+            className="flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-t-3xl border border-slate-100 bg-white shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Incident ${selectedIncident.id}`}
+          >
+            <div className="mx-auto mt-2.5 h-1.5 w-10 shrink-0 rounded-full bg-slate-200" aria-hidden="true" />
+            <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
               <div className="space-y-1">
                 <div className="flex items-center gap-2">
                   <h2 className="text-lg font-black text-slate-900 tracking-tight font-mono">{selectedIncident.id}</h2>
@@ -283,12 +209,12 @@ export const ResponderDashboardPage: FC = () => {
                     {selectedIncident.type}
                   </span>
                 </div>
-                <p className="text-xs text-slate-400 font-medium">Tactical Incident Overview Dossier</p>
+                <p className="text-xs text-slate-500 font-medium">Team {selectedIncident.responderTeam || 'not set'}</p>
               </div>
               <button 
                 onClick={() => setSelectedIncident(null)} 
                 className="p-2 text-sm text-slate-400 hover:text-slate-600 hover:bg-slate-200/60 rounded-md transition-colors active:scale-95"
-                title="Close Overview"
+                aria-label="Close"
               >
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -296,33 +222,33 @@ export const ResponderDashboardPage: FC = () => {
               </button>
             </div>
 
-            <div className="p-6 overflow-y-auto space-y-5 text-slate-700">
+            <div className="p-5 pb-8 overflow-y-auto space-y-5 text-slate-700">
               <div className="grid grid-cols-2 gap-4 bg-slate-50/60 p-4 rounded-xl border border-slate-100 text-xs">
                 <div>
-                  <span className="text-slate-400 block font-bold uppercase tracking-wider text-[9px]">Time Recorded</span>
+                  <span className="text-slate-400 block font-bold uppercase tracking-wider text-[9px]">Time it happened</span>
                   <span className="font-semibold text-slate-800 text-sm mt-0.5 block">{selectedIncident.timeOccurred}</span>
                 </div>
                 <div>
                   <span className="text-slate-400 block font-bold uppercase tracking-wider text-[9px]">Status</span>
-                  <span className={`inline-flex items-center font-bold text-xs mt-1 ${selectedIncident.status === 'Pending Report' ? 'text-amber-600' : 'text-emerald-600'}`}>
-                    <span className={`w-1.5 h-1.5 rounded-full mr-1.5 ${selectedIncident.status === 'Pending Report' ? 'bg-amber-500' : 'bg-emerald-500'}`}></span>
+                  <span className={`inline-flex items-center font-bold text-xs mt-1 ${selectedIncident.status === 'Awaiting approval' ? 'text-amber-600' : 'text-emerald-600'}`}>
+                    <span className={`w-1.5 h-1.5 rounded-full mr-1.5 ${selectedIncident.status === 'Awaiting approval' ? 'bg-amber-500' : 'bg-emerald-500'}`}></span>
                     {selectedIncident.status}
                   </span>
                 </div>
                 <div>
-                  <span className="text-slate-400 block font-bold uppercase tracking-wider text-[9px]">Victims Count</span>
+                  <span className="text-slate-400 block font-bold uppercase tracking-wider text-[9px]">People involved</span>
                   <span className={`font-semibold text-sm mt-0.5 block ${selectedIncident.victimCount > 0 ? 'text-rose-600 font-bold' : 'text-slate-600'}`}>
                     {casualtyLabel(selectedIncident.victimCount)}
                   </span>
                 </div>
                 <div>
-                  <span className="text-slate-400 block font-bold uppercase tracking-wider text-[9px]">Assigned Team</span>
+                  <span className="text-slate-400 block font-bold uppercase tracking-wider text-[9px]">Responding team</span>
                   <span className="font-semibold text-slate-800 text-sm mt-0.5 block truncate">{selectedIncident.responderTeam || 'Unassigned'}</span>
                 </div>
               </div>
 
               <div className="space-y-1">
-                <span className="text-slate-400 block font-bold uppercase tracking-wider text-[9px]">Deployment Location</span>
+                <span className="text-slate-400 block font-bold uppercase tracking-wider text-[9px]">Location</span>
                 <div className="flex items-start gap-2 bg-slate-50/40 p-3 rounded-xl border border-slate-100">
                   <svg className="w-4 h-4 text-slate-400 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M15 10.5a3 3 0 11-6 0 3 3 0 016 0z" />
@@ -333,37 +259,28 @@ export const ResponderDashboardPage: FC = () => {
               </div>
 
               <div className="space-y-1">
-                <span className="text-slate-400 block font-bold uppercase tracking-wider text-[9px]">Incident Description</span>
+                <span className="text-slate-400 block font-bold uppercase tracking-wider text-[9px]">Description</span>
                 <div className="bg-slate-50/40 p-3.5 rounded-xl border border-slate-100 min-h-[60px]">
                   <p className="text-xs text-slate-600 leading-relaxed whitespace-pre-line font-medium">
                     {selectedIncident.personalDataHidden
                       ? HIDDEN_FOR_OTHER_TEAMS
-                      : selectedIncident.description || 'No descriptive tactical log provided for this incident report.'}
+                      : selectedIncident.description || 'No description was written.'}
                   </p>
                 </div>
               </div>
 
               <div className="space-y-1">
-                <span className="text-slate-400 block font-bold uppercase tracking-wider text-[9px]">Mitigation & Action Taken</span>
+                <span className="text-slate-400 block font-bold uppercase tracking-wider text-[9px]">Action taken</span>
                 <div className="bg-blue-50/10 p-3.5 rounded-xl border border-blue-100/50 min-h-[60px]">
                   <p className="text-xs text-slate-700 leading-relaxed whitespace-pre-line font-medium">
                     {selectedIncident.personalDataHidden
                       ? HIDDEN_FOR_OTHER_TEAMS
-                      : selectedIncident.actionTaken || 'Pending operational dispatch notes for mitigation steps.'}
+                      : selectedIncident.actionTaken || 'No action was written.'}
                   </p>
                 </div>
               </div>
             </div>
 
-            <div className="px-6 py-3 border-t border-slate-100 bg-slate-50 text-right">
-              <button 
-                type="button"
-                onClick={() => setSelectedIncident(null)} 
-                className="px-4 py-2 text-xs font-bold text-slate-600 hover:text-slate-700 bg-white hover:bg-slate-100 border border-slate-200 rounded-xl shadow-sm transition-all active:scale-95"
-              >
-                Dismiss Overview
-              </button>
-            </div>
           </div>
         </div>
       )}
