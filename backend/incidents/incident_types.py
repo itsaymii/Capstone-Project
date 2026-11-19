@@ -100,7 +100,6 @@ INCIDENT_TYPES = {
             ]),
             field('structures_affected', 'Structures affected', 'int'),
             field('families_affected', 'Families affected / displaced', 'int'),
-            field('estimated_damage', 'Estimated damage (PHP)', 'decimal'),
             field('fatalities', 'Fatalities', 'int'),
             field('bfp_present', 'BFP on scene', 'bool'),
             field('fire_out_time', 'Time declared fire out', 'time'),
@@ -117,15 +116,6 @@ INCIDENT_TYPES = {
         'hazard': 'Crime',
         'victims': {'allowed': True, 'label': 'Victims', 'min': 0, 'max': None},
         'fields': [
-            field('crime_type', 'Type of crime', 'choice', required=True, choices=[
-                ('theft', 'Theft'), ('robbery', 'Robbery / hold-up'), ('physical_injury', 'Physical injury'),
-                ('stabbing', 'Stabbing'), ('shooting', 'Shooting'), ('domestic_violence', 'Domestic violence'),
-                ('other', 'Other'),
-            ]),
-            field('weapon', 'Weapon involved', 'choice', choices=[
-                ('none', 'None'), ('bladed', 'Bladed weapon'), ('firearm', 'Firearm'),
-                ('blunt', 'Blunt object'), ('other', 'Other'),
-            ]),
             field('suspects', 'Number of suspects', 'int'),
             field('suspect_status', 'Suspect status', 'choice', choices=[
                 ('at_large', 'At large'), ('apprehended', 'Apprehended'), ('unknown', 'Unknown'),
@@ -389,10 +379,8 @@ def detail_table_values(incident_type, details, victim_count):
     if key == 'fire':
         return 'fire', {
             'cause': label_of('suspected_cause', details.get('suspected_cause', '')) or '',
-            'damage_estimate': (
-                Decimal(str(details['estimated_damage'])).quantize(Decimal('0.01'))
-                if details.get('estimated_damage') is not None else None
-            ),
+            # Estimated damage is no longer asked on the report form.
+            'damage_estimate': None,
             'casualties': details.get('fatalities', 0),
             'injuries': victim_count,
             'structures_affected': details.get('structures_affected', 0),
@@ -409,7 +397,8 @@ def detail_table_values(incident_type, details, victim_count):
 
     if key == 'crime':
         return 'crime', {
-            'crime_type': label_of('crime_type', details.get('crime_type', '')) or 'Crime',
+            # The report form no longer asks for the type of crime.
+            'crime_type': 'Crime',
             'suspects': details.get('suspects', 0),
             'victims': victim_count,
             'arrested': details.get('suspect_status') == 'apprehended',

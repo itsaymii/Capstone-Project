@@ -42,8 +42,6 @@ WEIGHTS = {
                                            'smoking': 6, 'arson': 3, 'unknown': 11},
     ('Fire Incident', 'alarm_level'): {'first': 40, 'second': 20, 'third': 8, 'fourth': 3, 'fifth': 1,
                                        'task_force_alpha': 1, 'under_control': 7, 'fire_out': 20},
-    ('Crime Against Person/Property', 'crime_type'): {'theft': 35, 'robbery': 12, 'physical_injury': 25,
-                                                      'stabbing': 8, 'shooting': 4, 'domestic_violence': 12, 'other': 4},
     ('Medical Emergency', 'chief_complaint'): {'chest_pain': 14, 'difficulty_breathing': 16, 'stroke_symptoms': 10,
                                                'seizure': 8, 'injury': 22, 'fainting': 15, 'fever': 10, 'other': 5},
     ('Medical Emergency', 'consciousness'): {'alert': 60, 'voice': 18, 'pain': 12, 'unresponsive': 10},
@@ -125,7 +123,6 @@ def sample_details(rng, incident_type, victim_count, occurred_at, barangay_name)
             'suspected_cause': _pick(rng, incident_type, 'suspected_cause'),
             'structures_affected': structures,
             'families_affected': structures * rng.randint(1, 3) if structure == 'residential' else 0,
-            'estimated_damage': round(rng.uniform(150_000, 5_000_000) if big else rng.uniform(5_000, 400_000), -3),
             'bfp_present': rng.random() < 0.92,
             'fire_out_time': _time(occurred_at + timedelta(minutes=rng.randint(25, 240 if big else 90))),
         }
@@ -133,12 +130,7 @@ def sample_details(rng, incident_type, victim_count, occurred_at, barangay_name)
             details['fatalities'] = 1
 
     elif incident_type == 'Crime Against Person/Property':
-        crime = _pick(rng, incident_type, 'crime_type')
-        weapon = {'stabbing': 'bladed', 'shooting': 'firearm', 'theft': 'none'}.get(crime) or \
-            rng.choices(['none', 'bladed', 'blunt', 'other'], weights=[55, 20, 20, 5])[0]
         details = {
-            'crime_type': crime,
-            'weapon': weapon,
             'suspects': rng.choices([1, 2, 3], weights=[70, 22, 8])[0],
             'suspect_status': rng.choices(['at_large', 'apprehended', 'unknown'], weights=[45, 40, 15])[0],
             'pnp_coordinated': rng.random() < 0.9,

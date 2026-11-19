@@ -530,7 +530,6 @@ class FireReportDetails(models.Model):
     suspected_cause = models.CharField(max_length=32, null=True, blank=True)
     structures_affected = models.PositiveIntegerField(null=True, blank=True)
     families_affected = models.PositiveIntegerField(null=True, blank=True)
-    estimated_damage = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     fatalities = models.PositiveIntegerField(null=True, blank=True)
     bfp_present = models.BooleanField(null=True, blank=True)
     fire_out_time = models.TimeField(null=True, blank=True)
@@ -538,8 +537,6 @@ class FireReportDetails(models.Model):
 
 class CrimeIncidentDetails(models.Model):
     incident_report = models.OneToOneField(IncidentReport, on_delete=models.CASCADE, related_name='crime_report_details')
-    crime_type = models.CharField(max_length=32, null=True, blank=True)
-    weapon = models.CharField(max_length=32, null=True, blank=True)
     suspects = models.PositiveIntegerField(null=True, blank=True)
     suspect_status = models.CharField(max_length=32, null=True, blank=True)
     pnp_coordinated = models.BooleanField(null=True, blank=True)

@@ -135,7 +135,6 @@ export const INCIDENT_TYPE_CONFIGS: IncidentTypeConfig[] = [
       ] },
       { name: 'structures_affected', label: 'Structures affected', kind: 'int', required: false, min: 0, max: null, choices: [] },
       { name: 'families_affected', label: 'Families affected / displaced', kind: 'int', required: false, min: 0, max: null, choices: [] },
-      { name: 'estimated_damage', label: 'Estimated damage (PHP)', kind: 'decimal', required: false, min: 0, max: null, choices: [] },
       { name: 'fatalities', label: 'Fatalities', kind: 'int', required: false, min: 0, max: null, choices: [] },
       { name: 'bfp_present', label: 'BFP on scene', kind: 'bool', required: false, min: 0, max: null, choices: [] },
       { name: 'fire_out_time', label: 'Time declared fire out', kind: 'time', required: false, min: 0, max: null, choices: [] },
@@ -154,22 +153,6 @@ export const INCIDENT_TYPE_CONFIGS: IncidentTypeConfig[] = [
     label: 'Crime Against Person/Property',
     victims: { allowed: true, label: 'Victims', min: 0, max: null },
     fields: [
-      { name: 'crime_type', label: 'Type of crime', kind: 'choice', required: true, min: 0, max: null, choices: [
-        { value: 'theft', label: 'Theft' },
-        { value: 'robbery', label: 'Robbery / hold-up' },
-        { value: 'physical_injury', label: 'Physical injury' },
-        { value: 'stabbing', label: 'Stabbing' },
-        { value: 'shooting', label: 'Shooting' },
-        { value: 'domestic_violence', label: 'Domestic violence' },
-        { value: 'other', label: 'Other' },
-      ] },
-      { name: 'weapon', label: 'Weapon involved', kind: 'choice', required: false, min: 0, max: null, choices: [
-        { value: 'none', label: 'None' },
-        { value: 'bladed', label: 'Bladed weapon' },
-        { value: 'firearm', label: 'Firearm' },
-        { value: 'blunt', label: 'Blunt object' },
-        { value: 'other', label: 'Other' },
-      ] },
       { name: 'suspects', label: 'Number of suspects', kind: 'int', required: false, min: 0, max: null, choices: [] },
       { name: 'suspect_status', label: 'Suspect status', kind: 'choice', required: false, min: 0, max: null, choices: [
         { value: 'at_large', label: 'At large' },

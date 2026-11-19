@@ -523,15 +523,6 @@ class Command(BaseCommand):
                 details = sample_details(rng, incident_type, victim_count, occurred_at, barangay_name)
                 if water_body:
                     details['water_body'] = water_body
-                if (
-                    incident_type == 'Crime Against Person/Property'
-                    and (reported_at.year, reported_at.month) in PROPERTY_CRIME_SURGE_MONTHS
-                    and rng.random() < 0.7
-                ):
-                    # The PNP-reported rise was in property crimes: theft and robbery.
-                    details['crime_type'] = rng.choice(['theft', 'theft', 'robbery'])
-                    if details['crime_type'] == 'theft':
-                        details['weapon'] = 'none'
                 victims = [sample_victim_details(rng, incident_type, details) for _ in range(victim_count)]
 
                 cleaned, victim_details, errors = validate_report_details(
