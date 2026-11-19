@@ -1,13 +1,24 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { FC } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { MobileNavBar } from '../../components/MobileNavBar'
+import { ResponderPageHeader } from '../../components/ResponderPageHeader'
+import {
+  STAGE_BADGE_CLASSES,
+  STAGE_LABELS,
+  getCurrentResponder,
+  getReportStage,
+  isOwnReport,
+} from '../../data/responderReports'
+import type { ReportStage } from '../../data/responderReports'
 import axios from 'axios'
 import { getCurrentUserProfile } from '../../services/auth'
 import { addNotification } from '../../services/notifications'
 import { createAccomplishmentReport, getIncidentReports } from '../../services/incidents'
 import { getIncidentCategoryMeta, getIncidentCategoryKey } from '../../data/incidentCategories'
 import { getAccountTeam, toTeamName } from '../../data/teams'
+
+type ViewFilter = 'all' | ReportStage
 
 interface VictimDetails {
   name: string
@@ -126,27 +137,7 @@ function getActionTaken(report: IncidentReport): string {
   return report.actionTaken || report.action_taken || ''
 }
 
-function normalizeName(value?: string | null): string {
-  return String(value || '').trim().toLowerCase().replace(/\s+/g, ' ')
-}
-
 const HIDDEN_FOR_OTHER_TEAMS = "Only the filing team can see this. It may name the people involved."
-
-type CurrentResponder = { username: string; teamName: string }
-
-function getCurrentResponder(): CurrentResponder {
-  const profile = getCurrentUserProfile()
-  return { username: normalizeName(profile?.username), teamName: normalizeName(getAccountTeam(profile)) }
-}
-
-/**
- * A report belongs to this account when this account filed it, or when it was filed
- * under the same responding team name (the team shown on the report).
- */
-function isOwnReport(report: IncidentReport, me: CurrentResponder): boolean {
-  if (me.username && normalizeName(report.createdBy) === me.username) return true
-  return Boolean(me.teamName) && normalizeName(getResponderTeam(report)) === me.teamName
-}
 
 function formatTimeOfDay(value: string): string {
   const match = /^(\d{1,2}):(\d{2})/.exec(value || '')
@@ -165,7 +156,9 @@ function getServerMessage(error: unknown, fallback: string): string {
 
 const IncidentReportPage: FC = () => {
   const navigate = useNavigate()
+  const location = useLocation()
   const me = getCurrentResponder()
+  const teamName = getAccountTeam(getCurrentUserProfile())
 
   const [reports, setReports] = useState<IncidentReport[]>([])
   const [selectedIds, setSelectedIds] = useState<string[]>([])
@@ -174,6 +167,16 @@ const IncidentReportPage: FC = () => {
   const [searchQuery, setSearchQuery] = useState('')
   const [sortOrder, setSortOrder] = useState<'desc' | 'asc'>('desc')
   const [hazardFilter, setHazardFilter] = useState('All')
+  // The dashboard links here with ?view=ready (or awaiting, compiled).
+  const viewFromLink = (): ViewFilter => {
+    const view = new URLSearchParams(location.search).get('view')
+    return view === 'ready' || view === 'awaiting' || view === 'compiled' || view === 'other' ? view : 'all'
+  }
+  const [viewFilter, setViewFilter] = useState<ViewFilter>(viewFromLink)
+  useEffect(() => {
+    setViewFilter(viewFromLink())
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.search])
   const [isLoading, setIsLoading] = useState(true)
 
   const [isCompiling, setIsCompiling] = useState(false)
@@ -207,11 +210,7 @@ const IncidentReportPage: FC = () => {
 
 
 
-  const canSelectReport = (report: IncidentReport): boolean =>
-    normalizeStatus(getStatusValue(report)) === 'approved' &&
-    !report.compiledIn &&
-    report.createdByRole !== 'admin' &&
-    isOwnReport(report, me)
+  const canSelectReport = (report: IncidentReport): boolean => getReportStage(report, me) === 'ready'
 
   const getSelectionRestrictionMessage = (report: IncidentReport): string => {
     if (report.compiledIn) return `Already compiled in ${report.compiledIn}.`
@@ -238,8 +237,9 @@ const IncidentReportPage: FC = () => {
           location.toLowerCase().includes(query)
 
         const matchesHazard = hazardFilter === 'All' || getIncidentType(report) === hazardFilter
+        const matchesView = viewFilter === 'all' || getReportStage(report, me) === viewFilter
 
-        return matchesSearch && matchesHazard
+        return matchesSearch && matchesHazard && matchesView
       })
       .sort((a, b) => {
         const dateA = new Date(getCreatedAt(a)).getTime()
@@ -247,7 +247,17 @@ const IncidentReportPage: FC = () => {
 
         return sortOrder === 'desc' ? dateB - dateA : dateA - dateB
       })
-  }, [reports, searchQuery, hazardFilter, sortOrder])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reports, searchQuery, hazardFilter, sortOrder, viewFilter])
+
+  const stageCounts = useMemo(() => {
+    const counts: Record<ViewFilter, number> = { all: reports.length, ready: 0, awaiting: 0, compiled: 0, other: 0 }
+    reports.forEach((report) => {
+      counts[getReportStage(report, me)] += 1
+    })
+    return counts
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reports])
 
   const toggleSelect = (report: IncidentReport) => {
     if (!canSelectReport(report)) {
@@ -305,249 +315,229 @@ const IncidentReportPage: FC = () => {
     return { color, borderColor: `${color}55`, backgroundColor: `${color}14` }
   }
 
+  const viewOptions: { value: ViewFilter; label: string }[] = [
+    { value: 'all', label: 'All' },
+    { value: 'ready', label: STAGE_LABELS.ready },
+    { value: 'awaiting', label: STAGE_LABELS.awaiting },
+    { value: 'compiled', label: STAGE_LABELS.compiled },
+  ]
+  const selectableInView = filteredAndSortedReports.filter((report) => canSelectReport(report))
+  const allInViewSelected = selectableInView.length > 0 && selectableInView.every((report) => selectedIds.includes(report.id))
+
   return (
-    <div className="min-h-screen bg-slate-100 pb-28 pt-6 text-slate-800 antialiased sm:pb-12">
-      <main className="mx-auto max-w-7xl space-y-6 p-4 sm:p-6">
-        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <div className="relative space-y-5 overflow-hidden border-b border-slate-200/80 p-5 sm:p-7">
-            <div className="absolute left-0 right-0 top-0 h-1.5 bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-500" />
-
-            <div className="flex items-center gap-4">
-              <button
-                className="group flex h-10 w-10 items-center justify-center rounded-2xl border border-slate-100 bg-slate-50 text-slate-500 shadow-sm transition-all hover:bg-blue-50 hover:text-blue-600 active:scale-90"
-                onClick={() => navigate('/responder-dashboard')}
-                title="Back to Dashboard"
-                type="button"
-              >
-                <svg className="h-5 w-5 transform transition-transform group-hover:-translate-x-0.5" fill="none" stroke="currentColor" strokeWidth={3} viewBox="0 0 24 24">
-                  <path d="M15 19l-7-7 7-7" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              </button>
-
-              <div>
-                <span className="mb-0.5 block text-[10px] font-black uppercase leading-none tracking-[0.2em] text-blue-600 opacity-60">
-                  Field Documentation
-                </span>
-                <h1 className="text-2xl font-black leading-tight tracking-tight text-slate-900 sm:text-3xl">
-                  Incident Report Central
-                </h1>
-              </div>
-            </div>
-
-            <div className="flex flex-col justify-between gap-4 border-t border-slate-100 pt-5 sm:flex-row sm:items-center">
-              <p className="max-w-lg text-sm font-medium leading-relaxed text-slate-500">
-                Your team's incident reports. Select approved reports and compile them into an accomplishment report.
-              </p>
-
-              {selectedIds.length > 0 ? (
-                <button
-                  className="inline-flex items-center justify-center rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-bold text-white shadow-sm transition-all hover:bg-blue-700 active:scale-95 disabled:opacity-60"
-                  disabled={isCompiling}
-                  onClick={() => void compileReports()}
-                  type="button"
-                >
-                  {isCompiling ? 'Compiling...' : `Compile Reports (${selectedIds.length})`}
-                </button>
-              ) : null}
-            </div>
-          </div>
-        </div>
+    <div className={`min-h-screen bg-slate-100 pt-4 text-slate-800 antialiased ${selectedIds.length > 0 ? 'pb-48' : 'pb-28'}`}>
+      <main className="mx-auto max-w-lg space-y-4 px-4">
+        <ResponderPageHeader
+          title="Incident reports"
+          description={
+            teamName
+              ? `Reports from all teams. You can compile Team ${teamName}'s approved reports into an accomplishment report.`
+              : 'Reports from all teams. Ask an admin to set your team before you compile reports.'
+          }
+        />
 
         {!isLoading && reports.length > 0 ? (
-          <div className="space-y-3">
-            <div className="rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-800">
-              {`Logged in as ${getAccountTeam(getCurrentUserProfile()) || 'a responder with no team'}. You can compile approved reports filed by your team that are not yet in an accomplishment report.`}
+          <section className="space-y-3 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm" aria-label="Filter reports">
+            <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1" role="tablist" aria-label="Show">
+              {viewOptions.map((option) => {
+                const isOn = viewFilter === option.value
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    role="tab"
+                    aria-selected={isOn}
+                    onClick={() => setViewFilter(option.value)}
+                    className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-bold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+                      isOn ? 'border-blue-600 bg-blue-600 text-white' : 'border-slate-200 bg-white text-slate-600'
+                    }`}
+                  >
+                    {option.label}
+                    <span className={`rounded-full px-1.5 text-[10px] tabular-nums ${isOn ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-500'}`}>
+                      {stageCounts[option.value]}
+                    </span>
+                  </button>
+                )
+              })}
             </div>
 
-            <div className="flex flex-col items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:flex-row">
-              <input
-                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm font-medium text-slate-800 placeholder-slate-400 transition-all focus:border-blue-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 md:max-w-md"
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search report code, type, or location..."
-                type="text"
-                value={searchQuery}
-              />
+            <input
+              className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm font-medium text-slate-800 placeholder-slate-400 focus:border-blue-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search code, type, or barangay"
+              type="search"
+              aria-label="Search reports"
+              value={searchQuery}
+            />
 
-              <div className="flex w-full flex-col items-stretch justify-end gap-3 sm:flex-row sm:items-center md:w-auto">
-                <select
-                  className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-xs font-bold text-slate-700 outline-none"
-                  onChange={(e) => setHazardFilter(e.target.value)}
-                  value={hazardFilter}
-                >
-                  <option value="All">All</option>
-                  {hazardTypes.map((type) => (
-                    <option key={type} value={type}>
-                      {type}
-                    </option>
-                  ))}
-                </select>
-
-                <button
-                  className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-xs font-bold text-slate-700 shadow-sm transition-all hover:border-slate-300 hover:text-slate-900 active:scale-95"
-                  onClick={() => setSortOrder((prev) => (prev === 'desc' ? 'asc' : 'desc'))}
-                  type="button"
-                >
-                  {sortOrder === 'desc' ? 'Newest First' : 'Oldest First'}
-                </button>
-              </div>
+            <div className="grid grid-cols-[1fr_auto] gap-2">
+              <select
+                className="min-w-0 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-700 outline-none focus:border-blue-500"
+                onChange={(e) => setHazardFilter(e.target.value)}
+                aria-label="Incident type"
+                value={hazardFilter}
+              >
+                <option value="All">All incident types</option>
+                {hazardTypes.map((type) => (
+                  <option key={type} value={type}>
+                    {type}
+                  </option>
+                ))}
+              </select>
+              <button
+                className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                onClick={() => setSortOrder((prev) => (prev === 'desc' ? 'asc' : 'desc'))}
+                type="button"
+              >
+                {sortOrder === 'desc' ? 'Newest first' : 'Oldest first'}
+              </button>
             </div>
-          </div>
+          </section>
         ) : null}
 
-        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          {isLoading ? (
-            <div className="p-16 text-center">
-              <h3 className="text-lg font-bold text-slate-900">Loading real incident reports...</h3>
-              <p className="mt-1 text-sm text-slate-500">Please wait while data is being fetched from backend.</p>
-            </div>
-          ) : reports.length === 0 ? (
-            <div className="p-16 text-center">
-              <div className="mx-auto max-w-md space-y-5">
-                <h3 className="text-lg font-bold text-slate-900">No incident reports yet</h3>
-                <p className="mt-1 text-sm text-slate-500">Create your first incident report to display it here.</p>
-
-                <button
-                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-6 py-3 text-sm font-bold text-white shadow-sm transition-all hover:bg-blue-700 active:scale-95"
-                  onClick={() => navigate('/create-report')}
-                  type="button"
-                >
-                  Create Report
+        {isLoading ? (
+          <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center shadow-sm">
+            <p className="text-sm font-semibold text-slate-500">Loading incident reports…</p>
+          </div>
+        ) : reports.length === 0 ? (
+          <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center shadow-sm">
+            <h2 className="text-base font-bold text-slate-900">No incident reports yet</h2>
+            <p className="mt-1 text-sm text-slate-500">Reports you file from the scene show up here.</p>
+            <button
+              className="mt-5 inline-flex items-center justify-center rounded-xl bg-blue-600 px-6 py-3 text-sm font-bold text-white shadow-sm hover:bg-blue-700"
+              onClick={() => navigate('/create-report')}
+              type="button"
+            >
+              Create incident report
+            </button>
+          </div>
+        ) : filteredAndSortedReports.length === 0 ? (
+          <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center shadow-sm">
+            <h2 className="text-sm font-bold text-slate-800">No reports match</h2>
+            <p className="mt-1 text-xs text-slate-500">Change the search, the incident type, or pick All above.</p>
+          </div>
+        ) : (
+          <section aria-label="Reports" className="space-y-2.5">
+            {selectableInView.length > 0 ? (
+              <div className="flex items-center justify-between px-1">
+                <p className="text-xs font-semibold text-slate-500">
+                  {filteredAndSortedReports.length} report{filteredAndSortedReports.length === 1 ? '' : 's'}
+                </p>
+                <button type="button" onClick={toggleSelectAll} className="text-xs font-bold text-blue-700">
+                  {allInViewSelected ? 'Clear selection' : `Select all ready (${selectableInView.length})`}
                 </button>
               </div>
-            </div>
-          ) : filteredAndSortedReports.length === 0 ? (
-            <div className="p-12 text-center text-slate-500">
-              <h4 className="text-sm font-bold text-slate-800">No results found</h4>
-              <p className="mt-1 text-xs text-slate-400">Try adjusting your search or hazard type filter.</p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse text-left">
-                <thead className="border-b border-slate-200/80 bg-slate-50/70">
-                  <tr>
-                    <th className="w-12 px-6 py-4">
-                      <input
-                        checked={
-                          filteredAndSortedReports.filter((r) => canSelectReport(r)).length > 0 &&
-                          filteredAndSortedReports.filter((r) => canSelectReport(r)).every((r) => selectedIds.includes(r.id))
-                        }
-                        className="h-4 w-4 rounded accent-blue-600 transition"
-                        onChange={toggleSelectAll}
-                        onClick={(e) => e.stopPropagation()}
-                        type="checkbox"
-                      />
-                    </th>
-                    <th className="px-6 py-4 text-xs font-extrabold uppercase tracking-wider text-slate-500">Report Code</th>
-                    <th className="px-6 py-4 text-xs font-extrabold uppercase tracking-wider text-slate-500">Incident Code</th>
-                    <th className="px-6 py-4 text-xs font-extrabold uppercase tracking-wider text-slate-500">Incident Type</th>
-                    <th className="px-6 py-4 text-xs font-extrabold uppercase tracking-wider text-slate-500">Location</th>
-                    <th className="px-6 py-4 text-xs font-extrabold uppercase tracking-wider text-slate-500">Date Recorded</th>
-                    <th className="px-6 py-4 text-xs font-extrabold uppercase tracking-wider text-slate-500">Status</th>
-                    <th className="px-6 py-4 text-xs font-extrabold uppercase tracking-wider text-slate-500">Selection</th>
-                  </tr>
-                </thead>
+            ) : (
+              <p className="px-1 text-xs font-semibold text-slate-500">
+                {filteredAndSortedReports.length} report{filteredAndSortedReports.length === 1 ? '' : 's'}
+              </p>
+            )}
 
-                <tbody className="divide-y divide-slate-100">
-                  {filteredAndSortedReports.map((report) => {
-                    const selectable = canSelectReport(report)
-                    const statusValue = getStatusValue(report)
+            <ul className="space-y-2.5">
+              {filteredAndSortedReports.map((report) => {
+                const stage = getReportStage(report, me)
+                const selectable = stage === 'ready'
+                const isSelected = selectedIds.includes(report.id)
+                const createdAt = new Date(getCreatedAt(report))
+                const typeStyle = getIncidentBadgeStyle(getIncidentType(report))
+                const victims = getVictimCount(report)
 
-                    return (
-                      <tr
-                        className={`group cursor-pointer transition-colors hover:bg-slate-50/80 ${!selectable ? 'opacity-60' : ''}`}
-                        key={report.id}
-                        onClick={() => setDetailsReport(report)}
-                        title="Click to view full details"
-                      >
-                        <td className="px-6 py-4">
-                          <input
-                            checked={selectedIds.includes(report.id)}
-                            className="h-4 w-4 rounded accent-blue-600 transition disabled:cursor-not-allowed"
-                            disabled={!selectable}
-                            onChange={() => toggleSelect(report)}
-                            onClick={(e) => e.stopPropagation()}
-                            title={getSelectionRestrictionMessage(report)}
-                            type="checkbox"
-                          />
-                        </td>
-
-                        <td className="px-6 py-4 font-mono text-sm font-bold tracking-tight text-slate-900 transition-colors group-hover:text-blue-600">
-                          <div className="flex items-center gap-2">
-                            <span>{getReportCode(report)}</span>
-                            {report.createdByRole === 'admin' && (
-                              <span className="rounded-md border border-red-100 bg-red-50 px-2 py-0.5 text-[10px] font-extrabold text-red-600">
-                                admin
-                              </span>
-                            )}
-                          </div>
-                        </td>
-
-                        <td className="px-6 py-4 font-mono text-sm text-slate-500">
-                          {getIncidentCode(report)}
-                        </td>
-
-                        <td className="px-6 py-4">
-                          <span className="inline-flex rounded-md border px-2.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wider" style={getIncidentBadgeStyle(getIncidentType(report))}>
-                            {getIncidentType(report)}
-                          </span>
-                        </td>
-
-                        <td className="max-w-[200px] truncate px-6 py-4 text-sm font-medium text-slate-600">
-                          {report.location || 'N/A'}
-                        </td>
-
-                        <td className="px-6 py-4 text-xs font-medium text-slate-500">
-                          {(() => {
-                            const createdAt = getCreatedAt(report)
-                            if (!createdAt) return 'N/A'
-                            const date = new Date(createdAt)
-                            return isNaN(date.getTime()) ? 'N/A' : date.toLocaleString(undefined, {
-                              dateStyle: 'medium',
-                              timeStyle: 'short',
-                            })
-                          })()}
-                        </td>
-
-                        <td className="px-6 py-4">
-                          <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-bold ${getStatusBadgeClass(statusValue)}`}>
-                            <span className={`mr-1.5 h-1.5 w-1.5 rounded-full ${getStatusDotClass(statusValue)}`} />
-                            {getStatusLabel(statusValue)}
-                          </span>
-                        </td>
-
-                        <td className="px-6 py-4">
-                          {selectable ? (
-                            <span className="rounded-md border border-emerald-100 bg-emerald-50 px-2 py-1 text-[10px] font-bold text-emerald-700">
-                              Available
-                            </span>
-                          ) : report.compiledIn ? (
-                            <span className="rounded-md border border-blue-100 bg-blue-50 px-2 py-1 text-[10px] font-bold text-blue-700" title={`Compiled in ${report.compiledIn}`}>
-                              Compiled
-                            </span>
-                          ) : !isOwnReport(report, me) || report.createdByRole === 'admin' ? (
-                            <span className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-[10px] font-bold text-slate-500">
-                              Other team
-                            </span>
-                          ) : (
-                            <span className="rounded-md border border-amber-100 bg-amber-50 px-2 py-1 text-[10px] font-bold text-amber-700">
-                              Awaiting approval
-                            </span>
-                          )}
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
+                return (
+                  <li
+                    key={report.id}
+                    className={`flex items-stretch overflow-hidden rounded-2xl border bg-white shadow-sm transition-colors ${
+                      isSelected ? 'border-blue-500 ring-2 ring-blue-500/20' : 'border-slate-200'
+                    }`}
+                  >
+                    <span className="w-1 shrink-0" style={{ backgroundColor: typeStyle.color }} aria-hidden="true" />
+                    <button
+                      type="button"
+                      onClick={() => setDetailsReport(report)}
+                      className="min-w-0 flex-1 px-3.5 py-3 text-left focus:outline-none focus-visible:bg-slate-50"
+                    >
+                      <span className="flex flex-wrap items-center gap-1.5">
+                        <span className="inline-flex rounded-md border px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide" style={typeStyle}>
+                          {getIncidentType(report)}
+                        </span>
+                        <span className={`inline-flex rounded-md border px-2 py-0.5 text-[10px] font-bold ${STAGE_BADGE_CLASSES[stage]}`}>
+                          {stage === 'compiled' && report.compiledIn ? `In ${report.compiledIn}` : STAGE_LABELS[stage]}
+                        </span>
+                        {report.createdByRole === 'admin' ? (
+                          <span className="rounded-md border border-red-100 bg-red-50 px-2 py-0.5 text-[10px] font-extrabold text-red-600">Admin</span>
+                        ) : null}
+                      </span>
+                      <span className="mt-2 block truncate text-sm font-bold text-slate-900">{report.location || 'Location not set'}</span>
+                      <span className="mt-0.5 block text-xs text-slate-500">
+                        {Number.isNaN(createdAt.getTime())
+                          ? 'Date not recorded'
+                          : createdAt.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                        {victims > 0 ? `, ${victims} ${victims === 1 ? 'person' : 'people'} involved` : ''}
+                      </span>
+                      <span className="mt-1.5 flex items-center justify-between gap-2">
+                        <span className="truncate font-mono text-[11px] text-slate-400">
+                          {getReportCode(report)} · Team {getResponderTeam(report)}
+                        </span>
+                        <span className="inline-flex shrink-0 items-center gap-0.5 text-xs font-bold text-blue-700">
+                          View details
+                          <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden="true">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                          </svg>
+                        </span>
+                      </span>
+                    </button>
+                    {selectable ? (
+                      <label className="flex w-14 shrink-0 cursor-pointer items-center justify-center border-l border-slate-100">
+                        <input
+                          checked={isSelected}
+                          className="h-5 w-5 rounded accent-blue-600"
+                          onChange={() => toggleSelect(report)}
+                          type="checkbox"
+                          aria-label={`Select ${getReportCode(report)} for compiling`}
+                        />
+                      </label>
+                    ) : null}
+                  </li>
+                )
+              })}
+            </ul>
+          </section>
+        )}
       </main>
 
+      {selectedIds.length > 0 ? (
+        <div className="fixed inset-x-0 bottom-24 z-40 px-4">
+          <div className="mx-auto flex max-w-lg items-center gap-3 rounded-2xl bg-slate-900 p-3 pl-4 text-white shadow-xl">
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-bold">
+                {selectedIds.length} report{selectedIds.length === 1 ? '' : 's'} selected
+              </p>
+              <button type="button" onClick={() => setSelectedIds([])} className="text-xs font-semibold text-slate-300 underline-offset-2 hover:underline">
+                Clear
+              </button>
+            </div>
+            <button
+              className="rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-blue-500 disabled:opacity-60"
+              disabled={isCompiling}
+              onClick={() => void compileReports()}
+              type="button"
+            >
+              {isCompiling ? 'Compiling…' : 'Compile report'}
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       {detailsReport ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm">
-          <div className="flex max-h-[85vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-xl">
-            <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50 px-6 py-4">
+        <div className="fixed inset-0 z-[60] flex items-end justify-center bg-slate-900/40 backdrop-blur-sm" onClick={() => setDetailsReport(null)}>
+          <div
+            className="flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-t-3xl border border-slate-100 bg-white shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Report ${getReportCode(detailsReport)}`}
+          >
+            <div className="mx-auto mt-2.5 h-1.5 w-10 shrink-0 rounded-full bg-slate-200" aria-hidden="true" />
+            <div className="flex items-center justify-between border-b border-slate-100 px-5 py-3">
               <div className="space-y-1">
                 <div className="flex items-center gap-2.5">
                   <h2 className="font-mono text-lg font-black tracking-tight text-slate-900">
@@ -557,8 +547,8 @@ const IncidentReportPage: FC = () => {
                     {getIncidentType(detailsReport)}
                   </span>
                 </div>
-                <p className="text-xs font-medium text-slate-400">
-                  Full incident operational details
+                <p className="text-xs font-medium text-slate-500">
+                  Filed {new Date(getCreatedAt(detailsReport)).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}
                 </p>
               </div>
 
@@ -572,17 +562,17 @@ const IncidentReportPage: FC = () => {
               </button>
             </div>
 
-            <div className="space-y-6 overflow-y-auto p-6 text-slate-700">
-              <div className="grid grid-cols-1 gap-x-6 gap-y-4 rounded-xl border border-slate-100 bg-slate-50/60 p-4 sm:grid-cols-2">
-                <DetailItem label="Incident Identifier Code" value={getIncidentCode(detailsReport)} isMono />
-                <DetailItem label="Time of Occurrence" value={formatTimeOfDay(getTimeOccurred(detailsReport))} />
-                <DetailItem label="Assigned Field Responders" value={getResponderTeam(detailsReport)} />
-                <DetailItem label="Operation Live Status" value={getStatusValue(detailsReport)} isStatus />
+            <div className="space-y-5 overflow-y-auto p-5 pb-8 text-slate-700">
+              <div className="grid grid-cols-2 gap-x-4 gap-y-4 rounded-xl border border-slate-100 bg-slate-50/60 p-4">
+                <DetailItem label="Incident code" value={getIncidentCode(detailsReport)} isMono />
+                <DetailItem label="Time it happened" value={formatTimeOfDay(getTimeOccurred(detailsReport))} />
+                <DetailItem label="Responding team" value={getResponderTeam(detailsReport)} />
+                <DetailItem label="Status" value={getStatusValue(detailsReport)} isStatus />
               </div>
 
               <div className="space-y-1">
                 <span className="block text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
-                  Deployment Area Zone
+                  Location
                 </span>
                 <div className="rounded-xl border border-slate-100 bg-slate-50/40 p-3">
                   <p className="text-xs font-semibold text-slate-800">
@@ -593,20 +583,20 @@ const IncidentReportPage: FC = () => {
 
               <div className="space-y-1">
                 <span className="block text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
-                  Detailed Description Log
+                  Description
                 </span>
                 <div className="rounded-xl border border-slate-100 bg-slate-50/40 p-3.5">
                   <p className="whitespace-pre-wrap text-xs font-medium leading-relaxed text-slate-600">
                     {detailsReport.personalDataHidden
                       ? HIDDEN_FOR_OTHER_TEAMS
-                      : detailsReport.description || 'No specific descriptive log submitted.'}
+                      : detailsReport.description || 'No description was written.'}
                   </p>
                 </div>
               </div>
 
               <div className="space-y-1">
                 <span className="block text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
-                  Mitigation & Actions Executed
+                  Action taken
                 </span>
                 <div className="rounded-xl border border-blue-100/50 bg-blue-50/10 p-3.5">
                   <p className="whitespace-pre-wrap text-xs font-medium leading-relaxed text-slate-700">
@@ -620,7 +610,7 @@ const IncidentReportPage: FC = () => {
               <div className="space-y-3 pt-2">
                 <div className="flex items-center justify-between border-b border-slate-100 pb-2">
                   <h3 className="text-xs font-black uppercase tracking-wider text-slate-700">
-                    Victims Information Directory
+                    People involved
                   </h3>
                   <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-600">
                     {getVictimCount(detailsReport)} Total

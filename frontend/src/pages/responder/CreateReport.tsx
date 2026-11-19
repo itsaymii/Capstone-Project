@@ -293,9 +293,9 @@ export const CreateReport: FC = () => {
       case "gps":
         return `Device GPS${gpsAccuracy ? ` · ±${Math.round(gpsAccuracy)}m accuracy` : ""}`;
       case "manual":
-        return "Manually entered coordinates";
+        return "Typed in";
       default:
-        return "No coordinates captured yet";
+        return "No location yet";
     }
   };
 
@@ -766,8 +766,8 @@ export const CreateReport: FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-100 pb-28 sm:pb-12 pt-6 antialiased text-slate-800">
-      <main className="max-w-3xl mx-auto p-4 sm:p-6 space-y-5">
+    <div className="min-h-screen bg-slate-100 pb-28 pt-4 antialiased text-slate-800">
+      <main className="max-w-lg mx-auto px-4 space-y-4">
         <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-slate-900 via-blue-950 to-slate-900 p-5 sm:p-7 text-white shadow-md">
           <div className="absolute inset-0 bg-gradient-to-r from-blue-600/10 to-indigo-600/10 opacity-60 pointer-events-none" />
 
@@ -790,15 +790,11 @@ export const CreateReport: FC = () => {
             </button>
 
             <div className="min-w-0 flex-1">
-              <span className="inline-flex text-[10px] font-bold uppercase tracking-widest text-blue-400 bg-blue-500/10 border border-blue-500/20 px-2.5 py-0.5 rounded-md">
-                Response Protocol
-              </span>
-              <h1 className="mt-2 text-2xl sm:text-3xl font-black tracking-tight leading-tight">
-                New Incident Report
+              <h1 className="text-2xl font-black tracking-tight leading-tight">
+                New incident report
               </h1>
-              <p className="mt-1 text-sm text-slate-400 font-medium leading-relaxed">
-                Document emergency response operations and victim assessments
-                for synchronization with central command.
+              <p className="mt-1 text-sm text-slate-300 font-medium leading-relaxed">
+                Fill it in from the scene. An admin checks it before it counts in the city's records.
               </p>
               <div className="mt-3 inline-flex max-w-full items-center gap-2.5 rounded-xl border border-white/15 bg-white/10 px-3 py-2">
                 <svg className="h-5 w-5 shrink-0 text-blue-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -1052,40 +1048,43 @@ export const CreateReport: FC = () => {
                 ))}
               </select>
 
-              <p className="mt-1 text-[11px] text-slate-400">
-                This replaces the old location input and saves a consistent
-                Lucena City barangay for reports, analytics, and mapping.
+              <p className="mt-1 text-[11px] text-slate-500">
+                The barangay where it happened.
               </p>
             </div>
 
             <div className="rounded-2xl border border-blue-100 bg-blue-50/50 p-4 space-y-3">
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div className="flex flex-col gap-3">
                 <div>
-                  <p className="text-xs font-bold uppercase tracking-wide text-blue-700">
-                    GPS Coordinates
+                  <p className="text-sm font-bold text-blue-800">
+                    Exact location
                   </p>
                   <p className="mt-1 text-xs text-slate-600">
-                    Use browser GPS for real testing. Enter coordinates manually if GPS is unavailable.
+                    Use your phone's GPS while you are at the scene, or type the coordinates below.
                   </p>
                 </div>
 
-                <div className="flex flex-col sm:flex-row gap-2">
+                <div>
                   <button
                     type="button"
                     onClick={useCurrentGpsLocation}
                     disabled={isGettingLocation}
-                    className="rounded-xl bg-blue-600 px-4 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    className="flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
                   >
+                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.2} aria-hidden="true">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15 10.5a3 3 0 11-6 0 3 3 0 016 0z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1115 0z" />
+                    </svg>
                     {isGettingLocation
-                      ? "Getting GPS..."
-                      : "Use Current GPS Location"}
+                      ? "Getting your location…"
+                      : "Use my current location"}
                   </button>
                 </div>
               </div>
 
               <div className="rounded-xl border border-white/70 bg-white px-3 py-2 text-xs text-slate-600">
                 <span className="font-bold text-slate-800">
-                  Coordinate Source:
+                  Source:
                 </span>{" "}
                 {getCoordinateSourceLabel()}
               </div>

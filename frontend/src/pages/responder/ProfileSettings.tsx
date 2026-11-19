@@ -3,6 +3,7 @@ import type { FC, FormEvent, ChangeEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { getCurrentUserProfile, logoutUser } from '../../services/auth'
 import { MobileNavBar } from '../../components/MobileNavBar'
+import { ResponderPageHeader } from '../../components/ResponderPageHeader'
 import { getAccountTeam } from '../../data/teams'
 
 interface TeamMember {
@@ -207,199 +208,169 @@ const ProfileSettingsPage: FC = () => {
     .join('')
     .toUpperCase() || 'RE'
 
+  const fieldClass =
+    'w-full rounded-xl border border-slate-200 bg-slate-50/50 px-3.5 py-2.5 text-sm font-medium outline-none transition-colors focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/10'
+  const labelClass = 'mb-1.5 block text-xs font-semibold text-slate-600'
+
   return (
-    <div className="min-h-screen bg-slate-50 pb-28 sm:pb-12 pt-6 antialiased text-slate-800">
-      <main className="max-w-4xl mx-auto p-4 sm:p-6 space-y-6">
-        
-        {/* Header Navigation */}
-        <div className="bg-white p-5 sm:p-7 rounded-2xl border border-slate-200/80 shadow-sm space-y-5 overflow-hidden relative">
-          <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-500" />
-          
-          <div className="flex items-center gap-4">
-            <button 
-              onClick={() => navigate('/responder-dashboard')}
-              className="group flex items-center justify-center w-10 h-10 bg-slate-50 text-slate-500 hover:bg-blue-50 hover:text-blue-600 rounded-2xl transition-all border border-slate-100 shadow-sm active:scale-90"
-              title="Back to Dashboard"
-            >
-              <svg className="w-5 h-5 transform group-hover:-translate-x-0.5 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
-              </svg>
-            </button>
-            
-            <div>
-              <span className="text-[10px] font-black uppercase tracking-[0.2em] text-blue-600 opacity-60 block mb-0.5 leading-none">Account Identity</span>
-              <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-slate-900 leading-tight">Profile & Team Settings</h1>
+    <div className="min-h-screen bg-slate-100 pb-28 pt-4 text-slate-800 antialiased">
+      <main className="mx-auto max-w-lg space-y-4 px-4">
+        <ResponderPageHeader title="Profile" description="Your account and the people on your team." />
+
+        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm" aria-label="Your account">
+          <div className="flex items-center gap-4 p-4">
+            <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-gradient-to-tr from-blue-600 to-indigo-600 text-lg font-extrabold text-white ring-4 ring-blue-50">
+              {initials}
+            </div>
+            <div className="min-w-0">
+              <h2 className="truncate text-base font-bold text-slate-900">{profileData.teamLeaderName}</h2>
+              <p className="mt-0.5 text-sm text-slate-500">
+                {profileData.teamName ? `Team ${profileData.teamName}` : 'No team yet'} · Team leader
+              </p>
             </div>
           </div>
-          
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-t border-slate-100 pt-5">
-            <p className="text-sm text-slate-500 font-medium leading-relaxed max-w-lg">
-              Manage your responder credentials and team roster assignments for operational deployment.
-            </p>
-          </div>
-        </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
-          
-          {/* Left Column: Profile Card & Form */}
-          <div className="lg:col-span-1 bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-6 relative">
-            
-            {/* Integrated Log Out Mechanism */}
-            <div className="absolute top-4 right-4">
+          <dl className="divide-y divide-slate-100 border-t border-slate-100 text-sm">
+            <div className="flex items-center justify-between gap-4 px-4 py-3">
+              <dt className="text-slate-500">Team</dt>
+              <dd className="font-semibold text-slate-900">{profileData.teamName || 'Ask an admin to set it'}</dd>
+            </div>
+            <div className="flex items-center justify-between gap-4 px-4 py-3">
+              <dt className="text-slate-500">Full name</dt>
+              <dd className="truncate font-semibold text-slate-900">{profileData.teamLeaderName}</dd>
+            </div>
+            <div className="flex items-center justify-between gap-4 px-4 py-3">
+              <dt className="text-slate-500">Badge ID</dt>
+              <dd className="font-mono font-semibold text-slate-900">{profileData.badgeId}</dd>
+            </div>
+          </dl>
+          <p className="border-t border-slate-100 bg-slate-50/60 px-4 py-2.5 text-xs text-slate-500">
+            Your team, name and badge ID are set by an admin.
+          </p>
+        </section>
+
+        <form onSubmit={handleProfileSubmit} className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm" aria-label="Contact details">
+          <h2 className="text-sm font-black text-slate-900">Contact details</h2>
+          <div>
+            <label htmlFor="stationAddress" className={labelClass}>Station address</label>
+            <input id="stationAddress" type="text" name="stationAddress" value={profileData.stationAddress} onChange={handleProfileChange} className={fieldClass} />
+          </div>
+          <div>
+            <label htmlFor="contactNumber" className={labelClass}>Emergency contact number</label>
+            <input id="contactNumber" type="tel" inputMode="tel" name="contactNumber" value={profileData.contactNumber} onChange={handleProfileChange} className={fieldClass} />
+          </div>
+          <button type="submit" className="w-full rounded-xl bg-blue-600 py-3 text-sm font-bold text-white shadow-sm transition-colors hover:bg-blue-700">
+            Save changes
+          </button>
+          {statusMessage ? (
+            <p className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800" role="status">{statusMessage}</p>
+          ) : null}
+          {errorMessage ? (
+            <p className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">{errorMessage}</p>
+          ) : null}
+        </form>
+
+        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm" aria-labelledby="team-members">
+          <div className="flex items-center justify-between gap-3 border-b border-slate-100 p-4">
+            <div>
+              <h2 id="team-members" className="text-sm font-black text-slate-900">Team members</h2>
+              <p className="mt-0.5 text-xs text-slate-500">The people who respond with you.</p>
+            </div>
+            {!isAddingMember && (
               <button
                 type="button"
-                onClick={handleLogOut}
-                className="inline-flex items-center justify-center p-2 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 border border-transparent hover:border-rose-100 transition-all active:scale-95 group/logout"
-                title="Log Out Session"
+                onClick={openAddMember}
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-blue-600 px-3.5 py-2 text-xs font-bold text-white shadow-sm transition-colors hover:bg-blue-700"
               >
-                <svg className="w-5 h-5 transform group-hover/logout:translate-x-0.5 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.25}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
                 </svg>
+                Add member
               </button>
-            </div>
-
-            <div className="flex flex-col items-center text-center pb-5 border-b border-slate-100">
-              <div className="w-20 h-20 bg-gradient-to-tr from-blue-600 to-indigo-600 rounded-full flex items-center justify-center text-white text-2xl font-extrabold shadow-md mb-3 ring-4 ring-blue-50">
-                {initials}
-              </div>
-              <h2 className="font-bold text-lg text-slate-900 tracking-tight">{profileData.teamLeaderName}</h2>
-              <span className="text-[10px] uppercase font-bold tracking-wider text-blue-600 bg-blue-50 border border-blue-100 px-3 py-1 rounded-md mt-2">
-                Team Leader
-              </span>
-            </div>
-
-            <form onSubmit={handleProfileSubmit} className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5">Team Assignment</label>
-                <input type="text" name="teamName" value={profileData.teamName} readOnly placeholder="No team yet: ask an admin" title="Set by an admin in Users." className="w-full text-sm font-semibold border border-slate-200 rounded-xl px-3.5 py-2.5 bg-slate-100 text-slate-500 cursor-not-allowed" />
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5">Full Name</label>
-                <input type="text" name="teamLeaderName" value={profileData.teamLeaderName} readOnly title="Taken from your account. Ask an admin to change it." className="w-full text-sm font-semibold border border-slate-200 rounded-xl px-3.5 py-2.5 bg-slate-100 text-slate-500 cursor-not-allowed" />
-                <p className="mt-1 text-[11px] text-slate-400">From your account. Ask an admin to change it.</p>
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5">Agency Badge ID</label>
-                <input type="text" name="badgeId" value={profileData.badgeId} readOnly className="w-full text-sm font-semibold border border-slate-200 rounded-xl px-3.5 py-2.5 bg-slate-100 text-slate-400 cursor-not-allowed font-mono" />
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5">Station HQ Address</label>
-                <input type="text" name="stationAddress" value={profileData.stationAddress} onChange={handleProfileChange} className="w-full text-sm font-medium border border-slate-200 rounded-xl px-3.5 py-2.5 bg-slate-50/50 outline-none focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/5 transition-all" />
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5">Emergency Contact</label>
-                <input type="tel" name="contactNumber" value={profileData.contactNumber} onChange={handleProfileChange} className="w-full text-sm font-medium border border-slate-200 rounded-xl px-3.5 py-2.5 bg-slate-50/50 outline-none focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/5 transition-all" />
-              </div>
-              <button type="submit" className="w-full text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 active:scale-[0.98] py-3 rounded-xl shadow-md shadow-blue-500/10 transition-all">
-                Save Account Profile
-              </button>
-              {statusMessage ? (
-                <p className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
-                  {statusMessage}
-                </p>
-              ) : null}
-              {errorMessage ? (
-                <p className="mt-3 rounded-2xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                  {errorMessage}
-                </p>
-              ) : null}
-            </form>
+            )}
           </div>
 
-          {/* Right Column: Roster Management */}
-          <div className="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden divide-y divide-slate-100">
-            <div className="p-5 flex items-center justify-between bg-slate-50/50 border-b border-slate-100">
+          {isAddingMember && (
+            <form onSubmit={handleSaveMember} className="space-y-3 border-b border-blue-100 bg-blue-50/30 p-4">
+              <p className="text-sm font-bold text-blue-700">{editingMemberId ? 'Edit team member' : 'New team member'}</p>
               <div>
-                <h3 className="text-sm font-bold text-slate-900">Responder Team Roster</h3>
-                <p className="text-xs text-slate-400 font-medium mt-0.5">Add and manage active field units assigned under your cluster.</p>
+                <label htmlFor="memberName" className={labelClass}>Full name</label>
+                <input id="memberName" type="text" value={memberDraft.name} onChange={e => setMemberDraft(p => ({ ...p, name: e.target.value }))} className={fieldClass} required />
               </div>
-              {!isAddingMember && (
-                <button 
-                  type="button" 
-                  onClick={openAddMember} 
-                  className="text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 active:scale-95 px-3.5 py-2 rounded-xl flex items-center gap-1.5 shadow-sm transition-all"
-                >
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-                  </svg>
-                  <span>Add Unit</span>
-                </button>
-              )}
-            </div>
-
-            {/* Expansion Panel: Add Member Form */}
-            {isAddingMember && (
-              <form onSubmit={handleSaveMember} className="p-5 bg-gradient-to-b from-blue-50/30 to-white border-b border-blue-100/50 space-y-4">
-                <div className="text-xs font-bold text-blue-600 uppercase tracking-wider flex items-center gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-blue-600 animate-pulse"></span>
-                  {editingMemberId ? 'Edit Team Member Details' : 'New Operational Unit Registration'}
+              <div>
+                <label htmlFor="memberRole" className={labelClass}>Role</label>
+                <input id="memberRole" type="text" placeholder="e.g. Medic / EMT" value={memberDraft.role} onChange={e => setMemberDraft(p => ({ ...p, role: e.target.value }))} className={fieldClass} required />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label htmlFor="memberContact" className={labelClass}>Contact number</label>
+                  <input id="memberContact" type="tel" inputMode="tel" value={memberDraft.contactNumber} onChange={e => setMemberDraft(p => ({ ...p, contactNumber: e.target.value }))} className={fieldClass} />
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                  <input type="text" placeholder="Full Name" value={memberDraft.name} onChange={e => setMemberDraft(p => ({ ...p, name: e.target.value }))} className="text-sm border border-slate-200 rounded-xl px-3.5 py-2 bg-white outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/5 transition-all font-medium" required />
-                  <input type="text" placeholder="Role (e.g. Medic / EMT)" value={memberDraft.role} onChange={e => setMemberDraft(p => ({ ...p, role: e.target.value }))} className="text-sm border border-slate-200 rounded-xl px-3.5 py-2 bg-white outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/5 transition-all font-medium" required />
-                  <input type="tel" placeholder="Contact Number" value={memberDraft.contactNumber} onChange={e => setMemberDraft(p => ({ ...p, contactNumber: e.target.value }))} className="text-sm border border-slate-200 rounded-xl px-3.5 py-2 bg-white outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/5 transition-all font-medium" />
-                  <select value={memberDraft.status} onChange={e => setMemberDraft(p => ({ ...p, status: e.target.value as TeamMember['status'] }))} className="text-sm border border-slate-200 rounded-xl px-3.5 py-2 bg-white outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/5 transition-all font-semibold text-slate-700">
-                    <option value="Active">🟢 Active Duty</option>
-                    <option value="On Leave">🟡 On Leave</option>
-                    <option value="Off Duty">⚪ Off Duty</option>
+                <div>
+                  <label htmlFor="memberStatus" className={labelClass}>Status</label>
+                  <select id="memberStatus" value={memberDraft.status} onChange={e => setMemberDraft(p => ({ ...p, status: e.target.value as TeamMember['status'] }))} className={fieldClass}>
+                    <option value="Active">Active</option>
+                    <option value="On Leave">On leave</option>
+                    <option value="Off Duty">Off duty</option>
                   </select>
                 </div>
-                <div className="flex justify-end gap-2 pt-1">
-                  <button type="button" onClick={handleCancelMemberEdit} className="text-xs text-slate-500 hover:bg-slate-100 font-semibold px-3 py-2 rounded-xl transition-all">Cancel</button>
-                  <button type="submit" className="text-xs bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-xl shadow-sm active:scale-95 transition-all">
-                    {editingMemberId ? 'Update Member' : 'Register Member'}
+              </div>
+              <div className="flex justify-end gap-2 pt-1">
+                <button type="button" onClick={handleCancelMemberEdit} className="rounded-xl px-4 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-100">Cancel</button>
+                <button type="submit" className="rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-blue-700">
+                  {editingMemberId ? 'Save member' : 'Add member'}
+                </button>
+              </div>
+            </form>
+          )}
+
+          <ul className="divide-y divide-slate-100">
+            {teamMembers.map(member => (
+              <li key={member.id} className="flex items-start gap-3 p-4">
+                <div className="relative shrink-0">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-slate-100 text-sm font-bold text-slate-600">
+                    {member.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
+                  </div>
+                  <span className={`absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-white ${member.status === 'Active' ? 'bg-emerald-500' : member.status === 'On Leave' ? 'bg-amber-500' : 'bg-slate-400'}`} aria-hidden="true" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-bold text-slate-900">{member.name}</p>
+                  <p className="mt-0.5 text-xs text-slate-500">{member.role}</p>
+                  <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                    <span className={`rounded-full border px-2 py-0.5 text-[11px] font-bold ${getStatusStyles(member.status)}`}>{member.status}</span>
+                    {member.contactNumber ? (
+                      <a href={`tel:${member.contactNumber}`} className="font-mono text-xs font-semibold text-blue-700">{member.contactNumber}</a>
+                    ) : (
+                      <span className="text-xs text-slate-400">No contact number</span>
+                    )}
+                  </div>
+                </div>
+                <div className="flex shrink-0 flex-col items-end gap-1">
+                  <button type="button" onClick={() => startEditingMember(member)} className="rounded-lg px-2.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-blue-50 hover:text-blue-700" aria-label={`Edit ${member.name}`}>
+                    Edit
+                  </button>
+                  <button type="button" onClick={() => handleRemoveMember(member.id)} className="rounded-lg px-2.5 py-1.5 text-xs font-semibold text-slate-400 hover:bg-red-50 hover:text-red-600" aria-label={`Remove ${member.name}`}>
+                    Remove
                   </button>
                 </div>
-              </form>
+              </li>
+            ))}
+            {teamMembers.length === 0 && (
+              <li className="p-8 text-center text-sm text-slate-500">No team members yet. Add the people who respond with you.</li>
             )}
+          </ul>
+        </section>
 
-            {/* Roster Listing */}
-            <div className="divide-y divide-slate-100">
-              {teamMembers.map(member => (
-                <div key={member.id} className="p-4 sm:p-5 flex items-center justify-between hover:bg-slate-50/50 transition-colors">
-                  <div className="flex items-center gap-3.5">
-                    <div className="relative">
-                      <div className="w-10 h-10 bg-slate-100 rounded-xl flex items-center justify-center font-bold text-slate-600 border border-slate-200">
-                        {member.name.split(' ').map(n => n[0]).join('').slice(0,2).toUpperCase()}
-                      </div>
-                      <span className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-white ${member.status === 'Active' ? 'bg-emerald-500' : member.status === 'On Leave' ? 'bg-amber-500' : 'bg-slate-400'}`} />
-                    </div>
-                    <div>
-                      <p className="text-sm font-bold text-slate-900 tracking-tight">{member.name}</p>
-                      <p className="text-xs font-medium text-slate-400 mt-0.5">{member.role} • <span className="font-mono">{member.contactNumber || 'No Contact'}</span></p>
-                    </div>
-                    <span className={`ml-2 text-[10px] font-bold px-2.5 py-0.5 border rounded-full uppercase tracking-wider ${getStatusStyles(member.status)}`}>
-                      {member.status}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => startEditingMember(member)}
-                      className="text-xs font-semibold text-slate-500 hover:text-blue-600 hover:bg-blue-50 px-2.5 py-1.5 rounded-xl transition-all"
-                      aria-label={`Edit ${member.name}`}
-                    >
-                      Edit
-                    </button>
-                    <button 
-                      type="button" 
-                      onClick={() => handleRemoveMember(member.id)} 
-                      className="text-xs font-semibold text-slate-400 hover:text-red-500 hover:bg-red-50 px-2.5 py-1.5 rounded-xl transition-all" 
-                      aria-label={`Remove ${member.name}`}
-                    >
-                      Remove
-                    </button>
-                  </div>
-                </div>
-              ))}
-              {teamMembers.length === 0 && (
-                <div className="p-10 text-center text-slate-400 text-sm font-medium border-2 border-dashed border-slate-100 m-4 rounded-xl bg-slate-50/30">
-                  No active team deployment units listed under this roster profile.
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
+        <button
+          type="button"
+          onClick={handleLogOut}
+          className="flex w-full items-center justify-center gap-2 rounded-2xl border border-red-200 bg-white py-3.5 text-sm font-bold text-red-600 shadow-sm transition-colors hover:bg-red-50"
+        >
+          <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+          </svg>
+          Log out
+        </button>
       </main>
 
       <MobileNavBar />
