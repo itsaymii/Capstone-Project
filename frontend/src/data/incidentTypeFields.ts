@@ -3,7 +3,8 @@
 // Mirrors backend/incidents/incident_types.py (the backend checks everything again).
 // When you add, remove, or rename a field there, change it here too.
 
-export type DetailFieldKind = 'choice' | 'multi_choice' | 'int' | 'decimal' | 'text' | 'bool' | 'time'
+// 'choice_other': pick from the choices or type another value (saved as text), e.g. a hospital.
+export type DetailFieldKind = 'choice' | 'multi_choice' | 'choice_other' | 'int' | 'decimal' | 'text' | 'bool' | 'time'
 
 export type DetailValue = string | number | boolean | string[]
 
@@ -34,6 +35,18 @@ export type IncidentTypeConfig = {
   fields: DetailFieldSpec[]
   victimFields: DetailFieldSpec[]
 }
+
+// Hospitals in Lucena City for the hospital dropdowns; "Others" lets the responder type another one.
+// Same list as LUCENA_HOSPITALS in backend/incidents/incident_types.py.
+export const LUCENA_HOSPITALS = [
+  'Quezon Medical Center',
+  'Lucena United Doctors Hospital and Medical Center',
+  'Mount Carmel Diocesan General Hospital',
+  'Lucena MMG General Hospital',
+  'St. Anne General Hospital',
+  'Camp Nakar Station Hospital',
+]
+const HOSPITAL_CHOICES = LUCENA_HOSPITALS.map((name) => ({ value: name, label: name }))
 
 export const INCIDENT_TYPE_CONFIGS: IncidentTypeConfig[] = [
   {
@@ -135,7 +148,6 @@ export const INCIDENT_TYPE_CONFIGS: IncidentTypeConfig[] = [
       ] },
       { name: 'structures_affected', label: 'Structures affected', kind: 'int', required: false, min: 0, max: null, choices: [] },
       { name: 'families_affected', label: 'Families affected / displaced', kind: 'int', required: false, min: 0, max: null, choices: [] },
-      { name: 'estimated_damage', label: 'Estimated damage (PHP)', kind: 'decimal', required: false, min: 0, max: null, choices: [] },
       { name: 'fatalities', label: 'Fatalities', kind: 'int', required: false, min: 0, max: null, choices: [] },
       { name: 'bfp_present', label: 'BFP on scene', kind: 'bool', required: false, min: 0, max: null, choices: [] },
       { name: 'fire_out_time', label: 'Time declared fire out', kind: 'time', required: false, min: 0, max: null, choices: [] },
@@ -154,22 +166,6 @@ export const INCIDENT_TYPE_CONFIGS: IncidentTypeConfig[] = [
     label: 'Crime Against Person/Property',
     victims: { allowed: true, label: 'Victims', min: 0, max: null },
     fields: [
-      { name: 'crime_type', label: 'Type of crime', kind: 'choice', required: true, min: 0, max: null, choices: [
-        { value: 'theft', label: 'Theft' },
-        { value: 'robbery', label: 'Robbery / hold-up' },
-        { value: 'physical_injury', label: 'Physical injury' },
-        { value: 'stabbing', label: 'Stabbing' },
-        { value: 'shooting', label: 'Shooting' },
-        { value: 'domestic_violence', label: 'Domestic violence' },
-        { value: 'other', label: 'Other' },
-      ] },
-      { name: 'weapon', label: 'Weapon involved', kind: 'choice', required: false, min: 0, max: null, choices: [
-        { value: 'none', label: 'None' },
-        { value: 'bladed', label: 'Bladed weapon' },
-        { value: 'firearm', label: 'Firearm' },
-        { value: 'blunt', label: 'Blunt object' },
-        { value: 'other', label: 'Other' },
-      ] },
       { name: 'suspects', label: 'Number of suspects', kind: 'int', required: false, min: 0, max: null, choices: [] },
       { name: 'suspect_status', label: 'Suspect status', kind: 'choice', required: false, min: 0, max: null, choices: [
         { value: 'at_large', label: 'At large' },
@@ -204,7 +200,7 @@ export const INCIDENT_TYPE_CONFIGS: IncidentTypeConfig[] = [
         { value: 'unresponsive', label: 'Unresponsive' },
       ] },
       { name: 'transported', label: 'Transported to hospital', kind: 'bool', required: false, min: 0, max: null, choices: [] },
-      { name: 'hospital', label: 'Hospital', kind: 'text', required: false, min: 0, max: null, choices: [] },
+      { name: 'hospital', label: 'Hospital', kind: 'choice_other', required: false, min: 0, max: null, choices: HOSPITAL_CHOICES },
     ],
     victimFields: [
       { name: 'blood_pressure', label: 'Blood pressure (e.g. 120/80)', kind: 'text', required: false, min: 0, max: null, choices: [] },
@@ -221,7 +217,7 @@ export const INCIDENT_TYPE_CONFIGS: IncidentTypeConfig[] = [
     victims: { allowed: true, label: 'Patient', min: 1, max: 1 },
     fields: [
       { name: 'pickup_location', label: 'Pick-up location', kind: 'text', required: true, min: 0, max: null, choices: [] },
-      { name: 'destination_hospital', label: 'Destination hospital', kind: 'text', required: true, min: 0, max: null, choices: [] },
+      { name: 'destination_hospital', label: 'Destination hospital', kind: 'choice_other', required: true, min: 0, max: null, choices: HOSPITAL_CHOICES },
       { name: 'transport_reason', label: 'Reason for transport', kind: 'choice', required: true, min: 0, max: null, choices: [
         { value: 'referral', label: 'Referral' },
         { value: 'dialysis', label: 'Dialysis' },
@@ -264,6 +260,7 @@ export const INCIDENT_TYPE_CONFIGS: IncidentTypeConfig[] = [
         { value: 'hypertension', label: 'High blood pressure' },
         { value: 'other', label: 'Other' },
       ] },
+      { name: 'hospital', label: 'Hospital referred to', kind: 'choice_other', required: false, min: 0, max: null, choices: HOSPITAL_CHOICES },
     ],
     victimFields: [],
   },
@@ -316,6 +313,7 @@ export function validateDetailValue(spec: DetailFieldSpec, value: DetailValue | 
 
   switch (spec.kind) {
     case 'text':
+    case 'choice_other':
       return String(value).trim().length > TEXT_MAX_LENGTH
         ? `${spec.label} must be ${TEXT_MAX_LENGTH} characters or fewer.`
         : null

@@ -112,6 +112,9 @@ function singularVictimLabel(label: string | null | undefined): string {
 
 const EMPTY_VICTIM: VictimDetails = { name: "", age: "", gender: "", address: "", condition: "", details: {} };
 
+// Option value for "Others" in dropdowns where another value can be typed.
+const OTHER_OPTION = "__other__";
+
 const VICTIM_FIELD_LABELS: Record<Exclude<keyof VictimDetails, "details">, string> = {
   name: "Full name",
   age: "Age",
@@ -172,6 +175,8 @@ export const CreateReport: FC = () => {
   }, []);
 
   const [isLoading, setIsLoading] = useState(false);
+  // Dropdowns with "Others" (e.g. hospitals) where the responder chose to type the value, by field id.
+  const [typedOtherFields, setTypedOtherFields] = useState<Record<string, boolean>>({});
   const [isGettingLocation, setIsGettingLocation] = useState(false);
   const [coordinateSource, setCoordinateSource] =
     useState<CoordinateSource>("none");
@@ -609,6 +614,49 @@ export const CreateReport: FC = () => {
               </option>
             ))}
           </select>
+        </div>
+      );
+    }
+
+    if (spec.kind === "choice_other") {
+      const text = typeof value === "string" ? value : "";
+      const isListed = spec.choices.some((choice) => choice.value === text);
+      // A saved value that is not in the list (typed before) also opens the text box.
+      const isOther = id in typedOtherFields ? typedOtherFields[id] : text !== "" && !isListed;
+      return (
+        <div key={spec.name} className={wide}>
+          {label}
+          <select
+            id={id}
+            className={inputClass}
+            value={isOther ? OTHER_OPTION : text}
+            onChange={(e) => {
+              const next = e.target.value;
+              setTypedOtherFields((current) => ({ ...current, [id]: next === OTHER_OPTION }));
+              onChange(next === OTHER_OPTION || next === "" ? undefined : next);
+            }}
+          >
+            <option value="">Select {spec.label.toLowerCase()}</option>
+            {spec.choices.map((choice) => (
+              <option key={choice.value} value={choice.value}>
+                {choice.label}
+              </option>
+            ))}
+            <option value={OTHER_OPTION}>Others (type the name)</option>
+          </select>
+          {isOther ? (
+            <input
+              id={`${id}-other`}
+              type="text"
+              aria-label={`${spec.label}: other`}
+              maxLength={200}
+              autoFocus={!text}
+              placeholder={`Type the ${spec.label.toLowerCase().includes("hospital") ? "hospital" : spec.label.toLowerCase()} name`}
+              className={`${inputClass} mt-2`}
+              value={text}
+              onChange={(e) => onChange(e.target.value === "" ? undefined : e.target.value)}
+            />
+          ) : null}
         </div>
       );
     }

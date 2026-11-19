@@ -24,6 +24,9 @@ class FieldRulesTests(PlainTestCase):
         keys = [config['key'] for config in INCIDENT_TYPES.values()]
         self.assertEqual(len(keys), len(set(keys)))
         for label, config in INCIDENT_TYPES.items():
+            # Crime reports have no required detail since the type of crime was removed from the form.
+            if config['key'] == 'crime':
+                continue
             self.assertTrue(any(spec['required'] for spec in config['fields']), label)
 
     def test_type_lookup_ignores_case(self):
@@ -35,7 +38,6 @@ class FieldRulesTests(PlainTestCase):
             'structure_type': 'residential',
             'alarm_level': 'second',
             'structures_affected': '3',
-            'estimated_damage': '150000.50',
             'bfp_present': 'true',
             'fire_out_time': '14:05',
             'suspected_cause': '',
@@ -45,7 +47,6 @@ class FieldRulesTests(PlainTestCase):
             'structure_type': 'residential',
             'alarm_level': 'second',
             'structures_affected': 3,
-            'estimated_damage': 150000.5,
             'bfp_present': True,
             'fire_out_time': '14:05',
         })
@@ -101,11 +102,11 @@ class FieldRulesTests(PlainTestCase):
 class DetailTableTests(PlainTestCase):
     def test_fire_values(self):
         table, values = detail_table_values('Fire Incident', {
-            'suspected_cause': 'electrical', 'structures_affected': 4, 'fatalities': 1, 'estimated_damage': 2500.5,
+            'suspected_cause': 'electrical', 'structures_affected': 4, 'fatalities': 1,
         }, victim_count=2)
         self.assertEqual(table, 'fire')
         self.assertEqual(values, {
-            'cause': 'Electrical', 'damage_estimate': Decimal('2500.50'),
+            'cause': 'Electrical', 'damage_estimate': None,
             'casualties': 1, 'injuries': 2, 'structures_affected': 4,
         })
 
@@ -199,7 +200,7 @@ if DjangoTestCase is not None:
         def test_fire_report_saves_details_and_fills_fire_table_on_approval(self):
             response = self.report('Fire Incident', {
                 'structure_type': 'residential', 'alarm_level': 'third',
-                'suspected_cause': 'electrical', 'structures_affected': 3, 'estimated_damage': 500000,
+                'suspected_cause': 'electrical', 'structures_affected': 3,
             }, victims=[{
                 'name': 'Juan Dela Cruz', 'age': '40', 'gender': 'M', 'address': 'Market View',
                 'condition': 'Minor burns', 'details': {'injury_type': 'burns'},
@@ -214,7 +215,7 @@ if DjangoTestCase is not None:
             incident = Incident.objects.get(reference_code=report.incident_code)
             fire = FireDetails.objects.get(incident=incident)
             self.assertEqual((fire.cause, fire.structures_affected, fire.injuries), ('Electrical', 3, 1))
-            self.assertEqual(fire.damage_estimate, Decimal('500000.00'))
+            self.assertIsNone(fire.damage_estimate)
 
         def test_field_of_another_type_is_rejected(self):
             response = self.report('Fire Incident', {
@@ -224,9 +225,15 @@ if DjangoTestCase is not None:
             self.assertIn('vehicles_involved', response.data['details'])
 
         def test_missing_details_are_rejected_on_new_reports(self):
-            response = self.report('Crime Against Person/Property')
+            response = self.report('Fire Incident')
+            self.assertEqual(response.status_code, 400)
+            self.assertIn('alarm_level', response.data['details'])
+
+        def test_removed_fields_are_rejected(self):
+            response = self.report('Crime Against Person/Property', {'crime_type': 'theft', 'weapon': 'none'})
             self.assertEqual(response.status_code, 400)
             self.assertIn('crime_type', response.data['details'])
+            self.assertIn('weapon', response.data['details'])
 
         def test_standby_report_without_victims(self):
             response = self.report('Stand-by Medical Team', {

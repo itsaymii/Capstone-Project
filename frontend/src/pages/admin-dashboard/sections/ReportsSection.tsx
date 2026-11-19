@@ -75,7 +75,7 @@ type ReportsSectionProps = {
 }
 
 // The detail that best answers "what caused it / what was it" for each incident type.
-const CAUSE_FIELDS = ['suspected_cause', 'crime_type', 'chief_complaint', 'transport_reason', 'activity', 'event_name']
+const CAUSE_FIELDS = ['suspected_cause', 'chief_complaint', 'transport_reason', 'activity', 'event_name']
 
 /**
  * The cause from the report's type-specific details, e.g. "Electrical" for a fire.

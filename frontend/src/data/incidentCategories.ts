@@ -273,7 +273,7 @@ export function countDetailValues(
     if (!hasValue(value)) return
     if (spec.kind === 'multi_choice' && Array.isArray(value)) {
       value.forEach((item) => add(item, formatDetailValue(spec, [item])))
-    } else if (spec.kind === 'text') {
+    } else if (spec.kind === 'text' || spec.kind === 'choice_other') {
       const label = String(value).trim()
       add(label.toLowerCase(), label)
     } else {
@@ -304,8 +304,6 @@ const CHART_PLANS: Partial<Record<AnalyticsTypeKey, ChartPlan[]>> = {
     { field: 'injury_type', from: 'victim', title: 'Casualty injuries', description: 'Injuries recorded for fire casualties.' },
   ],
   crime: [
-    { field: 'crime_type', from: 'report', title: 'Type of crime', description: 'Crimes against person or property responded to.' },
-    { field: 'weapon', from: 'report', title: 'Weapon involved', description: 'Weapons recorded on the reports.' },
     { field: 'suspect_status', from: 'report', title: 'Suspect status', description: 'Whether suspects were apprehended.', share: true },
   ],
   medical: [
@@ -348,9 +346,9 @@ function buildKpis(key: AnalyticsTypeKey, records: unknown[]): InsightKpi[] {
       ]
     }
     case 'fire': {
-      const damage = sumField(records, 'estimated_damage')
+      const withBfp = records.filter((record) => detailsOf(record).bfp_present === true).length
       return [
-        { label: 'Estimated damage', value: `PHP ${damage.toLocaleString('en-PH')}`, helper: 'Total estimated damage.' },
+        { label: 'BFP on scene', value: share(withBfp, records.length), helper: `${withBfp} of ${records.length} fire reports.` },
         { label: 'Families affected', value: String(sumField(records, 'families_affected')), helper: 'Families affected or displaced.' },
         { label: 'Structures affected', value: String(sumField(records, 'structures_affected')), helper: 'Houses and buildings affected.' },
         { label: 'Fatalities', value: String(sumField(records, 'fatalities')), helper: 'Deaths recorded on fire reports.' },

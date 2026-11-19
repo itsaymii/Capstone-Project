@@ -18,10 +18,24 @@ from decimal import Decimal, InvalidOperation
 TEXT_MAX_LENGTH = 200
 
 
+# Hospitals in Lucena City, for the hospital dropdowns. The form also has "Others" with a text box,
+# so a hospital outside this list can still be typed in. Keep in step with incidentTypeFields.ts.
+LUCENA_HOSPITALS = [
+    'Quezon Medical Center',
+    'Lucena United Doctors Hospital and Medical Center',
+    'Mount Carmel Diocesan General Hospital',
+    'Lucena MMG General Hospital',
+    'St. Anne General Hospital',
+    'Camp Nakar Station Hospital',
+]
+HOSPITAL_CHOICES = [(name, name) for name in LUCENA_HOSPITALS]
+
+
 def field(name, label, kind, required=False, choices=None, minimum=0, maximum=None):
     """
-    kind: 'choice' (one value), 'multi_choice' (list), 'int', 'decimal', 'text', 'bool', or 'time' (HH:MM).
-    choices: list of (value, label) for 'choice' and 'multi_choice'.
+    kind: 'choice' (one value), 'multi_choice' (list), 'int', 'decimal', 'text', 'bool', 'time' (HH:MM),
+    or 'choice_other' (pick from choices or type another value; saved as text).
+    choices: list of (value, label) for 'choice', 'multi_choice' and 'choice_other'.
     """
     return {
         'name': name,
@@ -100,7 +114,6 @@ INCIDENT_TYPES = {
             ]),
             field('structures_affected', 'Structures affected', 'int'),
             field('families_affected', 'Families affected / displaced', 'int'),
-            field('estimated_damage', 'Estimated damage (PHP)', 'decimal'),
             field('fatalities', 'Fatalities', 'int'),
             field('bfp_present', 'BFP on scene', 'bool'),
             field('fire_out_time', 'Time declared fire out', 'time'),
@@ -117,15 +130,6 @@ INCIDENT_TYPES = {
         'hazard': 'Crime',
         'victims': {'allowed': True, 'label': 'Victims', 'min': 0, 'max': None},
         'fields': [
-            field('crime_type', 'Type of crime', 'choice', required=True, choices=[
-                ('theft', 'Theft'), ('robbery', 'Robbery / hold-up'), ('physical_injury', 'Physical injury'),
-                ('stabbing', 'Stabbing'), ('shooting', 'Shooting'), ('domestic_violence', 'Domestic violence'),
-                ('other', 'Other'),
-            ]),
-            field('weapon', 'Weapon involved', 'choice', choices=[
-                ('none', 'None'), ('bladed', 'Bladed weapon'), ('firearm', 'Firearm'),
-                ('blunt', 'Blunt object'), ('other', 'Other'),
-            ]),
             field('suspects', 'Number of suspects', 'int'),
             field('suspect_status', 'Suspect status', 'choice', choices=[
                 ('at_large', 'At large'), ('apprehended', 'Apprehended'), ('unknown', 'Unknown'),
@@ -151,7 +155,7 @@ INCIDENT_TYPES = {
                 ('unresponsive', 'Unresponsive'),
             ]),
             field('transported', 'Transported to hospital', 'bool'),
-            field('hospital', 'Hospital', 'text'),
+            field('hospital', 'Hospital', 'choice_other', choices=HOSPITAL_CHOICES),
         ],
         'victim_fields': [
             field('blood_pressure', 'Blood pressure (e.g. 120/80)', 'text'),
@@ -168,7 +172,7 @@ INCIDENT_TYPES = {
         'victims': {'allowed': True, 'label': 'Patient', 'min': 1, 'max': 1},
         'fields': [
             field('pickup_location', 'Pick-up location', 'text', required=True),
-            field('destination_hospital', 'Destination hospital', 'text', required=True),
+            field('destination_hospital', 'Destination hospital', 'choice_other', required=True, choices=HOSPITAL_CHOICES),
             field('transport_reason', 'Reason for transport', 'choice', required=True, choices=[
                 ('referral', 'Referral'), ('dialysis', 'Dialysis'), ('discharge', 'Discharge / going home'),
                 ('transfer', 'Hospital transfer'), ('check_up', 'Check-up'), ('other', 'Other'),
@@ -202,6 +206,7 @@ INCIDENT_TYPES = {
                 ('dizziness', 'Dizziness'), ('fainting', 'Fainting'), ('hypertension', 'High blood pressure'),
                 ('other', 'Other'),
             ]),
+            field('hospital', 'Hospital referred to', 'choice_other', choices=HOSPITAL_CHOICES),
         ],
         'victim_fields': [],
     },
@@ -247,7 +252,8 @@ def _clean_value(spec, value):
     if value is None or (isinstance(value, str) and value.strip() == '') or (kind == 'multi_choice' and value == []):
         return None, None
 
-    if kind == 'text':
+    if kind in ('text', 'choice_other'):
+        # choice_other: a listed choice or any other typed value, so it is checked like text.
         text = str(value).strip()
         if len(text) > TEXT_MAX_LENGTH:
             return None, f'must be {TEXT_MAX_LENGTH} characters or fewer'
@@ -389,10 +395,8 @@ def detail_table_values(incident_type, details, victim_count):
     if key == 'fire':
         return 'fire', {
             'cause': label_of('suspected_cause', details.get('suspected_cause', '')) or '',
-            'damage_estimate': (
-                Decimal(str(details['estimated_damage'])).quantize(Decimal('0.01'))
-                if details.get('estimated_damage') is not None else None
-            ),
+            # Estimated damage is no longer asked on the report form.
+            'damage_estimate': None,
             'casualties': details.get('fatalities', 0),
             'injuries': victim_count,
             'structures_affected': details.get('structures_affected', 0),
@@ -409,7 +413,8 @@ def detail_table_values(incident_type, details, victim_count):
 
     if key == 'crime':
         return 'crime', {
-            'crime_type': label_of('crime_type', details.get('crime_type', '')) or 'Crime',
+            # The report form no longer asks for the type of crime.
+            'crime_type': 'Crime',
             'suspects': details.get('suspects', 0),
             'victims': victim_count,
             'arrested': details.get('suspect_status') == 'apprehended',
