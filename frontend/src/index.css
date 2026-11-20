@@ -9,6 +9,11 @@
 		font-family: 'Inter', sans-serif;
 	}
 
+	/* Installed app on iPhone: keep the bottom navigation above the home bar. */
+	.pb-safe {
+		padding-bottom: env(safe-area-inset-bottom);
+	}
+
 	.leaflet-barangay-tooltip {
 		background: rgba(15, 23, 42, 0.94);
 		border: 1px solid rgba(56, 189, 248, 0.24);

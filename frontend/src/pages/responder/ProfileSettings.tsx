@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import { getCurrentUserProfile, logoutUser } from '../../services/auth'
 import { MobileNavBar } from '../../components/MobileNavBar'
 import { ResponderPageHeader } from '../../components/ResponderPageHeader'
+import { InstallAppCard } from '../../components/InstallAppCard'
 import { getAccountTeam } from '../../data/teams'
 
 interface TeamMember {
@@ -17,9 +18,7 @@ interface TeamMember {
 interface ProfileData {
   teamLeaderName: string
   teamName: string
-  badgeId: string
   contactNumber: string
-  stationAddress: string
 }
 
 const RESPONDER_PROFILE_STORAGE_KEY = 'responderProfileSettingsData'
@@ -28,9 +27,7 @@ const RESPONDER_TEAM_STORAGE_KEY = 'responderTeamMembers'
 const defaultProfileData = (profileFullName?: string): ProfileData => ({
   teamLeaderName: profileFullName || 'Team Leader',
   teamName: '',
-  badgeId: 'RES-2026-0982',
   contactNumber: '09123456789',
-  stationAddress: 'Zone 4, Lucena City Command Center',
 })
 
 function loadSavedResponderProfile(): ProfileData | null {
@@ -239,22 +236,14 @@ const ProfileSettingsPage: FC = () => {
               <dt className="text-slate-500">Full name</dt>
               <dd className="truncate font-semibold text-slate-900">{profileData.teamLeaderName}</dd>
             </div>
-            <div className="flex items-center justify-between gap-4 px-4 py-3">
-              <dt className="text-slate-500">Badge ID</dt>
-              <dd className="font-mono font-semibold text-slate-900">{profileData.badgeId}</dd>
-            </div>
           </dl>
           <p className="border-t border-slate-100 bg-slate-50/60 px-4 py-2.5 text-xs text-slate-500">
-            Your team, name and badge ID are set by an admin.
+            Your team and name are set by an admin.
           </p>
         </section>
 
         <form onSubmit={handleProfileSubmit} className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm" aria-label="Contact details">
           <h2 className="text-sm font-black text-slate-900">Contact details</h2>
-          <div>
-            <label htmlFor="stationAddress" className={labelClass}>Station address</label>
-            <input id="stationAddress" type="text" name="stationAddress" value={profileData.stationAddress} onChange={handleProfileChange} className={fieldClass} />
-          </div>
           <div>
             <label htmlFor="contactNumber" className={labelClass}>Emergency contact number</label>
             <input id="contactNumber" type="tel" inputMode="tel" name="contactNumber" value={profileData.contactNumber} onChange={handleProfileChange} className={fieldClass} />
@@ -360,6 +349,8 @@ const ProfileSettingsPage: FC = () => {
             )}
           </ul>
         </section>
+
+        <InstallAppCard variant="section" />
 
         <button
           type="button"

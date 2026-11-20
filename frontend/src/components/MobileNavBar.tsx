@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { getCurrentUserProfile } from '../services/auth'
 
@@ -5,6 +6,17 @@ export function MobileNavBar() {
   const navigate = useNavigate()
   const location = useLocation()
   const profile = getCurrentUserProfile()
+  const [isOnline, setIsOnline] = useState(() => (typeof navigator === 'undefined' ? true : navigator.onLine))
+
+  useEffect(() => {
+    const update = () => setIsOnline(navigator.onLine)
+    window.addEventListener('online', update)
+    window.addEventListener('offline', update)
+    return () => {
+      window.removeEventListener('online', update)
+      window.removeEventListener('offline', update)
+    }
+  }, [])
 
   const displayName = profile?.fullName?.trim() || 'Responder'
   const initials = displayName
@@ -58,6 +70,15 @@ export function MobileNavBar() {
   ]
 
   return (
+    <>
+    {!isOnline ? (
+      <p
+        className="sm:hidden fixed inset-x-0 top-2 z-[70] mx-auto w-fit max-w-[92vw] rounded-full bg-slate-900/95 px-3.5 py-1.5 text-center text-[11px] font-semibold text-white shadow-lg"
+        role="status"
+      >
+        You are offline. New reports are saved on this phone.
+      </p>
+    ) : null}
     <nav className="sm:hidden fixed bottom-0 left-0 right-0 bg-white/80 backdrop-blur-xl border-t border-slate-200/60 pb-safe shadow-[0_-8px_30px_rgb(0,0,0,0.04)] z-50 px-2">
       <div className="relative flex justify-between items-center h-16 max-w-md mx-auto px-2">
         
@@ -121,5 +142,6 @@ export function MobileNavBar() {
 
       </div>
     </nav>
+    </>
   )
 }
