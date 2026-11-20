@@ -664,24 +664,8 @@ export function LoginPage({ onRequestRegister, onRequestAdminLogin: _onRequestAd
                   {!otpStep ? (
                     // Phones are for responders, whose accounts are made by an admin: no sign-up link there.
                     <div>
-                    <div className="space-y-4 md:hidden">
+                    <div className="md:hidden">
                       <p className="text-center text-xs text-slate-500">No account yet? Ask your LCDRRMO admin to make one for you.</p>
-                      <button
-                        type="button"
-                        onClick={() => navigate('/emergency-hotlines')}
-                        className="flex w-full items-center gap-3 rounded-2xl border border-red-100 bg-red-50/70 p-3.5 text-left transition hover:bg-red-50"
-                      >
-                        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-red-600 text-white shadow-sm">
-                          <AlertCircle className="h-5 w-5" aria-hidden="true" />
-                        </span>
-                        <span className="min-w-0 flex-1">
-                          <span className="block text-sm font-bold text-slate-900">Emergency hotlines</span>
-                          <span className="block text-xs text-slate-500">Call 911 or a local responder</span>
-                        </span>
-                        <svg className="h-4 w-4 shrink-0 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden="true">
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-                        </svg>
-                      </button>
                     </div>
                     <p className="hidden text-center text-xs text-slate-500 md:block">
                       Don't have an account?{' '}
