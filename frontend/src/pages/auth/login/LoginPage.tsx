@@ -1,6 +1,6 @@
 import { motion, AnimatePresence } from 'framer-motion'
 import { useEffect, useRef, useState } from 'react'
-import type { ClipboardEvent, FormEvent, KeyboardEvent } from 'react'
+import type { ClipboardEvent, CSSProperties, FormEvent, KeyboardEvent } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { 
   Mail, 
@@ -461,31 +461,22 @@ export function LoginPage({ onRequestRegister, onRequestAdminLogin: _onRequestAd
 
   return (
     <main
-      className={`relative flex min-h-screen items-center justify-center p-4 text-slate-700 sm:p-8 ${modalMode ? 'bg-transparent' : 'bg-cover bg-center'}`}
-      style={
-        modalMode
-          ? undefined
-          : {
-              backgroundImage: `url(${landingPageImage})`,
-              backgroundRepeat: 'no-repeat',
-              backgroundAttachment: 'fixed',
-              backgroundColor: 'rgba(15, 32, 67, 0.85)',
-              backgroundBlendMode: 'multiply',
-            }
-      }
+      className={`relative min-h-[100dvh] bg-white text-slate-700 md:flex md:items-center md:justify-center md:p-8 ${modalMode ? 'md:bg-transparent' : 'md:bg-[rgba(15,32,67,0.85)] md:bg-cover md:bg-fixed md:bg-center md:bg-no-repeat md:bg-blend-multiply md:[background-image:var(--auth-bg)]'}`}
+      // The photo background shows from tablet width up; on a phone the page is plain white.
+      style={modalMode ? undefined : ({ '--auth-bg': `url(${landingPageImage})` } as CSSProperties)}
     >
       {/* Light Mode Premium Minimalist Container */}
       <div
-        className="mx-auto w-full max-w-5xl overflow-hidden rounded-[2.5rem] border border-slate-200 bg-white/95 backdrop-blur-md shadow-[0_32px_64px_rgba(15,23,42,0.12)]"
+        className="w-full overflow-hidden bg-white md:mx-auto md:max-w-5xl md:rounded-[2.5rem] md:border md:border-slate-200 md:bg-white/95 md:shadow-[0_32px_64px_rgba(15,23,42,0.12)] md:backdrop-blur-md"
         onClick={(event) => modalMode && event.stopPropagation()}
       >
-        <div className="grid min-h-[660px] md:grid-cols-12">
+        <div className="grid min-h-[100dvh] grid-rows-[auto_1fr] md:min-h-[660px] md:grid-cols-12 md:grid-rows-none">
           
           {/* Left Panel: Corporate Cinematic Navy Banner */}
 {/* Left Panel: Corporate Cinematic Navy Banner */}
 <motion.section
   animate={{ opacity: 1, x: 0 }}
-  className="relative md:col-span-5 flex flex-col justify-center overflow-hidden bg-gradient-to-t from-[#0b2a57] via-[#10356c] to-[#0b2a57] p-6 border-b md:border-b-0 md:border-r border-slate-100"
+  className="relative min-w-0 md:col-span-5 flex flex-col justify-center overflow-hidden bg-gradient-to-t from-[#0b2a57] via-[#10356c] to-[#0b2a57] px-6 pb-6 pt-[max(1.5rem,env(safe-area-inset-top))] md:p-6 border-b md:border-b-0 md:border-r border-slate-100"
   initial={{ opacity: 0, x: -40 }}
   transition={{ duration: 0.5, ease: 'easeOut' }}
 >
@@ -507,7 +498,7 @@ export function LoginPage({ onRequestRegister, onRequestAdminLogin: _onRequestAd
       <img 
         src={drrmoLogo} 
         alt="DRRMO logo" 
-        className="h-full w-full object-contain filter drop-shadow-[0_16px_32px_rgba(0,0,0,0.35)]" 
+        className="h-full max-h-32 w-full object-contain filter drop-shadow-[0_16px_32px_rgba(0,0,0,0.35)] md:max-h-none" 
       />
     </motion.button>
     
@@ -521,20 +512,20 @@ export function LoginPage({ onRequestRegister, onRequestAdminLogin: _onRequestAd
           {/* Right Panel: Light Form Layout */}
           <motion.section
             animate={{ opacity: 1, x: 0 }}
-            className="md:col-span-7 bg-white p-8 sm:p-12 flex flex-col justify-center"
+            className="min-w-0 md:col-span-7 bg-white px-6 py-8 sm:p-12 flex flex-col justify-start md:justify-center"
             initial={{ opacity: 0, x: 40 }}
             transition={{ duration: 0.5, ease: 'easeOut' }}
           >
             <div className="w-full max-w-md mx-auto space-y-8">
               <div>
-                <h1 className="text-3xl font-bold tracking-tight text-slate-900">Welcome Back</h1>
+                <h1 className="text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">Welcome Back</h1>
                 <p className="mt-2 text-sm text-slate-500">
                   {otpStep ? 'Enter the secure OTP code sent to your email.' : 'Sign in to access your dashboard management workspace.'}
                 </p>
               </div>
 
               {/* Progress Stepper Component */}
-              <div className="flex items-center gap-3 text-[11px] font-semibold uppercase tracking-widest text-slate-400">
+              <div className="hidden items-center gap-3 text-[11px] font-semibold uppercase tracking-widest text-slate-400 md:flex">
                 <span className={`inline-flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold transition-colors ${!otpStep ? 'bg-[#0b2a57] text-white shadow-[0_4px_10px_rgba(11,42,87,0.25)]' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'}`}>
                   1
                 </span>
@@ -655,7 +646,8 @@ export function LoginPage({ onRequestRegister, onRequestAdminLogin: _onRequestAd
                 {/* Sub-navigation Links */}
                 <AnimatePresence mode="wait">
                   {!otpStep ? (
-                    <p className="text-center text-xs text-slate-500">
+                    // Phones are for responders, whose accounts are made by an admin: no sign-up link there.
+                    <p className="hidden text-center text-xs text-slate-500 md:block">
                       Don't have an account?{' '}
                       {onRequestRegister ? (
                         <button className="font-semibold text-slate-700 hover:text-[#0b2a57]  transition" onClick={onRequestRegister} type="button">

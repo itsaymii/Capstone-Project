@@ -5,6 +5,13 @@
 @tailwind utilities;
 
 @layer base {
+	html {
+		/* Keep the app at its own size on phones: no double-tap zoom, no text resizing on rotate. */
+		touch-action: manipulation;
+		-webkit-text-size-adjust: 100%;
+		text-size-adjust: 100%;
+	}
+
 	body {
 		font-family: 'Inter', sans-serif;
 	}
