@@ -1,6 +1,6 @@
 import { motion } from 'framer-motion'
 import { useEffect, useRef, useState } from 'react'
-import type { ClipboardEvent, FormEvent, KeyboardEvent } from 'react'
+import type { ClipboardEvent, CSSProperties, FormEvent, KeyboardEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { useNavigate } from 'react-router-dom'
 import { requestRegisterOtp, verifyRegisterOtpCode } from '../../../services/auth'
@@ -364,35 +364,26 @@ export function RegisterPage({ onRequestLogin, onRegistered, modalMode = false }
   return (
     <main
       // Idinagdag ang bg-cover background ng LandingPage.jpg na may navy blend overlay para maging kamukha ng Login Page
-      className={`relative flex min-h-screen items-center justify-center p-4 text-slate-800 sm:p-8 ${
-        modalMode ? 'bg-transparent' : 'bg-cover bg-center'
+      className={`relative min-h-[100dvh] bg-white text-slate-800 md:flex md:items-center md:justify-center md:p-8 ${
+        modalMode ? 'md:bg-transparent' : 'md:bg-[rgba(15,32,67,0.85)] md:bg-cover md:bg-fixed md:bg-center md:bg-no-repeat md:bg-blend-multiply md:[background-image:var(--auth-bg)]'
       }`}
-      style={
-        modalMode
-          ? undefined
-          : {
-              backgroundImage: `url(${landingPageImage})`,
-              backgroundRepeat: 'no-repeat',
-              backgroundAttachment: 'fixed',
-              backgroundColor: 'rgba(15, 32, 67, 0.85)',
-              backgroundBlendMode: 'multiply',
-            }
-      }
+      // The photo background shows from tablet width up; on a phone the page is plain white.
+      style={modalMode ? undefined : ({ '--auth-bg': `url(${landingPageImage})` } as CSSProperties)}
     >
       <div
-        className="mx-auto w-full max-w-5xl overflow-hidden rounded-[2.5rem] border border-slate-200 bg-white/95 backdrop-blur-md shadow-[0_32px_64px_rgba(15,23,42,0.12)]"
+        className="w-full overflow-hidden bg-white md:mx-auto md:max-w-5xl md:rounded-[2.5rem] md:border md:border-slate-200 md:bg-white/95 md:shadow-[0_32px_64px_rgba(15,23,42,0.12)] md:backdrop-blur-md"
         onClick={(event) => {
           if (modalMode) {
             event.stopPropagation()
           }
         }}
       >
-        <div className="grid min-h-[680px] md:grid-cols-12">
+        <div className="grid min-h-[100dvh] grid-rows-[auto_1fr] md:min-h-[680px] md:grid-cols-12 md:grid-rows-none">
           
           {/* LEFT SIDE: REGISTRATION FORM PANEL (Nasa Kaliwa na ito ngayon) */}
           <motion.section
             animate={{ opacity: 1, x: 0 }}
-            className="md:col-span-7 p-8 sm:p-10 flex flex-col justify-center bg-[radial-gradient(circle_at_bottom_left,#f7faff_0%,#ffffff_70%)] relative order-2 md:order-1"
+            className="min-w-0 md:col-span-7 px-6 py-8 sm:p-10 flex flex-col justify-center bg-[radial-gradient(circle_at_bottom_left,#f7faff_0%,#ffffff_70%)] relative order-2 md:order-1"
             initial={{ opacity: 0, x: -40 }}
             transition={{ duration: 0.5, ease: 'easeOut' }}
           >
@@ -400,14 +391,14 @@ export function RegisterPage({ onRequestLogin, onRegistered, modalMode = false }
             <div className="absolute top-0 left-1/4 h-56 w-56 rounded-full bg-blue-50/40 blur-3xl pointer-events-none" />
 
             <div className="relative z-10">
-              <h1 className="text-3xl font-bold tracking-tight text-slate-900">Create Account</h1>
+              <h1 className="text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">Create Account</h1>
               <p className="mt-1.5 text-sm text-slate-500">
                 {otpStep ? 'Enter the security key sent to your email.' : 'Sign up to create your workspace dashboard credentials.'}
               </p>
             </div>
 
             {/* Progress Stepper */}
-            <div className="relative z-10 mt-6 flex items-center gap-3 text-xs font-semibold uppercase tracking-wide text-slate-400">
+            <div className="relative z-10 mt-6 flex flex-wrap items-center gap-x-2 gap-y-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400 sm:gap-3 sm:text-xs">
               <span
                 className={`inline-flex h-6 w-6 items-center justify-center rounded-full text-[11px] border font-bold ${
                   registrationStep === 1 && !otpStep ? 'border-[#0b2a57] bg-[#0b2a57] text-white shadow-[0_4px_10px_rgba(11,42,87,0.25)]' : 'border-emerald-600 bg-emerald-600 text-white'
@@ -416,7 +407,7 @@ export function RegisterPage({ onRequestLogin, onRegistered, modalMode = false }
                 1
               </span>
               <span className={registrationStep === 1 && !otpStep ? 'text-slate-800 font-bold' : 'text-slate-400'}>Account</span>
-              <span className="h-px w-6 bg-slate-200" />
+              <span className="h-px w-3 bg-slate-200 sm:w-6" />
               <span
                 className={`inline-flex h-6 w-6 items-center justify-center rounded-full text-[11px] border font-bold ${
                   registrationStep === 2 && !otpStep ? 'border-[#0b2a57] bg-[#0b2a57] text-white shadow-[0_4px_10px_rgba(11,42,87,0.25)]' : otpStep ? 'border-emerald-600 bg-emerald-600 text-white' : 'border-slate-200 bg-white text-slate-400'
@@ -425,7 +416,7 @@ export function RegisterPage({ onRequestLogin, onRegistered, modalMode = false }
                 2
               </span>
               <span className={registrationStep === 2 && !otpStep ? 'text-slate-800 font-bold' : 'text-slate-400'}>Residency</span>
-              <span className="h-px w-6 bg-slate-200" />
+              <span className="h-px w-3 bg-slate-200 sm:w-6" />
               <span className={`inline-flex h-6 w-6 items-center justify-center rounded-full text-[11px] border font-bold ${otpStep ? 'border-[#0b2a57] bg-[#0b2a57] text-white shadow-[0_4px_10px_rgba(11,42,87,0.25)]' : 'border-slate-200 bg-white text-slate-400'}`}>3</span>
               <span className={otpStep ? 'text-slate-800 font-bold' : 'text-slate-400'}>Email</span>
             </div>
@@ -704,7 +695,7 @@ export function RegisterPage({ onRequestLogin, onRegistered, modalMode = false }
           {/* RIGHT SIDE: BRANDING PANEL WITH LOGO (Nasa Kanan at ginamitan ng justify-center para maging pantay ang posisyon) */}
           <motion.section
             animate={{ opacity: 1, x: 0 }}
-            className="relative md:col-span-5 flex flex-col justify-center overflow-hidden bg-gradient-to-t from-[#0b2a57] via-[#10356c] to-[#0b2a57] p-6 border-t md:border-t-0 md:border-l border-slate-100 order-1 md:order-2"
+            className="relative min-w-0 md:col-span-5 flex flex-col justify-center overflow-hidden bg-gradient-to-t from-[#0b2a57] via-[#10356c] to-[#0b2a57] px-6 pb-6 pt-[max(1.5rem,env(safe-area-inset-top))] md:p-6 border-t md:border-t-0 md:border-l border-slate-100 order-1 md:order-2"
             initial={{ opacity: 0, x: 40 }}
             transition={{ duration: 0.5, ease: 'easeOut' }}
           >
@@ -726,7 +717,7 @@ export function RegisterPage({ onRequestLogin, onRegistered, modalMode = false }
                 <img 
                   src={drrmoLogo} 
                   alt="DRRMO logo" 
-                  className="h-full w-full object-contain filter drop-shadow-[0_16px_32px_rgba(0,0,0,0.35)]" 
+                  className="h-full max-h-32 w-full object-contain filter drop-shadow-[0_16px_32px_rgba(0,0,0,0.35)] md:max-h-none" 
                 />
               </motion.button>
               

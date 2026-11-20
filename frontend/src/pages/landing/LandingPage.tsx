@@ -846,7 +846,18 @@ export function LandingPage() {
       </div>
 
       {isModalOpen ? (
-        <div className="fixed inset-0 z-50 bg-slate-900/25 backdrop-blur-[1px]" onClick={closeModal}>
+        <div className="fixed inset-0 z-50 bg-white md:bg-slate-900/25 md:backdrop-blur-[1px]" onClick={closeModal}>
+          {/* On a phone the form fills the screen, so there is no backdrop to tap: give it a close button. */}
+          <button
+            type="button"
+            onClick={closeModal}
+            aria-label="Close"
+            className="fixed right-3 top-[max(0.75rem,env(safe-area-inset-top))] z-[60] flex h-10 w-10 items-center justify-center rounded-full bg-white/15 text-white backdrop-blur-sm transition hover:bg-white/25 md:hidden"
+          >
+            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
           <div className="h-full overflow-auto">
             {activeModal === 'sign-in' ? (
               <LoginPage
