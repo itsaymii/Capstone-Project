@@ -70,12 +70,16 @@ export function MobileNavBar() {
   ]
 
   return (
+    <>
+    {!isOnline ? (
+      <p
+        className="sm:hidden fixed inset-x-0 top-2 z-[70] mx-auto w-fit max-w-[92vw] rounded-full bg-slate-900/95 px-3.5 py-1.5 text-center text-[11px] font-semibold text-white shadow-lg"
+        role="status"
+      >
+        You are offline. New reports are saved on this phone.
+      </p>
+    ) : null}
     <nav className="sm:hidden fixed bottom-0 left-0 right-0 bg-white/80 backdrop-blur-xl border-t border-slate-200/60 pb-safe shadow-[0_-8px_30px_rgb(0,0,0,0.04)] z-50 px-2">
-      {!isOnline ? (
-        <p className="-mx-2 bg-slate-900 px-4 py-1.5 text-center text-[11px] font-semibold text-white" role="status">
-          You are offline. New reports are saved on this phone.
-        </p>
-      ) : null}
       <div className="relative flex justify-between items-center h-16 max-w-md mx-auto px-2">
         
         {navItems.map((item) => {
@@ -138,5 +142,6 @@ export function MobileNavBar() {
 
       </div>
     </nav>
+    </>
   )
 }
