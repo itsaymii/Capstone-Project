@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
+import { isInstalledApp } from '../pwa'
 
 // ✅ Public/Auth pages (named exports - OK)
 import { LoginPage } from '../pages/auth/login/LoginPage'
@@ -55,8 +56,9 @@ export function AppRouter() {
   return (
     <Routes>
       {/* Public Routes */}
-      <Route path="/" element={<CitizenRoute element={<LandingPage />} />} />
-      <Route path="/landing" element={<CitizenRoute element={<LandingPage />} />} />
+      {/* The installed phone app is for responders: it opens on the login page, never the public landing page. */}
+      <Route path="/" element={isInstalledApp() ? <Navigate replace to="/login" /> : <CitizenRoute element={<LandingPage />} />} />
+      <Route path="/landing" element={isInstalledApp() ? <Navigate replace to="/login" /> : <CitizenRoute element={<LandingPage />} />} />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<CitizenRoute element={<RegisterPage />} />} />
 
