@@ -6,11 +6,14 @@ import { WaitingReportsCard } from '../../components/WaitingReportsCard'
 import { InstallAppCard } from '../../components/InstallAppCard'
 import { getCurrentUserProfile } from '../../services/auth'
 import { getLatestIncidentReports } from '../../services/incidents'
-import { getIncidentCategoryKey, getIncidentCategoryMeta } from '../../data/incidentCategories'
+import { ReportListCard, ReportRow, SheetHeader, StatusText, formatReportWhen, incidentTypeMeta } from '../../components/ResponderReportUI'
 import { getAccountTeam, toTeamName } from '../../data/teams'
 
 interface Incident {
   id: string
+  /** The raw incident type, for the type tag. */
+  rawType: string
+  createdAt: string
   type: string
   typeColor: string
   location: string
@@ -29,8 +32,8 @@ const HIDDEN_FOR_OTHER_TEAMS = 'Only the filing team can see this. It may name t
 
 // Same type names and colors as Create Report and the admin pages.
 const mapIncidentType = (type: string) => {
-  const meta = getIncidentCategoryMeta(getIncidentCategoryKey({ incidentType: type }))
-  return { type: meta.key === 'other' && type ? type : meta.label, typeColor: meta.color }
+  const meta = incidentTypeMeta(type)
+  return { type: meta.label, typeColor: meta.color }
 }
 
 const formatTimeOfDay = (value: string) => {
@@ -40,7 +43,8 @@ const formatTimeOfDay = (value: string) => {
   return `${hours % 12 || 12}:${match[2]} ${hours < 12 ? 'AM' : 'PM'}`
 }
 
-const casualtyLabel = (count: number) => `${count} ${count === 1 ? 'Casualty' : 'Casualties'}`
+// Same wording as the Incidents and Reports pages.
+const casualtyLabel = (count: number) => `${count} ${count === 1 ? 'person' : 'people'} involved`
 
 export const ResponderDashboardPage: FC = () => {
   const navigate = useNavigate()
@@ -62,7 +66,9 @@ export const ResponderDashboardPage: FC = () => {
           const isApproved = normalizedStatus.includes('approved') || normalizedStatusUpdate.includes('approved')
 
           return {
-            id: report.incidentCode || report.reportCode || report.id,
+            id: report.reportCode || report.incidentCode || report.id,
+            rawType: report.incidentType || report.incident_type || '',
+            createdAt: report.createdAt || report.created_at || '',
             ...mapIncidentType(report.incidentType || report.incident_type || ''),
             location: report.location || 'Unknown location',
             timeOccurred: formatTimeOfDay(report.timeOccurred || report.time_occurred || ''),
@@ -103,34 +109,24 @@ export const ResponderDashboardPage: FC = () => {
   const renderIncidentRow = (incident: Incident) => {
     const isPending = incident.status === 'Awaiting approval'
     return (
-      <li key={incident.id}>
-        <button
-          type="button"
-          onClick={() => handleRowActivation(incident)}
-          className="flex w-full items-stretch gap-3 px-4 py-3 text-left transition-colors hover:bg-slate-50 focus:outline-none focus-visible:bg-slate-50"
-        >
-          <span className="w-1 shrink-0 rounded-full" style={{ backgroundColor: incident.typeColor }} aria-hidden="true" />
-          <span className="min-w-0 flex-1">
-            <span className="flex items-center justify-between gap-2">
-              <span className="truncate text-sm font-bold text-slate-900">{incident.type}</span>
-              <span className="shrink-0 text-xs font-semibold text-slate-400">{incident.timeOccurred}</span>
-            </span>
-            <span className="mt-0.5 block truncate text-xs text-slate-500">{incident.location}</span>
-            <span className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-semibold">
-              <span className={`inline-flex items-center gap-1.5 ${isPending ? 'text-amber-700' : 'text-emerald-700'}`}>
-                <span className={`h-1.5 w-1.5 rounded-full ${isPending ? 'bg-amber-500' : 'bg-emerald-500'}`} aria-hidden="true" />
-                {incident.status}
-              </span>
-              {incident.responderTeam ? <span className="text-slate-400">Team {incident.responderTeam}</span> : null}
-              {incident.victimCount > 0 ? <span className="text-rose-600">{casualtyLabel(incident.victimCount)}</span> : null}
-            </span>
-          </span>
-        </button>
-      </li>
+      <ReportRow
+        key={incident.id}
+        color={incident.typeColor}
+        title={incident.type}
+        when={formatReportWhen(incident.createdAt) || incident.timeOccurred}
+        subtitle={incident.location}
+        onOpen={() => handleRowActivation(incident)}
+        openLabel={`Open ${incident.id}, ${incident.type}`}
+        meta={
+          <>
+            <StatusText tone={isPending ? 'amber' : 'green'}>{incident.status}</StatusText>
+            {incident.responderTeam ? <span className="font-semibold text-slate-400">Team {incident.responderTeam}</span> : null}
+            {incident.victimCount > 0 ? <span className="font-semibold text-rose-600">{casualtyLabel(incident.victimCount)}</span> : null}
+          </>
+        }
+      />
     )
   }
-
-  const getIncidentTypeStyle = (color: string) => ({ color, borderColor: `${color}55`, backgroundColor: `${color}14` })
 
   return (
     <div className="min-h-screen bg-slate-100 pb-28 pt-4 text-slate-800 antialiased">
@@ -170,12 +166,20 @@ export const ResponderDashboardPage: FC = () => {
 
         <InstallAppCard />
 
-        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm" aria-labelledby="recent-reports">
-          <div className="flex items-baseline justify-between gap-3 border-b border-slate-100 px-4 py-3">
-            <h2 id="recent-reports" className="text-sm font-black text-slate-900">Latest reports</h2>
-            <span className="text-xs text-slate-400">All teams</span>
-          </div>
-
+        <ReportListCard
+          labelledBy="recent-reports"
+          title="Latest reports"
+          aside={<span className="text-slate-400">All teams</span>}
+          footer={
+            <button
+              type="button"
+              onClick={() => navigate('/responder-incidents')}
+              className="w-full border-t border-slate-100 bg-slate-50/60 py-3.5 text-sm font-bold text-blue-700 transition-colors hover:bg-slate-100/60"
+            >
+              See all incident reports
+            </button>
+          }
+        >
           {isLoadingReports ? (
             <p className="p-5 text-sm text-slate-500">Loading reports…</p>
           ) : reportError ? (
@@ -185,15 +189,7 @@ export const ResponderDashboardPage: FC = () => {
           ) : (
             <ul className="divide-y divide-slate-100">{recentIncidents.slice(0, 5).map(renderIncidentRow)}</ul>
           )}
-
-          <button
-            type="button"
-            onClick={() => navigate('/responder-incidents')}
-            className="w-full border-t border-slate-100 bg-slate-50/60 py-3.5 text-sm font-bold text-blue-700 transition-colors hover:bg-slate-100/60"
-          >
-            See all incident reports
-          </button>
-        </section>
+        </ReportListCard>
       </main>
 
       {/* Premium Incident Ledger Review Modal */}
@@ -206,55 +202,40 @@ export const ResponderDashboardPage: FC = () => {
             aria-modal="true"
             aria-label={`Incident ${selectedIncident.id}`}
           >
-            <div className="mx-auto mt-2.5 h-1.5 w-10 shrink-0 rounded-full bg-slate-200" aria-hidden="true" />
-            <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
-              <div className="space-y-1">
-                <div className="flex items-center gap-2">
-                  <h2 className="text-lg font-black text-slate-900 tracking-tight font-mono">{selectedIncident.id}</h2>
-                  <span style={getIncidentTypeStyle(selectedIncident.typeColor)} className="inline-flex items-center text-[9px] font-extrabold tracking-wider uppercase px-2 py-0.5 border rounded-md">
-                    {selectedIncident.type}
-                  </span>
-                </div>
-                <p className="text-xs text-slate-500 font-medium">Team {selectedIncident.responderTeam || 'not set'}</p>
-              </div>
-              <button 
-                onClick={() => setSelectedIncident(null)} 
-                className="p-2 text-sm text-slate-400 hover:text-slate-600 hover:bg-slate-200/60 rounded-md transition-colors active:scale-95"
-                aria-label="Close"
-              >
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
+            <SheetHeader
+              title={selectedIncident.id}
+              subtitle={`Team ${selectedIncident.responderTeam || 'not set'}`}
+              type={selectedIncident.rawType}
+              onClose={() => setSelectedIncident(null)}
+            />
 
             <div className="p-5 pb-8 overflow-y-auto space-y-5 text-slate-700">
               <div className="grid grid-cols-2 gap-4 bg-slate-50/60 p-4 rounded-xl border border-slate-100 text-xs">
                 <div>
-                  <span className="text-slate-400 block font-bold uppercase tracking-wider text-[9px]">Time it happened</span>
+                  <span className="block text-xs font-semibold text-slate-500">Time it happened</span>
                   <span className="font-semibold text-slate-800 text-sm mt-0.5 block">{selectedIncident.timeOccurred}</span>
                 </div>
                 <div>
-                  <span className="text-slate-400 block font-bold uppercase tracking-wider text-[9px]">Status</span>
+                  <span className="block text-xs font-semibold text-slate-500">Status</span>
                   <span className={`inline-flex items-center font-bold text-xs mt-1 ${selectedIncident.status === 'Awaiting approval' ? 'text-amber-600' : 'text-emerald-600'}`}>
                     <span className={`w-1.5 h-1.5 rounded-full mr-1.5 ${selectedIncident.status === 'Awaiting approval' ? 'bg-amber-500' : 'bg-emerald-500'}`}></span>
                     {selectedIncident.status}
                   </span>
                 </div>
                 <div>
-                  <span className="text-slate-400 block font-bold uppercase tracking-wider text-[9px]">People involved</span>
+                  <span className="block text-xs font-semibold text-slate-500">People involved</span>
                   <span className={`font-semibold text-sm mt-0.5 block ${selectedIncident.victimCount > 0 ? 'text-rose-600 font-bold' : 'text-slate-600'}`}>
                     {casualtyLabel(selectedIncident.victimCount)}
                   </span>
                 </div>
                 <div>
-                  <span className="text-slate-400 block font-bold uppercase tracking-wider text-[9px]">Responding team</span>
+                  <span className="block text-xs font-semibold text-slate-500">Responding team</span>
                   <span className="font-semibold text-slate-800 text-sm mt-0.5 block truncate">{selectedIncident.responderTeam || 'Unassigned'}</span>
                 </div>
               </div>
 
               <div className="space-y-1">
-                <span className="text-slate-400 block font-bold uppercase tracking-wider text-[9px]">Location</span>
+                <span className="block text-xs font-semibold text-slate-500">Location</span>
                 <div className="flex items-start gap-2 bg-slate-50/40 p-3 rounded-xl border border-slate-100">
                   <svg className="w-4 h-4 text-slate-400 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M15 10.5a3 3 0 11-6 0 3 3 0 016 0z" />
@@ -265,7 +246,7 @@ export const ResponderDashboardPage: FC = () => {
               </div>
 
               <div className="space-y-1">
-                <span className="text-slate-400 block font-bold uppercase tracking-wider text-[9px]">Description</span>
+                <span className="block text-xs font-semibold text-slate-500">Description</span>
                 <div className="bg-slate-50/40 p-3.5 rounded-xl border border-slate-100 min-h-[60px]">
                   <p className="text-xs text-slate-600 leading-relaxed whitespace-pre-line font-medium">
                     {selectedIncident.personalDataHidden
@@ -276,7 +257,7 @@ export const ResponderDashboardPage: FC = () => {
               </div>
 
               <div className="space-y-1">
-                <span className="text-slate-400 block font-bold uppercase tracking-wider text-[9px]">Action taken</span>
+                <span className="block text-xs font-semibold text-slate-500">Action taken</span>
                 <div className="bg-blue-50/10 p-3.5 rounded-xl border border-blue-100/50 min-h-[60px]">
                   <p className="text-xs text-slate-700 leading-relaxed whitespace-pre-line font-medium">
                     {selectedIncident.personalDataHidden

@@ -4,9 +4,11 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { MobileNavBar } from '../../components/MobileNavBar'
 import { ResponderPageHeader } from '../../components/ResponderPageHeader'
 import { clampPage } from '../../components/pagination'
+import { ReportListCard, ReportRow, SheetHeader, StatusText, formatReportWhen, incidentTypeMeta } from '../../components/ResponderReportUI'
+import type { StatusTone } from '../../components/ResponderReportUI'
 import {
-  STAGE_BADGE_CLASSES,
   STAGE_LABELS,
+  isApprovedReport,
   getCurrentResponder,
   getReportStage,
   isOwnReport,
@@ -16,7 +18,6 @@ import axios from 'axios'
 import { getCurrentUserProfile } from '../../services/auth'
 import { addNotification } from '../../services/notifications'
 import { createAccomplishmentReport, getIncidentReports } from '../../services/incidents'
-import { getIncidentCategoryMeta, getIncidentCategoryKey } from '../../data/incidentCategories'
 import { getAccountTeam, toTeamName } from '../../data/teams'
 
 type ViewFilter = 'all' | ReportStage
@@ -156,6 +157,14 @@ function getServerMessage(error: unknown, fallback: string): string {
   const first = Object.values(data)[0]
   if (Array.isArray(first)) return first.map(String).join(' ')
   return typeof first === 'string' ? first : fallback
+}
+
+/** How a report's status reads in the list: its compile stage for your team's reports, approval for others'. */
+function stageStatus(report: IncidentReport, stage: ReportStage): { tone: StatusTone; label: string } {
+  if (stage === 'ready') return { tone: 'green', label: STAGE_LABELS.ready }
+  if (stage === 'awaiting') return { tone: 'amber', label: STAGE_LABELS.awaiting }
+  if (stage === 'compiled') return { tone: 'indigo', label: report.compiledIn ? `In ${report.compiledIn}` : STAGE_LABELS.compiled }
+  return isApprovedReport(report) ? { tone: 'green', label: 'Approved' } : { tone: 'amber', label: 'Awaiting approval' }
 }
 
 const IncidentReportPage: FC = () => {
@@ -326,11 +335,6 @@ const IncidentReportPage: FC = () => {
     }
   }
 
-  const getIncidentBadgeStyle = (type: string) => {
-    const color = getIncidentCategoryMeta(getIncidentCategoryKey({ incidentType: type })).color
-    return { color, borderColor: `${color}55`, backgroundColor: `${color}14` }
-  }
-
   const viewOptions: { value: ViewFilter; label: string }[] = [
     { value: 'all', label: 'All' },
     { value: 'ready', label: STAGE_LABELS.ready },
@@ -354,10 +358,11 @@ const IncidentReportPage: FC = () => {
       <main className="mx-auto max-w-lg space-y-4 px-4">
         <ResponderPageHeader
           title="Incident reports"
+          badge={teamName ? `Team ${teamName}` : 'No team yet'}
           description={
             teamName
-              ? `Reports from all teams. You can compile Team ${teamName}'s approved reports into an accomplishment report.`
-              : 'Reports from all teams. Ask an admin to set your team before you compile reports.'
+              ? 'Every team’s reports. Select your team’s approved ones to compile an accomplishment report.'
+              : 'Every team’s reports. Ask an admin to set your team before you compile reports.'
           }
         />
 
@@ -386,14 +391,19 @@ const IncidentReportPage: FC = () => {
               })}
             </div>
 
-            <input
-              className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm font-medium text-slate-800 placeholder-slate-400 focus:border-blue-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search code, type, or barangay"
-              type="search"
-              aria-label="Search reports"
-              value={searchQuery}
-            />
+            <div className="relative">
+              <svg className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden="true">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M17 10.5a6.5 6.5 0 11-13 0 6.5 6.5 0 0113 0z" />
+              </svg>
+              <input
+                className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-10 pr-4 text-sm font-medium text-slate-800 placeholder-slate-400 focus:border-blue-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search code, type or barangay"
+                type="search"
+                aria-label="Search reports"
+                value={searchQuery}
+              />
+            </div>
 
             <div className="grid grid-cols-[1fr_auto] gap-2">
               <select
@@ -442,116 +452,96 @@ const IncidentReportPage: FC = () => {
             <p className="mt-1 text-xs text-slate-500">Change the search, the incident type, or pick All above.</p>
           </div>
         ) : (
-          <section aria-label="Reports" className="scroll-mt-4 space-y-2.5" ref={listTopRef}>
-            {selectableInView.length > 0 ? (
-              <div className="flex items-center justify-between px-1">
-                <p className="text-xs font-semibold text-slate-500">{showingLabel}</p>
-                <button type="button" onClick={toggleSelectAll} className="text-xs font-bold text-blue-700">
-                  {allInViewSelected ? 'Clear selection' : `Select all ready (${selectableInView.length})`}
-                </button>
-              </div>
-            ) : (
-              <p className="px-1 text-xs font-semibold text-slate-500">{showingLabel}</p>
-            )}
-
-            <ul className="space-y-2.5">
-              {pagedReports.map((report) => {
-                const stage = getReportStage(report, me)
-                const selectable = stage === 'ready'
-                const isSelected = selectedIds.includes(report.id)
-                const createdAt = new Date(getCreatedAt(report))
-                const typeStyle = getIncidentBadgeStyle(getIncidentType(report))
-                const victims = getVictimCount(report)
-
-                return (
-                  <li
-                    key={report.id}
-                    className={`flex items-stretch overflow-hidden rounded-2xl border bg-white shadow-sm transition-colors ${
-                      isSelected ? 'border-blue-500 ring-2 ring-blue-500/20' : 'border-slate-200'
-                    }`}
-                  >
-                    <span className="w-1 shrink-0" style={{ backgroundColor: typeStyle.color }} aria-hidden="true" />
+          <div className="scroll-mt-4" ref={listTopRef}>
+            <ReportListCard
+              labelledBy="report-list"
+              title={showingLabel}
+              aside={
+                selectableInView.length > 0 ? (
+                  <button type="button" onClick={toggleSelectAll} className="font-bold text-blue-700">
+                    {allInViewSelected ? 'Clear selection' : `Select all ready (${selectableInView.length})`}
+                  </button>
+                ) : null
+              }
+              footer={
+                totalPages > 1 ? (
+                  <nav className="flex items-center justify-between gap-2 border-t border-slate-100 bg-slate-50/60 px-3 py-2.5" aria-label="Report pages">
                     <button
                       type="button"
-                      onClick={() => setDetailsReport(report)}
-                      className="min-w-0 flex-1 px-3.5 py-3 text-left focus:outline-none focus-visible:bg-slate-50"
+                      onClick={() => goToPage(currentPage - 1)}
+                      disabled={currentPage === 1}
+                      className="inline-flex items-center gap-1 rounded-lg px-3 py-2 text-sm font-bold text-blue-700 transition-colors hover:bg-white disabled:text-slate-300 disabled:hover:bg-transparent"
                     >
-                      <span className="flex flex-wrap items-center gap-1.5">
-                        <span className="inline-flex rounded-md border px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide" style={typeStyle}>
-                          {getIncidentType(report)}
-                        </span>
-                        <span className={`inline-flex rounded-md border px-2 py-0.5 text-[10px] font-bold ${STAGE_BADGE_CLASSES[stage]}`}>
-                          {stage === 'compiled' && report.compiledIn ? `In ${report.compiledIn}` : STAGE_LABELS[stage]}
-                        </span>
-                        {report.createdByRole === 'admin' ? (
-                          <span className="rounded-md border border-red-100 bg-red-50 px-2 py-0.5 text-[10px] font-extrabold text-red-600">Admin</span>
-                        ) : null}
-                      </span>
-                      <span className="mt-2 block truncate text-sm font-bold text-slate-900">{report.location || 'Location not set'}</span>
-                      <span className="mt-0.5 block text-xs text-slate-500">
-                        {Number.isNaN(createdAt.getTime())
-                          ? 'Date not recorded'
-                          : createdAt.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
-                        {victims > 0 ? `, ${victims} ${victims === 1 ? 'person' : 'people'} involved` : ''}
-                      </span>
-                      <span className="mt-1.5 flex items-center justify-between gap-2">
-                        <span className="truncate font-mono text-[11px] text-slate-400">
-                          {getReportCode(report)} · Team {getResponderTeam(report)}
-                        </span>
-                        <span className="inline-flex shrink-0 items-center gap-0.5 text-xs font-bold text-blue-700">
-                          View details
-                          <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden="true">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-                          </svg>
-                        </span>
-                      </span>
+                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden="true">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+                      </svg>
+                      Previous
                     </button>
-                    {selectable ? (
-                      <label className="flex w-14 shrink-0 cursor-pointer items-center justify-center border-l border-slate-100">
-                        <input
-                          checked={isSelected}
-                          className="h-5 w-5 rounded accent-blue-600"
-                          onChange={() => toggleSelect(report)}
-                          type="checkbox"
-                          aria-label={`Select ${getReportCode(report)} for compiling`}
-                        />
-                      </label>
-                    ) : null}
-                  </li>
-                )
-              })}
-            </ul>
+                    <span className="text-xs font-semibold text-slate-500" aria-current="page">
+                      Page {currentPage} of {totalPages}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => goToPage(currentPage + 1)}
+                      disabled={currentPage === totalPages}
+                      className="inline-flex items-center gap-1 rounded-lg px-3 py-2 text-sm font-bold text-blue-700 transition-colors hover:bg-white disabled:text-slate-300 disabled:hover:bg-transparent"
+                    >
+                      Next
+                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden="true">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                      </svg>
+                    </button>
+                  </nav>
+                ) : null
+              }
+            >
+              <ul className="divide-y divide-slate-100">
+                {pagedReports.map((report) => {
+                  const stage = getReportStage(report, me)
+                  const isSelected = selectedIds.includes(report.id)
+                  const type = incidentTypeMeta(getIncidentType(report))
+                  const victims = getVictimCount(report)
+                  const status = stageStatus(report, stage)
 
-            {totalPages > 1 ? (
-              <nav className="flex items-center justify-between gap-2 pt-1" aria-label="Report pages">
-                <button
-                  type="button"
-                  onClick={() => goToPage(currentPage - 1)}
-                  disabled={currentPage === 1}
-                  className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 shadow-sm transition-colors hover:bg-slate-50 disabled:opacity-40"
-                >
-                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden="true">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
-                  </svg>
-                  Previous
-                </button>
-                <span className="text-sm font-semibold text-slate-600" aria-current="page">
-                  Page {currentPage} of {totalPages}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => goToPage(currentPage + 1)}
-                  disabled={currentPage === totalPages}
-                  className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 shadow-sm transition-colors hover:bg-slate-50 disabled:opacity-40"
-                >
-                  Next
-                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden="true">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-                  </svg>
-                </button>
-              </nav>
-            ) : null}
-          </section>
+                  return (
+                    <ReportRow
+                      key={report.id}
+                      color={type.color}
+                      title={type.label}
+                      when={formatReportWhen(getCreatedAt(report))}
+                      subtitle={report.location || 'Location not set'}
+                      onOpen={() => setDetailsReport(report)}
+                      openLabel={`Open ${getReportCode(report)}, ${type.label}`}
+                      selected={isSelected}
+                      meta={
+                        <>
+                          <StatusText tone={status.tone}>{status.label}</StatusText>
+                          <span className="font-semibold text-slate-400">Team {getResponderTeam(report)}</span>
+                          {victims > 0 ? (
+                            <span className="font-semibold text-rose-600">
+                              {victims} {victims === 1 ? 'person' : 'people'} involved
+                            </span>
+                          ) : null}
+                          {report.createdByRole === 'admin' ? <span className="font-bold text-red-600">Admin</span> : null}
+                        </>
+                      }
+                      trailing={
+                        stage === 'ready' ? (
+                          <input
+                            checked={isSelected}
+                            className="h-5 w-5 cursor-pointer rounded accent-blue-600"
+                            onChange={() => toggleSelect(report)}
+                            type="checkbox"
+                            aria-label={`Select ${getReportCode(report)} for compiling`}
+                          />
+                        ) : undefined
+                      }
+                    />
+                  )
+                })}
+              </ul>
+            </ReportListCard>
+          </div>
         )}
       </main>
 
@@ -587,31 +577,12 @@ const IncidentReportPage: FC = () => {
             aria-modal="true"
             aria-label={`Report ${getReportCode(detailsReport)}`}
           >
-            <div className="mx-auto mt-2.5 h-1.5 w-10 shrink-0 rounded-full bg-slate-200" aria-hidden="true" />
-            <div className="flex items-center justify-between border-b border-slate-100 px-5 py-3">
-              <div className="space-y-1">
-                <div className="flex items-center gap-2.5">
-                  <h2 className="font-mono text-lg font-black tracking-tight text-slate-900">
-                    {getReportCode(detailsReport)}
-                  </h2>
-                  <span className="inline-flex rounded-md border px-2 py-0.5 text-[9px] font-extrabold uppercase tracking-wider" style={getIncidentBadgeStyle(getIncidentType(detailsReport))}>
-                    {getIncidentType(detailsReport)}
-                  </span>
-                </div>
-                <p className="text-xs font-medium text-slate-500">
-                  Filed {new Date(getCreatedAt(detailsReport)).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}
-                </p>
-              </div>
-
-              <button
-                className="rounded-md p-2 text-sm text-slate-400 transition-colors hover:bg-slate-200/60 hover:text-slate-600 active:scale-95"
-                onClick={() => setDetailsReport(null)}
-                title="Close Overview"
-                type="button"
-              >
-                Close
-              </button>
-            </div>
+            <SheetHeader
+              title={getReportCode(detailsReport)}
+              subtitle={`Filed ${new Date(getCreatedAt(detailsReport)).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}`}
+              type={getIncidentType(detailsReport)}
+              onClose={() => setDetailsReport(null)}
+            />
 
             <div className="space-y-5 overflow-y-auto p-5 pb-8 text-slate-700">
               <div className="grid grid-cols-2 gap-x-4 gap-y-4 rounded-xl border border-slate-100 bg-slate-50/60 p-4">
@@ -622,7 +593,7 @@ const IncidentReportPage: FC = () => {
               </div>
 
               <div className="space-y-1">
-                <span className="block text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
+                <span className="block text-xs font-semibold text-slate-500">
                   Location
                 </span>
                 <div className="rounded-xl border border-slate-100 bg-slate-50/40 p-3">
@@ -633,7 +604,7 @@ const IncidentReportPage: FC = () => {
               </div>
 
               <div className="space-y-1">
-                <span className="block text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
+                <span className="block text-xs font-semibold text-slate-500">
                   Description
                 </span>
                 <div className="rounded-xl border border-slate-100 bg-slate-50/40 p-3.5">
@@ -646,7 +617,7 @@ const IncidentReportPage: FC = () => {
               </div>
 
               <div className="space-y-1">
-                <span className="block text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
+                <span className="block text-xs font-semibold text-slate-500">
                   Action taken
                 </span>
                 <div className="rounded-xl border border-blue-100/50 bg-blue-50/10 p-3.5">
@@ -660,7 +631,7 @@ const IncidentReportPage: FC = () => {
 
               <div className="space-y-3 pt-2">
                 <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-                  <h3 className="text-xs font-black uppercase tracking-wider text-slate-700">
+                  <h3 className="text-sm font-black text-slate-900">
                     People involved
                   </h3>
                   <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-600">
@@ -678,13 +649,13 @@ const IncidentReportPage: FC = () => {
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     {detailsReport.victims.map((victim, index) => (
                       <div className="space-y-3 rounded-xl border border-slate-200/80 bg-slate-50/50 p-4 shadow-inner" key={index}>
-                        <p className="text-xs font-extrabold uppercase tracking-wide text-slate-900">
-                          Victim Profile #{index + 1}
+                        <p className="text-xs font-semibold text-slate-500">
+                          Person {index + 1}
                         </p>
 
                         <div className="grid grid-cols-2 gap-y-2 text-xs font-medium">
                           <div className="col-span-2">
-                            <span className="block text-[10px] font-bold uppercase tracking-tight text-slate-400">
+                            <span className="block text-xs font-semibold text-slate-500">
                               Full Name
                             </span>
                             <span className="font-semibold text-slate-800">
@@ -693,7 +664,7 @@ const IncidentReportPage: FC = () => {
                           </div>
 
                           <div>
-                            <span className="block text-[10px] font-bold uppercase tracking-tight text-slate-400">
+                            <span className="block text-xs font-semibold text-slate-500">
                               Age
                             </span>
                             <span className="font-semibold text-slate-800">
@@ -702,7 +673,7 @@ const IncidentReportPage: FC = () => {
                           </div>
 
                           <div>
-                            <span className="block text-[10px] font-bold uppercase tracking-tight text-slate-400">
+                            <span className="block text-xs font-semibold text-slate-500">
                               Gender
                             </span>
                             <span className="font-semibold text-slate-800">
@@ -711,7 +682,7 @@ const IncidentReportPage: FC = () => {
                           </div>
 
                           <div className="col-span-2">
-                            <span className="block text-[10px] font-bold uppercase tracking-tight text-slate-400">
+                            <span className="block text-xs font-semibold text-slate-500">
                               Address
                             </span>
                             <span className="block text-[11px] leading-tight text-slate-700">
@@ -720,7 +691,7 @@ const IncidentReportPage: FC = () => {
                           </div>
 
                           <div className="col-span-2">
-                            <span className="block text-[10px] font-bold uppercase tracking-tight text-slate-400">
+                            <span className="block text-xs font-semibold text-slate-500">
                               Condition
                             </span>
                             <span className="block text-[11px] leading-tight text-slate-700">
@@ -768,7 +739,7 @@ const DetailItem = ({
 
   return (
     <div className="space-y-0.5">
-      <span className="block text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
+      <span className="block text-xs font-semibold text-slate-500">
         {label}
       </span>
 
