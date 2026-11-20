@@ -1,5 +1,6 @@
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from rest_framework.authentication import TokenAuthentication, SessionAuthentication
 from django.db.models import Count, Prefetch, Q
@@ -148,9 +149,19 @@ class ResponderReportViewSet(viewsets.ModelViewSet):
         serializer.save(responder=self.request.user)
 
 
+class IncidentReportPagination(PageNumberPagination):
+    """100 reports a page by default; `?page_size=` asks for fewer (the dashboard's latest few) or more (up to 500)."""
+
+    page_size = 100
+    page_size_query_param = 'page_size'
+    max_page_size = 500
+
+
 class IncidentReportViewSet(viewsets.ModelViewSet):
     queryset = IncidentReport.objects.select_related(
         'created_by',
+        # Read by createdByRole on every report; without it each report costs one more query.
+        'created_by__account_profile',
         'barangay',
         'responder_team_record',
         'road_crash_details',
@@ -170,6 +181,7 @@ class IncidentReportViewSet(viewsets.ModelViewSet):
         'accomplishment_reports',
     ).all()
     serializer_class = IncidentReportSerializer
+    pagination_class = IncidentReportPagination
     authentication_classes = [SessionAuthentication, TokenAuthentication]
 
     # Responders (staff) and admins read; only responders file; only admins edit, approve or delete.

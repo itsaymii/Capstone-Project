@@ -357,10 +357,11 @@ export async function getIncidentByReferenceCode(referenceCode: string): Promise
 }
 
 export async function getIncidentReports(): Promise<IncidentReport[]> {
+  // 500 a page (the server's limit) so a long list takes a few requests, not one per 100 reports.
   const response = await api.get<
     IncidentReport[] | { count: number; next: string | null; results: IncidentReport[] }
   >('/api/incidents/incident-reports/', {
-    params: { ordering: '-created_at', _: Date.now() },
+    params: { ordering: '-created_at', page_size: 500, _: Date.now() },
   })
 
   if (Array.isArray(response.data)) return response.data
@@ -380,6 +381,15 @@ export async function getIncidentReports(): Promise<IncidentReport[]> {
   }
 
   return reports
+}
+
+/** Only the newest few reports, e.g. the dashboard's "Latest reports" list. */
+export async function getLatestIncidentReports(limit = 5): Promise<IncidentReport[]> {
+  const response = await api.get<IncidentReport[] | { results: IncidentReport[] }>('/api/incidents/incident-reports/', {
+    params: { ordering: '-created_at', page_size: limit, _: Date.now() },
+  })
+  const reports = Array.isArray(response.data) ? response.data : response.data.results || []
+  return reports.slice(0, limit)
 }
 
 /**

@@ -5,7 +5,7 @@ import { MobileNavBar } from '../../components/MobileNavBar'
 import { WaitingReportsCard } from '../../components/WaitingReportsCard'
 import { InstallAppCard } from '../../components/InstallAppCard'
 import { getCurrentUserProfile } from '../../services/auth'
-import { getIncidentReports } from '../../services/incidents'
+import { getLatestIncidentReports } from '../../services/incidents'
 import { getIncidentCategoryKey, getIncidentCategoryMeta } from '../../data/incidentCategories'
 import { getAccountTeam, toTeamName } from '../../data/teams'
 
@@ -54,7 +54,7 @@ export const ResponderDashboardPage: FC = () => {
   useEffect(() => {
     async function loadIncidentReports() {
       try {
-        const reports = await getIncidentReports()
+        const reports = await getLatestIncidentReports(5)
 
         const mappedReports: Incident[] = reports.slice(0, 5).map((report) => {
           const normalizedStatus = `${report.status || ''}`.trim().toLowerCase()
