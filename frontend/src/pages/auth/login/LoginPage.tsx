@@ -476,7 +476,7 @@ export function LoginPage({ onRequestRegister, onRequestAdminLogin: _onRequestAd
 {/* Left Panel: Corporate Cinematic Navy Banner */}
 <motion.section
   animate={{ opacity: 1, x: 0 }}
-  className="relative min-w-0 md:col-span-5 flex flex-col justify-center overflow-hidden bg-gradient-to-t from-[#0b2a57] via-[#10356c] to-[#0b2a57] px-6 pb-6 pt-[max(1.5rem,env(safe-area-inset-top))] md:p-6 border-b md:border-b-0 md:border-r border-slate-100"
+  className="relative min-w-0 md:col-span-5 flex flex-col justify-center overflow-hidden bg-gradient-to-t from-[#0b2a57] via-[#10356c] to-[#0b2a57] px-6 pb-14 pt-[max(2rem,env(safe-area-inset-top))] md:p-6 md:border-r border-slate-100"
   initial={{ opacity: 0, x: -40 }}
   transition={{ duration: 0.5, ease: 'easeOut' }}
 >
@@ -484,7 +484,7 @@ export function LoginPage({ onRequestRegister, onRequestAdminLogin: _onRequestAd
   <div className="absolute -right-16 -top-16 h-64 w-64 rounded-full bg-white/10 blur-3xl pointer-events-none" />
   <div className="absolute -left-20 -bottom-20 h-72 w-72 rounded-full bg-sky-400/10 blur-3xl pointer-events-none" />
   
-  <div className="relative mx-auto flex h-full w-full flex-col items-center justify-center text-center gap-6">
+  <div className="relative mx-auto flex h-full w-full flex-col items-center justify-center text-center gap-4 md:gap-6">
     
     {/* MAXIMUM SCALE LOGO (No background, pure asset visibility) */}
     <motion.button
@@ -498,13 +498,17 @@ export function LoginPage({ onRequestRegister, onRequestAdminLogin: _onRequestAd
       <img 
         src={drrmoLogo} 
         alt="DRRMO logo" 
-        className="h-full max-h-32 w-full object-contain filter drop-shadow-[0_16px_32px_rgba(0,0,0,0.35)] md:max-h-none" 
+        className="h-full max-h-28 w-full object-contain filter drop-shadow-[0_16px_32px_rgba(0,0,0,0.35)] md:max-h-none" 
       />
     </motion.button>
     
     <div className="space-y-1.5 z-20">
       <h2 className="text-xl font-bold tracking-tight text-white">Lucena City DRRMO</h2>
       <p className="text-xs text-sky-200 leading-relaxed font-normal opacity-90">Disaster Risk Reduction and Management Office</p>
+      <p className="mx-auto mt-3 inline-flex items-center gap-1.5 rounded-full border border-white/15 bg-white/10 px-3 py-1 text-[11px] font-semibold text-white md:hidden">
+        <ShieldCheck className="h-3.5 w-3.5 text-sky-300" aria-hidden="true" />
+        Responder app
+      </p>
     </div>
   </div>
 </motion.section>
@@ -512,15 +516,22 @@ export function LoginPage({ onRequestRegister, onRequestAdminLogin: _onRequestAd
           {/* Right Panel: Light Form Layout */}
           <motion.section
             animate={{ opacity: 1, x: 0 }}
-            className="min-w-0 md:col-span-7 bg-white px-6 py-8 sm:p-12 flex flex-col justify-start md:justify-center"
+            className="relative z-10 -mt-8 min-w-0 rounded-t-[1.75rem] bg-white px-6 pt-8 pb-[max(2rem,env(safe-area-inset-bottom))] shadow-[0_-12px_32px_rgba(15,23,42,0.18)] md:col-span-7 md:mt-0 md:rounded-none md:p-12 md:shadow-none flex flex-col justify-start md:justify-center"
             initial={{ opacity: 0, x: 40 }}
             transition={{ duration: 0.5, ease: 'easeOut' }}
           >
-            <div className="w-full max-w-md mx-auto space-y-8">
+            <div className="w-full max-w-md mx-auto space-y-7 md:space-y-8">
               <div>
                 <h1 className="text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">Welcome Back</h1>
                 <p className="mt-2 text-sm text-slate-500">
-                  {otpStep ? 'Enter the secure OTP code sent to your email.' : 'Sign in to access your dashboard management workspace.'}
+                  {otpStep ? (
+                    'Enter the secure OTP code sent to your email.'
+                  ) : (
+                    <>
+                      <span className="md:hidden">Log in with the account your LCDRRMO admin gave you.</span>
+                      <span className="hidden md:inline">Sign in to access your dashboard management workspace.</span>
+                    </>
+                  )}
                 </p>
               </div>
 
@@ -545,10 +556,14 @@ export function LoginPage({ onRequestRegister, onRequestAdminLogin: _onRequestAd
                       <div className="relative flex items-center">
                         <Mail className="absolute left-4 h-4 w-4 text-slate-400 pointer-events-none" />
                         <input
-                          className="w-full rounded-xl border border-slate-200 bg-slate-50/50 pl-11 pr-4 py-3 text-sm text-slate-800 placeholder:text-slate-400 outline-none transition focus:border-slate-400 focus:bg-white focus:ring-4 focus:ring-slate-100"
+                          className="w-full rounded-xl border border-slate-200 bg-slate-50/50 pl-11 pr-4 py-3.5 text-base text-slate-800 placeholder:text-slate-400 md:py-3 md:text-sm outline-none transition focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-100"
                           type="text"
                           value={email}
                           onChange={(event) => setEmail(event.target.value)}
+                          autoComplete="username"
+                          autoCapitalize="none"
+                          autoCorrect="off"
+                          spellCheck={false}
                           placeholder="username@domain.com"
                           required
                         />
@@ -560,15 +575,16 @@ export function LoginPage({ onRequestRegister, onRequestAdminLogin: _onRequestAd
                       <div className="relative flex items-center">
                         <Lock className="absolute left-4 h-4 w-4 text-slate-400 pointer-events-none" />
                         <input
-                          className="w-full rounded-xl border border-slate-200 bg-slate-50/50 pl-11 pr-12 py-3 text-sm text-slate-800 placeholder:text-slate-400 outline-none transition focus:border-slate-400 focus:bg-white focus:ring-4 focus:ring-slate-100"
+                          className="w-full rounded-xl border border-slate-200 bg-slate-50/50 pl-11 pr-12 py-3.5 text-base text-slate-800 placeholder:text-slate-400 md:py-3 md:text-sm outline-none transition focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-100"
                           type={showPassword ? 'text' : 'password'}
                           value={password}
                           onChange={(event) => setPassword(event.target.value)}
+                          autoComplete="current-password"
                           placeholder="••••••••"
                           required
                         />
                         <button
-                          className="absolute right-4 p-1 rounded text-slate-400 hover:text-slate-600 transition focus:outline-none"
+                          className="absolute right-2.5 rounded-lg p-2 text-slate-400 hover:text-slate-600 transition focus:outline-none"
                           onClick={() => setShowPassword((prev) => !prev)}
                           type="button"
                           aria-label={showPassword ? "Hide password" : "Show password"}
@@ -632,7 +648,7 @@ export function LoginPage({ onRequestRegister, onRequestAdminLogin: _onRequestAd
                 {/* Main Action Button */}
                 <motion.button
                   whileTap={{ scale: 0.99 }}
-                  className="group relative w-full flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#0b2a57] to-[#123e7a] px-4 py-3 text-sm font-semibold text-white shadow-[0_8px_20px_rgba(11,42,87,0.2)] transition hover:from-[#081e3f] hover:to-[#0d3161] disabled:cursor-not-allowed disabled:opacity-50"
+                  className="group relative w-full flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#0b2a57] to-[#123e7a] px-4 py-3.5 text-base font-semibold md:py-3 md:text-sm text-white shadow-[0_8px_20px_rgba(11,42,87,0.2)] transition hover:from-[#081e3f] hover:to-[#0d3161] disabled:cursor-not-allowed disabled:opacity-50"
                   type="submit"
                   disabled={isSubmitting || isRedirectingAfterLogin}
                 >
@@ -647,6 +663,26 @@ export function LoginPage({ onRequestRegister, onRequestAdminLogin: _onRequestAd
                 <AnimatePresence mode="wait">
                   {!otpStep ? (
                     // Phones are for responders, whose accounts are made by an admin: no sign-up link there.
+                    <div>
+                    <div className="space-y-4 md:hidden">
+                      <p className="text-center text-xs text-slate-500">No account yet? Ask your LCDRRMO admin to make one for you.</p>
+                      <button
+                        type="button"
+                        onClick={() => navigate('/emergency-hotlines')}
+                        className="flex w-full items-center gap-3 rounded-2xl border border-red-100 bg-red-50/70 p-3.5 text-left transition hover:bg-red-50"
+                      >
+                        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-red-600 text-white shadow-sm">
+                          <AlertCircle className="h-5 w-5" aria-hidden="true" />
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-sm font-bold text-slate-900">Emergency hotlines</span>
+                          <span className="block text-xs text-slate-500">Call 911 or a local responder</span>
+                        </span>
+                        <svg className="h-4 w-4 shrink-0 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden="true">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                        </svg>
+                      </button>
+                    </div>
                     <p className="hidden text-center text-xs text-slate-500 md:block">
                       Don't have an account?{' '}
                       {onRequestRegister ? (
@@ -659,6 +695,7 @@ export function LoginPage({ onRequestRegister, onRequestAdminLogin: _onRequestAd
                         </Link>
                       )}
                     </p>
+                    </div>
                   ) : (
                     <div className="flex items-center justify-between gap-4 text-xs pt-1">
                       <button
