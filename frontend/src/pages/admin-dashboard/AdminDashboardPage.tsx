@@ -1527,7 +1527,19 @@ export function AdminDashboardPage() {
     [lucenaEarthquakeEvents],
   )
 
+  // Incident cards first, then fire, then earthquake, so related numbers sit side by side.
   const overviewMetricCards: MetricCard[] = [
+    {
+      label: 'Total incident reports',
+      value: totalIncidentReportsCount,
+      comparison: 'All current report records in dashboard',
+      delta:
+        totalIncidentReportsCount > 0
+          ? `Across ${incidentTypeCount} incident type${incidentTypeCount === 1 ? '' : 's'}`
+          : 'No incident reports recorded yet',
+      accent: 'border-t-[7px] border-t-blue-700',
+      valueClass: 'text-blue-700',
+    },
     {
       label: 'Total fire incidents',
       value: fireDashboardRecords.length,
@@ -1538,6 +1550,14 @@ export function AdminDashboardPage() {
           : 'No fire incidents recorded yet',
       accent: 'border-t-[7px] border-t-red-600',
       valueClass: 'text-red-700',
+    },
+    {
+      label: 'Current fire risk score',
+      value: `${fireRiskScore}%`,
+      comparison: 'Based on active fire records',
+      delta: fireRiskScore >= 70 ? 'High vigilance required' : 'Within managed threshold',
+      accent: 'border-t-[7px] border-t-orange-600',
+      valueClass: 'text-orange-700',
     },
     {
       label: 'Total earthquake occurrences',
@@ -1556,25 +1576,6 @@ export function AdminDashboardPage() {
             : 'Auto-refresh every 5 minutes',
       accent: 'border-t-[7px] border-t-emerald-600',
       valueClass: 'text-emerald-700',
-    },
-    {
-      label: 'Total incident reports',
-      value: totalIncidentReportsCount,
-      comparison: 'All current report records in dashboard',
-      delta:
-        totalIncidentReportsCount > 0
-          ? `Across ${incidentTypeCount} incident type${incidentTypeCount === 1 ? '' : 's'}`
-          : 'No incident reports recorded yet',
-      accent: 'border-t-[7px] border-t-blue-700',
-      valueClass: 'text-blue-700',
-    },
-    {
-      label: 'Current fire risk score',
-      value: `${fireRiskScore}%`,
-      comparison: 'Based on active fire records',
-      delta: fireRiskScore >= 70 ? 'High vigilance required' : 'Within managed threshold',
-      accent: 'border-t-[7px] border-t-orange-600',
-      valueClass: 'text-orange-700',
     },
     {
       label: 'Current earthquake risk score',
