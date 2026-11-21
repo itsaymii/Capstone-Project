@@ -450,6 +450,9 @@ class IncidentReportSerializer(serializers.ModelSerializer):
     barangayName = serializers.CharField(source='barangay.name', read_only=True, default=None)
     # Code of the accomplishment report this report was compiled into, or None.
     compiledIn = serializers.SerializerMethodField()
+    # Severity the scorer gave the linked incident when the report was approved (low, moderate,
+    # high, critical); None while the report is still pending. The browser only displays it.
+    severityLevel = serializers.SerializerMethodField()
 
     class Meta:
         model = IncidentReport
@@ -463,6 +466,7 @@ class IncidentReportSerializer(serializers.ModelSerializer):
             'location',
             'barangayName',
             'compiledIn',
+            'severityLevel',
             'latitude',
             'longitude',
             'coordinates',
@@ -477,6 +481,9 @@ class IncidentReportSerializer(serializers.ModelSerializer):
             'createdByRole',
         ]
         read_only_fields = ['id', 'reportCode', 'createdAt']
+
+    def get_severityLevel(self, obj):
+        return obj.incident.severity_level if obj.incident_id and obj.incident else None
 
     def get_compiledIn(self, obj):
         compiled = obj.accomplishment_reports.all()

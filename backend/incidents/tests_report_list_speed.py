@@ -49,3 +49,9 @@ class ReportListSpeedTests(AccessTestCase):
         response = self.client_for(self.responder).get(REPORTS_URL, {'page_size': 100000})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(rows(response)), 3)
+
+    def test_pending_report_has_no_severity_yet(self):
+        report = make_report(created_by=self.responder)
+        response = self.client_for(self.responder).get(f'{REPORTS_URL}{report.id}/')
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.data['severityLevel'])

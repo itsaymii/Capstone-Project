@@ -145,6 +145,8 @@ export interface IncidentReport {
   created_at?: string
   /** Fields that only this incident type has (see data/incidentTypeFields.ts). */
   details?: DetailValues
+  /** Severity the backend gave the incident on approval (low, moderate, high, critical); null while pending. */
+  severityLevel?: string | null
 }
 
 export interface CreateIncidentReportPayload {

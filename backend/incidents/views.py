@@ -163,6 +163,8 @@ class IncidentReportViewSet(viewsets.ModelViewSet):
         'created_by',
         # Read by createdByRole on every report; without it each report costs one more query.
         'created_by__account_profile',
+        # severityLevel comes from the incident made on approval.
+        'incident',
         'barangay',
         'responder_team_record',
         'road_crash_details',
