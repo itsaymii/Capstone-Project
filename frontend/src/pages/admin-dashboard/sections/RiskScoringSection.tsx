@@ -476,15 +476,39 @@ function BarangayScoreCard({ name, riskData, isLoading, error }: { name: string;
   )
 }
 
-function CitywideEarthquakeScoreCard({ riskData, isLoading, error }: {
+// The USGS sync runs daily; when the newest stored event is older than this, the feed may have stopped.
+const EARTHQUAKE_FEED_STALE_DAYS = 7
+
+function daysSince(value?: string | null): number | null {
+  const time = new Date(value || '').getTime()
+  return Number.isNaN(time) ? null : Math.floor((Date.now() - time) / 86_400_000)
+}
+
+function formatEventDate(value?: string | null): string {
+  const date = new Date(value || '')
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+function CitywideEarthquakeScoreCard({ riskData, isLoading, error, onRetry }: {
   riskData: CitywideEarthquakeRiskResponse | null
   isLoading: boolean
   error: string | null
+  onRetry: () => void
 }) {
+  const events = riskData?.risk_score.explanation.total_incidents ?? 0
+  const feedAge = daysSince(riskData?.latest_feed_event_at)
+  const feedMissing = Boolean(riskData) && !riskData?.latest_feed_event_at
+  const feedStale = feedAge !== null && feedAge > EARTHQUAKE_FEED_STALE_DAYS
+
   return (
     <Card eyebrow="Macro-hazard · Last 90 days" title="City-wide earthquake risk">
       {error ? (
-        <EmptyState>{error}</EmptyState>
+        <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+          <p>{error} The barangay scores below are not affected.</p>
+          <button type="button" onClick={onRetry} className="mt-2 font-semibold underline underline-offset-2">
+            Try again
+          </button>
+        </div>
       ) : isLoading && !riskData ? (
         <EmptyState>Calculating city-wide earthquake risk…</EmptyState>
       ) : !riskData ? (
@@ -508,8 +532,24 @@ function CitywideEarthquakeScoreCard({ riskData, isLoading, error }: {
               </div>
             ))}
           </div>
-          <p className="text-xs text-slate-500">
-            Based on {riskData.risk_score.explanation.total_incidents} earthquake event{riskData.risk_score.explanation.total_incidents === 1 ? '' : 's'} in the last {riskData.timeframe_days} days. Earthquakes remain unassigned to barangays.
+          {events === 0 ? (
+            <p className="rounded-xl bg-slate-50 p-3 text-xs leading-relaxed text-slate-600">
+              No earthquakes with an epicenter in the Lucena City area were recorded in the last {riskData.timeframe_days} days, so the
+              lowest baseline score is shown.
+              {riskData.latest_lucena_event_at ? ` The last one was on ${formatEventDate(riskData.latest_lucena_event_at)}.` : ''}
+            </p>
+          ) : null}
+          {feedMissing || feedStale ? (
+            <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-relaxed text-amber-900">
+              {feedMissing
+                ? 'No earthquake data has been imported yet. Run the USGS sync (sync_earthquake_events) so this score has data.'
+                : `The newest stored earthquake is from ${formatEventDate(riskData.latest_feed_event_at)}. The daily USGS sync may have stopped, so this score could be out of date.`}
+            </p>
+          ) : null}
+          <p className="text-xs leading-relaxed text-slate-500">
+            Based on {events} earthquake event{events === 1 ? '' : 's'} with an epicenter inside the Lucena City area in the last{' '}
+            {riskData.timeframe_days} days. Epicenters are not assigned to any barangay, so this score is separate from the barangay
+            ranking and its period filter.
           </p>
         </div>
       )}
@@ -875,6 +915,7 @@ export function RiskScoringSection() {
   const [citywideEarthquakeRisk, setCitywideEarthquakeRisk] = useState<CitywideEarthquakeRiskResponse | null>(null)
   const [citywideEarthquakeLoading, setCitywideEarthquakeLoading] = useState(true)
   const [citywideEarthquakeError, setCitywideEarthquakeError] = useState<string | null>(null)
+  const [earthquakeReloadKey, setEarthquakeReloadKey] = useState(0)
 
   const resolved = useMemo(() => resolvePeriod(period), [period])
   const queryKey = JSON.stringify(resolved.query)
@@ -916,7 +957,7 @@ export function RiskScoringSection() {
     return () => {
       active = false
     }
-  }, [])
+  }, [earthquakeReloadKey])
 
   // City-wide ranking for the period; it also picks the first barangay to show.
   useEffect(() => {
@@ -1101,6 +1142,7 @@ export function RiskScoringSection() {
           riskData={citywideEarthquakeRisk}
           isLoading={citywideEarthquakeLoading}
           error={citywideEarthquakeError}
+          onRetry={() => setEarthquakeReloadKey((key) => key + 1)}
         />
 
         <div className="grid gap-4 xl:grid-cols-2">

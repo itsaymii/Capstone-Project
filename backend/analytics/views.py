@@ -13,6 +13,12 @@ from .performance import get_response_performance_metrics
 from .scoring import calculate_citywide_earthquake_risk_score, calculate_risk_score
 from .prediction import predict_top_hazard
 from locations.models import Barangay
+from locations.constants import (
+    LUCENA_CITY_MAX_LATITUDE,
+    LUCENA_CITY_MAX_LONGITUDE,
+    LUCENA_CITY_MIN_LATITUDE,
+    LUCENA_CITY_MIN_LONGITUDE,
+)
 
 
 def build_score_history(barangay_id, window_days=30, points=6):
@@ -251,11 +257,29 @@ def citywide_earthquake_risk_view(request):
     if days < 1:
         return Response({'error': 'days must be at least 1.'}, status=status.HTTP_400_BAD_REQUEST)
 
+    # When the newest stored events happened, so the page can tell "no earthquakes" apart from
+    # "the daily USGS sync has stopped": the feed covers a wider area than the Lucena score.
+    earthquakes = Incident.objects.filter(earthquake_details__isnull=False).exclude(status='false_alarm')
+    latest_feed_event = earthquakes.order_by('-incident_datetime').values_list('incident_datetime', flat=True).first()
+    latest_lucena_event = (
+        earthquakes.filter(
+            latitude__gte=LUCENA_CITY_MIN_LATITUDE,
+            latitude__lte=LUCENA_CITY_MAX_LATITUDE,
+            longitude__gte=LUCENA_CITY_MIN_LONGITUDE,
+            longitude__lte=LUCENA_CITY_MAX_LONGITUDE,
+        )
+        .order_by('-incident_datetime')
+        .values_list('incident_datetime', flat=True)
+        .first()
+    )
+
     return Response({
         'hazard': 'Earthquake',
         'scope': 'citywide',
         'timeframe_days': days,
         'risk_score': calculate_citywide_earthquake_risk_score(days=days),
+        'latest_feed_event_at': latest_feed_event.isoformat() if latest_feed_event else None,
+        'latest_lucena_event_at': latest_lucena_event.isoformat() if latest_lucena_event else None,
     })
 
 

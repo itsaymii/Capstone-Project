@@ -118,6 +118,17 @@ class CitywideEarthquakeRiskTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data['risk_score']['explanation']['total_incidents'], 1)
         self.assertEqual(response.data['timeframe_days'], 90)
+        # Newest stored event (any area) and newest inside Lucena, for the page's freshness note.
+        self.assertIsNotNone(response.data['latest_feed_event_at'])
+        self.assertEqual(response.data['latest_lucena_event_at'], earthquake.incident_datetime.isoformat())
+
+    def test_citywide_score_reports_no_events(self):
+        response = APIClient().get('/api/analytics/citywide-earthquake-risk/')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['risk_score']['explanation']['total_incidents'], 0)
+        self.assertIsNone(response.data['latest_feed_event_at'])
+        self.assertIsNone(response.data['latest_lucena_event_at'])
 
     def test_citywide_score_rejects_nonpositive_window(self):
         response = APIClient().get('/api/analytics/citywide-earthquake-risk/', {'days': 0})

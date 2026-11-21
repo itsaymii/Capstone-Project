@@ -114,6 +114,10 @@ export interface CitywideEarthquakeRiskResponse {
       calculation_details: string
     }
   }
+  /** Newest stored earthquake from the USGS feed (any area); null when none was ever imported. */
+  latest_feed_event_at?: string | null
+  /** Newest stored earthquake inside the Lucena bounds; null when there is none. */
+  latest_lucena_event_at?: string | null
 }
 
 export interface BarangayHazardProfileItem {
