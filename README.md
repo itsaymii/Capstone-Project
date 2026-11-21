@@ -134,6 +134,15 @@ Admins and staff log in at `/login` without an OTP. Citizens receive an OTP by e
 | Sample incident reports | `python manage.py generate_accomplishment_reports --count 200 --approved` (the reports are spread over the existing responder accounts) |
 | Fill Incidents, Accomplishment, and Scoring pages from existing data | `python manage.py prepare_dashboard_data` (add `--shift-dates` to move old sample data up to today) |
 | Recalculate risk scores | `python manage.py calculate_risk_scores --days 365` |
+| Sync Lucena-area earthquakes | `python manage.py sync_earthquake_events --days 90` |
+
+For fresh citywide earthquake-risk data, create a **daily Windows Task Scheduler** task at 03:00 (Asia/Manila). Set its action to:
+
+- **Program:** `C:\path\to\Capstone-Project\backend\.venv\Scripts\python.exe`
+- **Arguments:** `manage.py sync_earthquake_events --days 90`
+- **Start in:** `C:\path\to\Capstone-Project\backend`
+
+Run the task under an account that can access the project, its `.env`, and the same `backend\db.sqlite3` used by the web app. Re-syncing 90 days daily also picks up revised USGS event data after missed runs.
 
 ## Tests
 

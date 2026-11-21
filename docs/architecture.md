@@ -21,7 +21,7 @@ flowchart LR
         RES[resources<br/>evacuation centers]
         LOC[locations<br/>barangays]
         ANA[analytics<br/>risk scores, insights]
-        DSH[dashboard<br/>admin users, simulation]
+        DSH[dashboard<br/>admin users, simulation, cached briefing]
         SMS[sms<br/>critical alerts]
     end
 
@@ -39,12 +39,12 @@ flowchart LR
     P -.-> EXT
     ACC -.->|OTP emails| SMTP[Gmail SMTP]
     SMS -.->|text messages| GW[SMS gateway]
-    ANA -.->|AI insights, template fallback| GEM[Google Gemini]
+    DSH -.->|Strategic briefing, template fallback| GEM[Google Gemini]
 ```
 
 - The browser talks only to the Django API, except for earthquake data (USGS) and map tiles (OpenStreetMap), which it loads directly.
 - Login uses Django sessions. The backend only accepts requests from `localhost:5173` and `127.0.0.1:5173` (CORS and CSRF settings in `backend/config/settings.py`).
-- If Gemini is not configured or fails, risk insights fall back to template text, so the Scoring page still works.
+- The admin dashboard's Strategic Quarterly Briefing uses incidents from the last 30 days and is cached for 30 days. If Gemini is not configured or fails, deterministic template text is used.
 
 ## Running Environment
 

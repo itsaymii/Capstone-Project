@@ -1,4 +1,4 @@
-from datetime import time
+from datetime import datetime, time
 from decimal import Decimal
 
 from django.test import TestCase
@@ -36,6 +36,41 @@ class ReportNormalizationTests(TestCase):
 
         self.assertIsNotNone(report.incident)
         self.assertEqual(report.incident.reference_code, report.incident_code)
+
+    def test_delayed_approval_uses_report_filing_date_for_incident_date(self):
+        filed_at = timezone.make_aware(datetime(2026, 3, 5, 15, 0))
+        report = self.create_report(time_occurred=time(14, 30))
+        IncidentReport.objects.filter(pk=report.pk).update(created_at=filed_at)
+        report.refresh_from_db()
+
+        report.status = 'Approved'
+        report.save(update_fields=['status'])
+
+        incident = Incident.objects.get(reference_code=report.incident_code)
+        expected = timezone.make_aware(datetime(2026, 3, 5, 14, 30))
+        self.assertEqual(incident.incident_datetime, expected)
+
+    def test_report_after_midnight_can_represent_previous_evening_incident(self):
+        filed_at = timezone.make_aware(datetime(2026, 3, 5, 0, 20))
+        report = self.create_report(time_occurred=time(23, 50))
+        IncidentReport.objects.filter(pk=report.pk).update(created_at=filed_at)
+        report.refresh_from_db()
+
+        report.status = 'Approved'
+        report.save(update_fields=['status'])
+
+        incident = Incident.objects.get(reference_code=report.incident_code)
+        expected = timezone.make_aware(datetime(2026, 3, 4, 23, 50))
+        self.assertEqual(incident.incident_datetime, expected)
+
+    def test_approval_parses_string_time_from_direct_orm_report(self):
+        report = self.create_report()
+        report.time_occurred = '23:50'
+        report.status = 'Approved'
+        report.save(update_fields=['status', 'time_occurred'])
+
+        incident = Incident.objects.get(reference_code=report.incident_code)
+        self.assertEqual(timezone.localtime(incident.incident_datetime).time(), time(23, 50))
 
     def test_approval_links_report_to_existing_incident(self):
         hazard = HazardType.objects.create(name='Fire')

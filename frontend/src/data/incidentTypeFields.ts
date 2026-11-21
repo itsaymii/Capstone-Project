@@ -80,7 +80,7 @@ export const INCIDENT_TYPE_CONFIGS: IncidentTypeConfig[] = [
         { value: 'under_construction', label: 'Under construction' },
         { value: 'damaged', label: 'Damaged / potholes' },
       ] },
-      { name: 'fatalities', label: 'Fatalities', kind: 'int', required: false, min: 0, max: null, choices: [] },
+      { name: 'fatalities', label: 'Fatalities', kind: 'int', required: true, min: 0, max: null, choices: [] },
       { name: 'traffic_blocked', label: 'Traffic blocked', kind: 'bool', required: false, min: 0, max: null, choices: [] },
       { name: 'police_notified', label: 'PNP notified', kind: 'bool', required: false, min: 0, max: null, choices: [] },
       { name: 'police_blotter_no', label: 'Police blotter no.', kind: 'text', required: false, min: 0, max: null, choices: [] },
@@ -90,6 +90,11 @@ export const INCIDENT_TYPE_CONFIGS: IncidentTypeConfig[] = [
         { value: 'driver', label: 'Driver' },
         { value: 'passenger', label: 'Passenger' },
         { value: 'pedestrian', label: 'Pedestrian' },
+      ] },
+      { name: 'injury_severity', label: 'Injury severity', kind: 'choice', required: true, min: 0, max: null, choices: [
+        { value: 'none', label: 'None / no injury' },
+        { value: 'minor_first_aid', label: 'Minor / first aid' },
+        { value: 'severe_hospital_transport', label: 'Severe / hospital transport' },
       ] },
       { name: 'protective_gear', label: 'Helmet / seatbelt', kind: 'choice', required: false, min: 0, max: null, choices: [
         { value: 'helmet', label: 'Wearing helmet' },
@@ -114,6 +119,7 @@ export const INCIDENT_TYPE_CONFIGS: IncidentTypeConfig[] = [
         { value: 'other', label: 'Other' },
       ] },
       { name: 'alarm_level', label: 'Highest alarm level', kind: 'choice', required: true, min: 0, max: null, choices: [
+        { value: 'no_alarm', label: 'Stand-by / No Alarm' },
         { value: 'first', label: '1st alarm' },
         { value: 'second', label: '2nd alarm' },
         { value: 'third', label: '3rd alarm' },
@@ -133,10 +139,10 @@ export const INCIDENT_TYPE_CONFIGS: IncidentTypeConfig[] = [
         { value: 'arson', label: 'Arson' },
         { value: 'unknown', label: 'Unknown' },
       ] },
-      { name: 'structures_affected', label: 'Structures affected', kind: 'int', required: false, min: 0, max: null, choices: [] },
-      { name: 'families_affected', label: 'Families affected / displaced', kind: 'int', required: false, min: 0, max: null, choices: [] },
+      { name: 'structures_affected', label: 'Structures affected', kind: 'int', required: true, min: 0, max: null, choices: [] },
+      { name: 'families_affected', label: 'Families affected / displaced', kind: 'int', required: true, min: 0, max: null, choices: [] },
       { name: 'estimated_damage', label: 'Estimated damage (PHP)', kind: 'decimal', required: false, min: 0, max: null, choices: [] },
-      { name: 'fatalities', label: 'Fatalities', kind: 'int', required: false, min: 0, max: null, choices: [] },
+      { name: 'fatalities', label: 'Fatalities', kind: 'int', required: true, min: 0, max: null, choices: [] },
       { name: 'bfp_present', label: 'BFP on scene', kind: 'bool', required: false, min: 0, max: null, choices: [] },
       { name: 'fire_out_time', label: 'Time declared fire out', kind: 'time', required: false, min: 0, max: null, choices: [] },
     ],
@@ -179,7 +185,13 @@ export const INCIDENT_TYPE_CONFIGS: IncidentTypeConfig[] = [
       { name: 'pnp_coordinated', label: 'Coordinated with PNP', kind: 'bool', required: false, min: 0, max: null, choices: [] },
       { name: 'police_blotter_no', label: 'Police blotter no.', kind: 'text', required: false, min: 0, max: null, choices: [] },
     ],
-    victimFields: [],
+    victimFields: [
+      { name: 'outcome', label: 'Victim outcome', kind: 'choice', required: true, min: 0, max: null, choices: [
+        { value: 'deceased', label: 'Deceased' },
+        { value: 'injured', label: 'Injured' },
+        { value: 'not_injured', label: 'Not injured' },
+      ] },
+    ],
   },
   {
     incidentType: 'Medical Emergency',
@@ -187,6 +199,17 @@ export const INCIDENT_TYPE_CONFIGS: IncidentTypeConfig[] = [
     label: 'Medical Emergency',
     victims: { allowed: true, label: 'Patients', min: 1, max: null },
     fields: [
+      { name: 'triage_acuity', label: 'Highest triage acuity (worst patient)', kind: 'choice', required: true, min: 0, max: null, choices: [
+        { value: 'red', label: 'Red / Immediate' },
+        { value: 'yellow', label: 'Yellow / Delayed' },
+        { value: 'green', label: 'Green / Minor' },
+        { value: 'none', label: 'No patient requiring triage' },
+      ] },
+      { name: 'resource_utilization', label: 'Resource & transport deployment', kind: 'choice', required: true, min: 0, max: null, choices: [
+        { value: 'on_site', label: 'None / on-site care only' },
+        { value: 'basic_ambulance', label: 'Basic ambulance / local clinic transport' },
+        { value: 'advanced_response', label: 'ALS / major hospital transport / multiple units' },
+      ] },
       { name: 'chief_complaint', label: 'Chief complaint', kind: 'choice', required: true, min: 0, max: null, choices: [
         { value: 'chest_pain', label: 'Chest pain' },
         { value: 'difficulty_breathing', label: 'Difficulty breathing' },
@@ -220,6 +243,17 @@ export const INCIDENT_TYPE_CONFIGS: IncidentTypeConfig[] = [
     label: 'Ambulance Assistance',
     victims: { allowed: true, label: 'Patient', min: 1, max: 1 },
     fields: [
+      { name: 'triage_acuity', label: 'Highest triage acuity (worst patient)', kind: 'choice', required: true, min: 0, max: null, choices: [
+        { value: 'red', label: 'Red / Immediate' },
+        { value: 'yellow', label: 'Yellow / Delayed' },
+        { value: 'green', label: 'Green / Minor' },
+        { value: 'none', label: 'No patient requiring triage' },
+      ] },
+      { name: 'resource_utilization', label: 'Resource & transport deployment', kind: 'choice', required: true, min: 0, max: null, choices: [
+        { value: 'on_site', label: 'None / on-site care only' },
+        { value: 'basic_ambulance', label: 'Basic ambulance / local clinic transport' },
+        { value: 'advanced_response', label: 'ALS / major hospital transport / multiple units' },
+      ] },
       { name: 'pickup_location', label: 'Pick-up location', kind: 'text', required: true, min: 0, max: null, choices: [] },
       { name: 'destination_hospital', label: 'Destination hospital', kind: 'text', required: true, min: 0, max: null, choices: [] },
       { name: 'transport_reason', label: 'Reason for transport', kind: 'choice', required: true, min: 0, max: null, choices: [
@@ -248,6 +282,17 @@ export const INCIDENT_TYPE_CONFIGS: IncidentTypeConfig[] = [
     label: 'Stand-by Medical Team',
     victims: { allowed: false, label: null, min: 0, max: 0 },
     fields: [
+      { name: 'triage_acuity', label: 'Highest triage acuity (worst patient)', kind: 'choice', required: true, min: 0, max: null, choices: [
+        { value: 'red', label: 'Red / Immediate' },
+        { value: 'yellow', label: 'Yellow / Delayed' },
+        { value: 'green', label: 'Green / Minor' },
+        { value: 'none', label: 'No patient requiring triage' },
+      ] },
+      { name: 'resource_utilization', label: 'Resource & transport deployment', kind: 'choice', required: true, min: 0, max: null, choices: [
+        { value: 'on_site', label: 'None / on-site care only' },
+        { value: 'basic_ambulance', label: 'Basic ambulance / local clinic transport' },
+        { value: 'advanced_response', label: 'ALS / major hospital transport / multiple units' },
+      ] },
       { name: 'event_name', label: 'Event name', kind: 'text', required: true, min: 0, max: null, choices: [] },
       { name: 'venue', label: 'Venue', kind: 'text', required: true, min: 0, max: null, choices: [] },
       { name: 'organizer', label: 'Organizer', kind: 'text', required: false, min: 0, max: null, choices: [] },
@@ -288,12 +333,12 @@ export const INCIDENT_TYPE_CONFIGS: IncidentTypeConfig[] = [
         { value: 'swept_by_flood', label: 'Swept by flood' },
         { value: 'other', label: 'Other' },
       ] },
-      { name: 'rescued_alive', label: 'Rescued alive', kind: 'int', required: false, min: 0, max: null, choices: [] },
-      { name: 'revived_cpr', label: 'Revived with CPR', kind: 'int', required: false, min: 0, max: null, choices: [] },
-      { name: 'fatalities', label: 'Fatalities', kind: 'int', required: false, min: 0, max: null, choices: [] },
-      { name: 'missing', label: 'Still missing', kind: 'int', required: false, min: 0, max: null, choices: [] },
-      { name: 'search_ongoing', label: 'Search and retrieval ongoing', kind: 'bool', required: false, min: 0, max: null, choices: [] },
-      { name: 'coast_guard_involved', label: 'Coast Guard involved', kind: 'bool', required: false, min: 0, max: null, choices: [] },
+      { name: 'rescued_alive', label: 'Rescued alive', kind: 'int', required: true, min: 0, max: null, choices: [] },
+      { name: 'revived_cpr', label: 'Revived with CPR', kind: 'int', required: true, min: 0, max: null, choices: [] },
+      { name: 'fatalities', label: 'Fatalities', kind: 'int', required: true, min: 0, max: null, choices: [] },
+      { name: 'missing', label: 'Still missing', kind: 'int', required: true, min: 0, max: null, choices: [] },
+      { name: 'search_ongoing', label: 'Search and retrieval ongoing', kind: 'bool', required: true, min: 0, max: null, choices: [] },
+      { name: 'coast_guard_involved', label: 'Coast Guard involved', kind: 'bool', required: true, min: 0, max: null, choices: [] },
     ],
     victimFields: [],
   },

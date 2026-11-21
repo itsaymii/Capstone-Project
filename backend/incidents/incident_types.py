@@ -62,7 +62,7 @@ INCIDENT_TYPES = {
                 ('dry', 'Dry'), ('wet', 'Wet / slippery'), ('dark', 'Dark / poorly lit'),
                 ('under_construction', 'Under construction'), ('damaged', 'Damaged / potholes'),
             ]),
-            field('fatalities', 'Fatalities', 'int'),
+            field('fatalities', 'Fatalities', 'int', required=True),
             field('traffic_blocked', 'Traffic blocked', 'bool'),
             field('police_notified', 'PNP notified', 'bool'),
             field('police_blotter_no', 'Police blotter no.', 'text'),
@@ -70,6 +70,11 @@ INCIDENT_TYPES = {
         'victim_fields': [
             field('person_role', 'Role', 'choice', required=True, choices=[
                 ('driver', 'Driver'), ('passenger', 'Passenger'), ('pedestrian', 'Pedestrian'),
+            ]),
+            field('injury_severity', 'Injury severity', 'choice', required=True, choices=[
+                ('none', 'None / no injury'),
+                ('minor_first_aid', 'Minor / first aid'),
+                ('severe_hospital_transport', 'Severe / hospital transport'),
             ]),
             field('protective_gear', 'Helmet / seatbelt', 'choice', choices=[
                 ('helmet', 'Wearing helmet'), ('seatbelt', 'Wearing seatbelt'),
@@ -88,6 +93,7 @@ INCIDENT_TYPES = {
                 ('vehicle', 'Vehicle'), ('grass_vegetation', 'Grass / vegetation'), ('other', 'Other'),
             ]),
             field('alarm_level', 'Highest alarm level', 'choice', required=True, choices=[
+                ('no_alarm', 'Stand-by / No Alarm'),
                 ('first', '1st alarm'), ('second', '2nd alarm'), ('third', '3rd alarm'),
                 ('fourth', '4th alarm'), ('fifth', '5th alarm'),
                 ('task_force_alpha', 'Task Force Alpha'), ('task_force_bravo', 'Task Force Bravo'),
@@ -98,10 +104,10 @@ INCIDENT_TYPES = {
                 ('candle', 'Candle / open flame'), ('smoking', 'Cigarette'), ('arson', 'Arson'),
                 ('unknown', 'Unknown'),
             ]),
-            field('structures_affected', 'Structures affected', 'int'),
-            field('families_affected', 'Families affected / displaced', 'int'),
+            field('structures_affected', 'Structures affected', 'int', required=True),
+            field('families_affected', 'Families affected / displaced', 'int', required=True),
             field('estimated_damage', 'Estimated damage (PHP)', 'decimal'),
-            field('fatalities', 'Fatalities', 'int'),
+            field('fatalities', 'Fatalities', 'int', required=True),
             field('bfp_present', 'BFP on scene', 'bool'),
             field('fire_out_time', 'Time declared fire out', 'time'),
         ],
@@ -133,7 +139,13 @@ INCIDENT_TYPES = {
             field('pnp_coordinated', 'Coordinated with PNP', 'bool'),
             field('police_blotter_no', 'Police blotter no.', 'text'),
         ],
-        'victim_fields': [],
+        'victim_fields': [
+            field('outcome', 'Victim outcome', 'choice', required=True, choices=[
+                ('deceased', 'Deceased'),
+                ('injured', 'Injured'),
+                ('not_injured', 'Not injured'),
+            ]),
+        ],
     },
     'Medical Emergency': {
         'key': 'medical',
@@ -141,6 +153,15 @@ INCIDENT_TYPES = {
         'hazard': 'Medical Emergency',
         'victims': {'allowed': True, 'label': 'Patients', 'min': 1, 'max': None},
         'fields': [
+            field('triage_acuity', 'Highest triage acuity (worst patient)', 'choice', required=True, choices=[
+                ('red', 'Red / Immediate'), ('yellow', 'Yellow / Delayed'), ('green', 'Green / Minor'),
+                ('none', 'No patient requiring triage'),
+            ]),
+            field('resource_utilization', 'Resource & transport deployment', 'choice', required=True, choices=[
+                ('on_site', 'None / on-site care only'),
+                ('basic_ambulance', 'Basic ambulance / local clinic transport'),
+                ('advanced_response', 'ALS / major hospital transport / multiple units'),
+            ]),
             field('chief_complaint', 'Chief complaint', 'choice', required=True, choices=[
                 ('chest_pain', 'Chest pain'), ('difficulty_breathing', 'Difficulty breathing'),
                 ('stroke_symptoms', 'Stroke symptoms'), ('seizure', 'Seizure'), ('injury', 'Injury / wound'),
@@ -167,6 +188,15 @@ INCIDENT_TYPES = {
         'hazard': 'Medical Emergency',
         'victims': {'allowed': True, 'label': 'Patient', 'min': 1, 'max': 1},
         'fields': [
+            field('triage_acuity', 'Highest triage acuity (worst patient)', 'choice', required=True, choices=[
+                ('red', 'Red / Immediate'), ('yellow', 'Yellow / Delayed'), ('green', 'Green / Minor'),
+                ('none', 'No patient requiring triage'),
+            ]),
+            field('resource_utilization', 'Resource & transport deployment', 'choice', required=True, choices=[
+                ('on_site', 'None / on-site care only'),
+                ('basic_ambulance', 'Basic ambulance / local clinic transport'),
+                ('advanced_response', 'ALS / major hospital transport / multiple units'),
+            ]),
             field('pickup_location', 'Pick-up location', 'text', required=True),
             field('destination_hospital', 'Destination hospital', 'text', required=True),
             field('transport_reason', 'Reason for transport', 'choice', required=True, choices=[
@@ -189,6 +219,15 @@ INCIDENT_TYPES = {
         'hazard': 'Medical Emergency',
         'victims': {'allowed': False, 'label': None, 'min': 0, 'max': 0},
         'fields': [
+            field('triage_acuity', 'Highest triage acuity (worst patient)', 'choice', required=True, choices=[
+                ('red', 'Red / Immediate'), ('yellow', 'Yellow / Delayed'), ('green', 'Green / Minor'),
+                ('none', 'No patient requiring triage'),
+            ]),
+            field('resource_utilization', 'Resource & transport deployment', 'choice', required=True, choices=[
+                ('on_site', 'None / on-site care only'),
+                ('basic_ambulance', 'Basic ambulance / local clinic transport'),
+                ('advanced_response', 'ALS / major hospital transport / multiple units'),
+            ]),
             field('event_name', 'Event name', 'text', required=True),
             field('venue', 'Venue', 'text', required=True),
             field('organizer', 'Organizer', 'text'),
@@ -219,12 +258,12 @@ INCIDENT_TYPES = {
                 ('swimming', 'Swimming'), ('fishing', 'Fishing'), ('fell', 'Fell into the water'),
                 ('swept_by_flood', 'Swept by flood'), ('other', 'Other'),
             ]),
-            field('rescued_alive', 'Rescued alive', 'int'),
-            field('revived_cpr', 'Revived with CPR', 'int'),
-            field('fatalities', 'Fatalities', 'int'),
-            field('missing', 'Still missing', 'int'),
-            field('search_ongoing', 'Search and retrieval ongoing', 'bool'),
-            field('coast_guard_involved', 'Coast Guard involved', 'bool'),
+            field('rescued_alive', 'Rescued alive', 'int', required=True),
+            field('revived_cpr', 'Revived with CPR', 'int', required=True),
+            field('fatalities', 'Fatalities', 'int', required=True),
+            field('missing', 'Still missing', 'int', required=True),
+            field('search_ongoing', 'Search and retrieval ongoing', 'bool', required=True),
+            field('coast_guard_involved', 'Coast Guard involved', 'bool', required=True),
         ],
         'victim_fields': [],
     },
@@ -421,6 +460,8 @@ def detail_table_values(incident_type, details, victim_count):
             'emergency_type': label_of('chief_complaint', details.get('chief_complaint', '')) or 'Medical Emergency',
             'transported': victim_count if details.get('transported') else 0,
             'hospital': details.get('hospital', ''),
+            'triage_acuity': details.get('triage_acuity'),
+            'resource_utilization': details.get('resource_utilization'),
         }
 
     if key == 'ambulance':
@@ -429,6 +470,8 @@ def detail_table_values(incident_type, details, victim_count):
             'emergency_type': 'Ambulance Assistance: ' + label_of('transport_reason', details.get('transport_reason', '')),
             'transported': max(victim_count, 1),
             'hospital': details.get('destination_hospital', ''),
+            'triage_acuity': details.get('triage_acuity'),
+            'resource_utilization': details.get('resource_utilization'),
         }
 
     if key == 'standby':
@@ -437,6 +480,8 @@ def detail_table_values(incident_type, details, victim_count):
             'emergency_type': 'Stand-by Medical Team: ' + details.get('event_name', ''),
             'transported': 0,
             'hospital': '',
+            'triage_acuity': details.get('triage_acuity'),
+            'resource_utilization': details.get('resource_utilization'),
         }
 
     if key == 'drowning':

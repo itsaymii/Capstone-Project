@@ -3,6 +3,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.authentication import TokenAuthentication, SessionAuthentication
 from django.db.models import Count, Prefetch, Q
+from django.db import transaction
 from django.core.exceptions import ValidationError as DjangoValidationError
 
 from .models import (
@@ -164,6 +165,7 @@ class IncidentReportViewSet(viewsets.ModelViewSet):
         'victims',
         'victims__road_crash_details',
         'victims__fire_details',
+        'victims__crime_details',
         'victims__medical_details',
         'road_crash_details__vehicle_types',
         'standby_medical_details__cases_handled',
@@ -210,6 +212,10 @@ class IncidentReportViewSet(viewsets.ModelViewSet):
             if requested == 'approved':
                 serializer.save(status='Pending')
                 return
+        serializer.save()
+
+    @transaction.atomic
+    def perform_update(self, serializer):
         serializer.save()
 
     @action(detail=False, methods=['get'], permission_classes=[permissions.AllowAny], url_path='public')

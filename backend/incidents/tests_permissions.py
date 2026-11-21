@@ -82,7 +82,13 @@ class IncidentReportAccessTests(AccessTestCase):
             'timeOccurred': '14:30', 'incidentType': 'Stand-by Medical Team', 'location': 'Perez Park',
             'latitude': 13.9339, 'longitude': 121.6172, 'description': 'Event', 'actionTaken': 'Stand-by',
             'status': 'Approved', 'victims': [],
-            'details': {'event_name': 'Fun Run', 'venue': 'Perez Park', 'persons_assisted': 0},
+            'details': {
+                'event_name': 'Fun Run',
+                'venue': 'Perez Park',
+                'persons_assisted': 0,
+                'triage_acuity': 'none',
+                'resource_utilization': 'on_site',
+            },
         }, format='json')
         self.assertEqual(response.status_code, 201, response.data)
         self.assertEqual(IncidentReport.objects.get(id=response.data['id']).status, 'Pending')
@@ -96,7 +102,13 @@ class IncidentReportAccessTests(AccessTestCase):
             'timeOccurred': '14:30', 'incidentType': 'Stand-by Medical Team', 'location': 'Perez Park',
             'latitude': 13.9339, 'longitude': 121.6172, 'description': 'Event', 'actionTaken': 'Stand-by',
             'victims': [],
-            'details': {'event_name': 'Fun Run', 'venue': 'Perez Park', 'persons_assisted': 0},
+            'details': {
+                'event_name': 'Fun Run',
+                'venue': 'Perez Park',
+                'persons_assisted': 0,
+                'triage_acuity': 'none',
+                'resource_utilization': 'on_site',
+            },
         }, format='json')
         self.assertEqual(response.status_code, 400)
         self.assertIn('responderTeam', response.data)

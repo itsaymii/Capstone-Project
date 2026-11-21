@@ -13,9 +13,11 @@ from django.utils import timezone
 from django.utils.text import slugify
 from rest_framework.decorators import api_view
 from rest_framework.decorators import permission_classes
+from rest_framework.decorators import throttle_classes
 from rest_framework.permissions import BasePermission, IsAuthenticated
 from rest_framework import status
 from rest_framework.response import Response
+from rest_framework.throttling import UserRateThrottle
 
 from accounts.models import AccountProfile, OneTimePassword, ResidencyVerification, ensure_account_profile, get_user_role, user_has_dashboard_access
 from incidents.models import ResponderTeam
@@ -41,6 +43,7 @@ from .models import (
     SimulationQuizChoice,
     SimulationQuizQuestion,
 )
+from .briefing import BriefingRefreshInProgress, get_strategic_dashboard_briefing
 
 try:
     from pypdf import PdfReader
@@ -61,6 +64,10 @@ class HasDashboardAdminAccess(BasePermission):
             and user.is_authenticated
             and get_user_role(user) == AccountProfile.ROLE_ADMIN
         )
+
+
+class StrategicBriefingThrottle(UserRateThrottle):
+    scope = 'strategic_briefing'
 
 
 def _build_unique_username(seed: str) -> str:
@@ -940,12 +947,17 @@ SIMULATION_ATTEMPT_WINDOW = timedelta(hours=24)
 
 
 def _get_catalog_courses() -> list[dict]:
-    catalog = SimulationCourseCatalog.objects.filter(key='default').first()
-    courses = catalog.courses if catalog and isinstance(catalog.courses, list) else []
-    try:
-        return _sanitize_simulation_courses(courses)
-    except ValidationError:
-        return []
+    courses = (
+        SimulationCourse.objects.filter(is_archived=False, is_placeholder=False)
+        .prefetch_related(
+            'objectives',
+            'prerequisites',
+            'lessons__points',
+            'lessons__exam_questions__choices',
+            'learning_materials',
+        )
+    )
+    return [_serialize_simulation_course(course) for course in courses]
 
 
 def _find_catalog_course(course_id: str) -> dict | None:
@@ -1008,8 +1020,11 @@ def _missing_course_requirements(user: User, course_id: str, course: dict | None
             missing.append(f"{lesson['title']} (exam)")
 
     quiz_lessons = (
-        SimulationModuleQuiz.objects.filter(course_id=course_id, status=SimulationModuleQuiz.STATUS_PUBLISHED)
-        .values_list('lesson_id', 'lesson_title')
+        SimulationModuleQuiz.objects.filter(
+            course_record__course_id=course_id,
+            status=SimulationModuleQuiz.STATUS_PUBLISHED,
+        )
+        .values_list('lesson_record__lesson_id', 'lesson_title')
         .distinct()
     )
     checked_lessons = set()
@@ -1018,7 +1033,12 @@ def _missing_course_requirements(user: User, course_id: str, course: dict | None
             continue
         checked_lessons.add(lesson_id)
         last_pass = (
-            SimulationQuizAttempt.objects.filter(user=user, quiz__course_id=course_id, quiz__lesson_id=lesson_id, passed=True)
+            SimulationQuizAttempt.objects.filter(
+                user=user,
+                quiz__course_record__course_id=course_id,
+                quiz__lesson_record__lesson_id=lesson_id,
+                passed=True,
+            )
             .order_by('-attempted_at')
             .first()
         )
@@ -1060,13 +1080,7 @@ def simulation_admin_metrics(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def simulation_courses(request):
-    catalog = SimulationCourseCatalog.objects.filter(key='default').first()
-    courses = catalog.courses if catalog and isinstance(catalog.courses, list) else []
-
-    try:
-        sanitized_courses = _sanitize_simulation_courses(courses)
-    except ValidationError:
-        sanitized_courses = []
+    sanitized_courses = _get_catalog_courses()
 
     # Admins edit the exams, so they need the answers; everyone else only gets the questions.
     if get_user_role(request.user) != AccountProfile.ROLE_ADMIN:
@@ -1350,7 +1364,11 @@ def simulation_submit_quiz_attempt(request, quiz_id: int):
         )
 
     attempts_left, retry_after = _attempt_limit(
-        SimulationQuizAttempt.objects.filter(user=request.user, quiz__course_id=quiz.course_id, quiz__lesson_id=quiz.lesson_id)
+        SimulationQuizAttempt.objects.filter(
+            user=request.user,
+            quiz__course_record_id=quiz.course_record_id,
+            quiz__lesson_record_id=quiz.lesson_record_id,
+        )
     )
     if attempts_left == 0:
         return _too_many_attempts(retry_after)
@@ -1498,10 +1516,17 @@ def simulation_submit_exam_attempt(request):
 
     if passed:
         progress, _ = SimulationProgress.objects.get_or_create(user=request.user)
-        completed_map = progress.completed_lesson_videos if isinstance(progress.completed_lesson_videos, dict) else {}
-        completed_map[f'{course_id}:{lesson_id}'] = True
-        progress.completed_lesson_videos = completed_map
-        progress.save(update_fields=['completed_lesson_videos', 'updated_at'])
+        lesson_record = SimulationLesson.objects.get(course_id=course_id, lesson_id=lesson_id)
+        SimulationLessonVideoCompletion.objects.update_or_create(
+            progress=progress,
+            completion_key=f'{course_id}:{lesson_id}',
+            defaults={
+                'course_id': course_id,
+                'lesson': lesson_record,
+                'is_completed': True,
+            },
+        )
+        progress.save(update_fields=['updated_at'])
 
     details = [
         {
@@ -1689,17 +1714,22 @@ def simulation_admin_reset_progress(request):
         exam_attempts_qs = exam_attempts_qs.filter(user_id=user_id)
         certificates_qs = certificates_qs.filter(user_id=user_id)
 
-    reset_users = progress_qs.count()
-    progress_qs.update(course_progress={}, completed_lesson_videos={}, completed_courses={})
-    deleted_attempts, _ = attempts_qs.delete()
-    deleted_exam_attempts, _ = exam_attempts_qs.delete()
-    deleted_attempts += deleted_exam_attempts
+    progress_ids = list(progress_qs.values_list('id', flat=True))
+    reset_users = len(progress_ids)
+    if progress_ids:
+        SimulationCourseProgress.objects.filter(progress_id__in=progress_ids).delete()
+        SimulationLessonVideoCompletion.objects.filter(progress_id__in=progress_ids).delete()
+        SimulationProgress.objects.filter(id__in=progress_ids).update(updated_at=timezone.now())
+
+    deleted_attempts = attempts_qs.count() + exam_attempts_qs.count()
+    attempts_qs.delete()
+    exam_attempts_qs.delete()
     deleted_certificates, _ = certificates_qs.delete()
 
     return Response(
         {
             'resetUsers': reset_users,
-            'deletedAttempts': deleted_attempt_count,
+            'deletedAttempts': deleted_attempts,
             'deletedCertificates': deleted_certificates,
         },
         status=status.HTTP_200_OK,
@@ -1726,6 +1756,20 @@ def admin_dashboard_summary(request):
     }
 
     return Response(response_data)
+
+
+@api_view(['GET'])
+@permission_classes([HasDashboardAdminAccess])
+@throttle_classes([StrategicBriefingThrottle])
+def admin_dashboard_strategic_briefing(request):
+    try:
+        return Response(get_strategic_dashboard_briefing())
+    except BriefingRefreshInProgress:
+        return Response(
+            {'detail': 'The strategic briefing is being refreshed. Please retry shortly.'},
+            status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            headers={'Retry-After': '2'},
+        )
 
 
 @api_view(['POST'])

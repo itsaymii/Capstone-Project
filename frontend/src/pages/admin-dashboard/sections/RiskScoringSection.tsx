@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
-import { getBarangayRiskRanking, getBarangayRiskScore, getBarangays, getHazardInsights } from '../../../services/api'
+import { getBarangayRiskRanking, getBarangayRiskScore, getBarangays, getCitywideEarthquakeRisk } from '../../../services/api'
 import type {
   Barangay,
   BarangayHazardProfileItem,
   BarangayRiskRankingItem,
   BarangayRiskScoreResponse,
   BarangayScoreHistoryItem,
-  HazardInsightSections,
+  CitywideEarthquakeRiskResponse,
   IncidentTrendComparison,
 } from '../../../types/api'
 import { glassPanelClass } from './constants'
@@ -135,35 +135,31 @@ function monthName(month: number): string {
 /** API options for the chosen period, or an error message when it is incomplete. */
 function resolvePeriod(period: PeriodState): {
   query: { days?: number; startDate?: string; endDate?: string; year?: number; month?: number }
-  insight: { days?: number; startDate?: string; endDate?: string }
   label: string
   error: string | null
 } {
   if (period.mode === 'range') {
     if (!period.startDate || !period.endDate) {
-      return { query: {}, insight: {}, label: 'Custom range', error: 'Choose both a start date and an end date.' }
+      return { query: {}, label: 'Custom range', error: 'Choose both a start date and an end date.' }
     }
     if (period.startDate > period.endDate) {
-      return { query: {}, insight: {}, label: 'Custom range', error: 'The start date must be on or before the end date.' }
+      return { query: {}, label: 'Custom range', error: 'The start date must be on or before the end date.' }
     }
     const range = { startDate: period.startDate, endDate: period.endDate }
-    return { query: range, insight: range, label: `${formatShortDate(period.startDate)} – ${formatShortDate(period.endDate)}`, error: null }
+    return { query: range, label: `${formatShortDate(period.startDate)} – ${formatShortDate(period.endDate)}`, error: null }
   }
 
   if (period.mode === 'month') {
     const year = Number(period.year)
     const month = period.month ? Number(period.month) : undefined
-    const start = new Date(year, month ? month - 1 : 0, 1)
-    const end = month ? new Date(year, month, 0) : new Date(year, 11, 31)
     return {
       query: { year, month },
-      insight: { startDate: toIsoDate(start), endDate: toIsoDate(end) },
       label: month ? `${monthName(month)} ${year}` : `All of ${year}`,
       error: null,
     }
   }
 
-  return { query: { days: period.days }, insight: { days: period.days }, label: `Last ${period.days} days`, error: null }
+  return { query: { days: period.days }, label: `Last ${period.days} days`, error: null }
 }
 
 // ---------------------------------------------------------------------------
@@ -474,6 +470,47 @@ function BarangayScoreCard({ name, riskData, isLoading, error }: { name: string;
           </div>
           <ScoreScale score={score} />
           <ScoreComposition riskData={riskData} />
+        </div>
+      )}
+    </Card>
+  )
+}
+
+function CitywideEarthquakeScoreCard({ riskData, isLoading, error }: {
+  riskData: CitywideEarthquakeRiskResponse | null
+  isLoading: boolean
+  error: string | null
+}) {
+  return (
+    <Card eyebrow="Macro-hazard · Last 90 days" title="City-wide earthquake risk">
+      {error ? (
+        <EmptyState>{error}</EmptyState>
+      ) : isLoading && !riskData ? (
+        <EmptyState>Calculating city-wide earthquake risk…</EmptyState>
+      ) : !riskData ? (
+        <EmptyState>City-wide earthquake risk is unavailable.</EmptyState>
+      ) : (
+        <div className={`space-y-4 transition-opacity ${isLoading ? 'opacity-60' : ''}`}>
+          <div className="flex flex-wrap items-end gap-3">
+            <p className="text-5xl font-black leading-none tabular-nums text-slate-900">
+              {riskData.risk_score.score.toFixed(1)}
+              <span className="ml-1 text-lg font-semibold text-slate-400">/ 10</span>
+            </p>
+            <RiskBadge score={riskData.risk_score.score} size="lg" />
+          </div>
+          <div className="grid gap-3 sm:grid-cols-3">
+            {COMPONENTS.map((component) => (
+              <div key={component.key} className="rounded-xl border border-slate-200 bg-white/70 p-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{component.label} · {Math.round(component.weight * 100)}% weight</p>
+                <p className="mt-1 text-lg font-bold tabular-nums text-slate-900">
+                  {riskData.risk_score.breakdown[component.key].toFixed(1)} <span className="text-sm font-medium text-slate-400">/ 10</span>
+                </p>
+              </div>
+            ))}
+          </div>
+          <p className="text-xs text-slate-500">
+            Based on {riskData.risk_score.explanation.total_incidents} earthquake event{riskData.risk_score.explanation.total_incidents === 1 ? '' : 's'} in the last {riskData.timeframe_days} days. Earthquakes remain unassigned to barangays.
+          </p>
         </div>
       )}
     </Card>
@@ -814,131 +851,6 @@ function PeriodComparison({
 }
 
 // ---------------------------------------------------------------------------
-// AI insight, laid out in sections
-// ---------------------------------------------------------------------------
-
-const ACTION_WORDS = /\b(should|recommend|prioriti[sz]e|deploy|conduct|implement|establish|increase|strengthen|allocate|coordinate|review|maintain|launch|install|train|ensure)\b/i
-
-/** For older servers that only send plain text: split it into the same sections. */
-function sectionsFromText(text: string, hazard: string): HazardInsightSections {
-  const lines = text.split('\n').map((line) => line.trim()).filter(Boolean)
-  const bullets = lines.filter((line) => /^([\u2022\-*]|\d+[.)])\s+/.test(line)).map((line) => line.replace(/^([\u2022\-*]|\d+[.)])\s+/, ''))
-  const prose = lines.filter((line) => !/^([\u2022\-*]|\d+[.)])\s+/.test(line) && !/^[A-Z\s/]+:?$/.test(line) && !/^quick stat/i.test(line))
-  const sentences = prose.join(' ').match(/[^.!?]+[.!?]+(\s|$)/g)?.map((sentence) => sentence.trim()) ?? (prose.length ? [prose.join(' ')] : [])
-
-  const recommendations = sentences.filter((sentence) => ACTION_WORDS.test(sentence))
-  const facts = sentences.filter((sentence) => !ACTION_WORDS.test(sentence))
-
-  return {
-    headline: `${hazard} outlook`,
-    summary: facts.slice(0, 2).join(' ') || sentences.slice(0, 2).join(' '),
-    findings: [...facts.slice(2), ...bullets],
-    recommendations,
-  }
-}
-
-function InsightCard({
-  hazard,
-  sections,
-  isLoading,
-  error,
-  periodLabel,
-}: {
-  hazard: string | null
-  sections: HazardInsightSections | null
-  isLoading: boolean
-  error: string | null
-  periodLabel: string
-}) {
-  const stats = sections?.stats
-  const chips = stats
-    ? [
-        { label: 'Incidents', value: stats.total.toLocaleString() },
-        { label: 'Per month', value: stats.monthly_average.toLocaleString() },
-        { label: 'High or critical', value: stats.critical_high.toLocaleString() },
-        { label: 'Hotspots', value: stats.hotspots.join(', ') || '—' },
-      ]
-    : []
-
-  return (
-    <Card
-      eyebrow="AI insights"
-      title={hazard ? `City-wide outlook: ${hazard}` : 'Hazard outlook'}
-      aside={
-        <div className="text-right text-xs text-slate-500">
-          <p>{periodLabel}</p>
-          {sections?.source && <p className="mt-0.5">{sections.source === 'gemini' ? 'Written by Gemini AI' : 'Rule-based summary (no AI key)'}</p>}
-        </div>
-      }
-    >
-      {!hazard ? (
-        <EmptyState>The insight follows the barangay's most likely hazard. Select a barangay with incidents to see it.</EmptyState>
-      ) : isLoading ? (
-        <div className="space-y-3" aria-busy="true">
-          <div className="h-5 w-2/3 animate-pulse rounded bg-slate-100" />
-          <div className="h-4 w-full animate-pulse rounded bg-slate-100" />
-          <div className="h-4 w-5/6 animate-pulse rounded bg-slate-100" />
-          <p className="text-xs text-slate-500">Generating insight for {hazard}…</p>
-        </div>
-      ) : error ? (
-        <EmptyState>{error}</EmptyState>
-      ) : !sections ? (
-        <EmptyState>No insight available for {hazard}.</EmptyState>
-      ) : (
-        <div className="space-y-5" data-testid="insight">
-          <div>
-            <p className="text-base font-bold text-slate-900">{sections.headline}</p>
-            <p className="mt-1.5 max-w-3xl text-[15px] leading-7 text-slate-700">{sections.summary}</p>
-          </div>
-
-          {chips.length > 0 && (
-            <dl className="grid grid-cols-2 gap-2 lg:grid-cols-4">
-              {chips.map((chip) => (
-                <div key={chip.label} className="rounded-xl bg-slate-50 px-3 py-2">
-                  <dt className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">{chip.label}</dt>
-                  <dd className="mt-0.5 text-sm font-bold text-slate-900">{chip.value}</dd>
-                </div>
-              ))}
-            </dl>
-          )}
-
-          <div className="grid gap-5 lg:grid-cols-2">
-            {sections.findings.length > 0 && (
-              <section>
-                <h3 className="text-sm font-bold text-slate-900">Key findings</h3>
-                <ul className="mt-2 space-y-2">
-                  {sections.findings.map((item) => (
-                    <li key={item} className="flex gap-2.5 text-sm leading-6 text-slate-700">
-                      <span className="mt-2.5 h-1.5 w-1.5 shrink-0 rounded-full bg-slate-400" aria-hidden="true" />
-                      {item}
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            )}
-            {sections.recommendations.length > 0 && (
-              <section>
-                <h3 className="text-sm font-bold text-slate-900">Recommended actions</h3>
-                <ol className="mt-2 space-y-2">
-                  {sections.recommendations.map((item, index) => (
-                    <li key={item} className="flex gap-2.5 text-sm leading-6 text-slate-700">
-                      <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-blue-50 text-[11px] font-bold text-blue-700">
-                        {index + 1}
-                      </span>
-                      {item}
-                    </li>
-                  ))}
-                </ol>
-              </section>
-            )}
-          </div>
-        </div>
-      )}
-    </Card>
-  )
-}
-
-// ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
 
@@ -960,13 +872,12 @@ export function RiskScoringSection() {
   const [riskLoading, setRiskLoading] = useState(false)
   const [riskError, setRiskError] = useState<string | null>(null)
 
-  const [insight, setInsight] = useState<HazardInsightSections | null>(null)
-  const [insightLoading, setInsightLoading] = useState(false)
-  const [insightError, setInsightError] = useState<string | null>(null)
+  const [citywideEarthquakeRisk, setCitywideEarthquakeRisk] = useState<CitywideEarthquakeRiskResponse | null>(null)
+  const [citywideEarthquakeLoading, setCitywideEarthquakeLoading] = useState(true)
+  const [citywideEarthquakeError, setCitywideEarthquakeError] = useState<string | null>(null)
 
   const resolved = useMemo(() => resolvePeriod(period), [period])
   const queryKey = JSON.stringify(resolved.query)
-  const insightKey = JSON.stringify(resolved.insight)
   // Compare month only makes sense when a single month is being viewed.
   const canCompareMonth = period.mode === 'month' && Boolean(period.month)
 
@@ -979,6 +890,29 @@ export function RiskScoringSection() {
         if (active) setBarangays(results)
       })
       .catch((error) => console.error('[RiskScoringSection] Failed to load barangays:', error))
+    return () => {
+      active = false
+    }
+  }, [])
+
+  useEffect(() => {
+    let active = true
+    setCitywideEarthquakeLoading(true)
+    setCitywideEarthquakeError(null)
+    getCitywideEarthquakeRisk()
+      .then((response) => {
+        if (active) setCitywideEarthquakeRisk(response)
+      })
+      .catch((error) => {
+        console.error('[RiskScoringSection] Failed to load city-wide earthquake risk:', error)
+        if (active) {
+          setCitywideEarthquakeRisk(null)
+          setCitywideEarthquakeError('Could not load the city-wide earthquake risk.')
+        }
+      })
+      .finally(() => {
+        if (active) setCitywideEarthquakeLoading(false)
+      })
     return () => {
       active = false
     }
@@ -1036,34 +970,6 @@ export function RiskScoringSection() {
       active = false
     }
   }, [selectedBarangayId, queryKey, resolved.error, compareYear, compareMonth, canCompareMonth])
-
-  // City-wide insight for the barangay's most likely hazard.
-  const predictedHazard = riskData?.hazard_prediction?.hazard ?? null
-  useEffect(() => {
-    if (!predictedHazard) {
-      setInsight(null)
-      setInsightError(null)
-      return
-    }
-    let active = true
-    setInsightLoading(true)
-    setInsightError(null)
-    getHazardInsights(predictedHazard, JSON.parse(insightKey))
-      .then((response) => {
-        if (!active) return
-        setInsight(response.ai_insight_sections ?? (response.ai_insight ? sectionsFromText(response.ai_insight, predictedHazard) : null))
-      })
-      .catch((error) => {
-        console.error('[RiskScoringSection] Failed to load AI insight:', error)
-        if (active) setInsightError('Could not generate the insight right now.')
-      })
-      .finally(() => {
-        if (active) setInsightLoading(false)
-      })
-    return () => {
-      active = false
-    }
-  }, [predictedHazard, insightKey])
 
   const selectedBarangay = barangays.find((barangay) => barangay.id === selectedBarangayId)
   const selectedName = selectedBarangay?.name || ranking.find((row) => row.barangay_id === selectedBarangayId)?.barangay_name || ''
@@ -1191,6 +1097,12 @@ export function RiskScoringSection() {
           </div>
         </div>
 
+        <CitywideEarthquakeScoreCard
+          riskData={citywideEarthquakeRisk}
+          isLoading={citywideEarthquakeLoading}
+          error={citywideEarthquakeError}
+        />
+
         <div className="grid gap-4 xl:grid-cols-2">
           <HazardBreakdown hazards={riskData?.barangay_profile?.hazards ?? {}} isLoading={riskLoading} />
           <ScoreHistoryChart data={riskData?.score_history ?? []} />
@@ -1198,7 +1110,6 @@ export function RiskScoringSection() {
 
         <PeriodComparison comparison={riskData?.incident_trend_comparison} controls={compareControls} />
 
-        <InsightCard hazard={predictedHazard} sections={insight} isLoading={insightLoading} error={insightError} periodLabel={resolved.label} />
       </div>
     </section>
   )

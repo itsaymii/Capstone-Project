@@ -3,6 +3,12 @@ from django.db.models import Count
 from django.utils import timezone
 from incidents.models import Incident
 from datetime import timedelta
+from locations.constants import (
+    LUCENA_CITY_MAX_LATITUDE,
+    LUCENA_CITY_MAX_LONGITUDE,
+    LUCENA_CITY_MIN_LATITUDE,
+    LUCENA_CITY_MIN_LONGITUDE,
+)
 
 # Configuration: Weights for the risk score calculation
 WEIGHTS = {
@@ -31,12 +37,33 @@ def calculate_risk_score(barangay_id, days=90, start_date=None, end_date=None):
             incident_datetime__gte=start_date,
             incident_datetime__lte=end_date,
         )
+        recency_reference = end_date
     else:
-        cutoff = timezone.now() - timedelta(days=days)
+        recency_reference = timezone.now()
+        cutoff = recency_reference - timedelta(days=days)
         incidents = Incident.objects.filter(barangay_id=barangay_id, incident_datetime__gte=cutoff)
         
+    return _score_incidents(incidents, recency_reference)
+
+
+def calculate_citywide_earthquake_risk_score(days=90):
+    """Calculates the city-wide risk score using only stored earthquake events."""
+    cutoff = timezone.now() - timedelta(days=days)
+    incidents = Incident.objects.filter(
+        earthquake_details__isnull=False,
+        incident_datetime__gte=cutoff,
+        latitude__gte=LUCENA_CITY_MIN_LATITUDE,
+        latitude__lte=LUCENA_CITY_MAX_LATITUDE,
+        longitude__gte=LUCENA_CITY_MIN_LONGITUDE,
+        longitude__lte=LUCENA_CITY_MAX_LONGITUDE,
+    )
+    return _score_incidents(incidents)
+
+
+def _score_incidents(incidents, recency_reference=None):
+    incidents = incidents.exclude(status='false_alarm')
     total = incidents.count()
-    
+
     # Edge case: No incidents = Minimum score
     if total == 0:
         return {
@@ -73,7 +100,7 @@ def calculate_risk_score(barangay_id, days=90, start_date=None, end_date=None):
     avg_severity_weight = weighted_sum / total
 
     # --- COMPONENT 3: RECENCY SCORE (0-10) ---
-    recent_cutoff = timezone.now() - timedelta(days=30)
+    recent_cutoff = (recency_reference or timezone.now()) - timedelta(days=30)
     recent_count = incidents.filter(incident_datetime__gte=recent_cutoff).count()
     
     recency_score = (recent_count / total) * 10.0

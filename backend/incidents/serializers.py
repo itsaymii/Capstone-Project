@@ -5,6 +5,12 @@ from .utils import get_nearest_barangay
 from django.utils import timezone
 from rest_framework import serializers
 from accounts.models import AccountProfile
+from locations.constants import (
+    LUCENA_CITY_MAX_LATITUDE,
+    LUCENA_CITY_MAX_LONGITUDE,
+    LUCENA_CITY_MIN_LATITUDE,
+    LUCENA_CITY_MIN_LONGITUDE,
+)
 
 from .models import (
     HazardType,
@@ -23,7 +29,8 @@ from .models import (
 )
 
 from locations.serializers import BarangaySerializer
-from .incident_types import validate_report_details
+from .incident_types import get_incident_type, validate_report_details
+from .severity import score_report_severity
 from .teams import team_name
 import re
 
@@ -84,21 +91,6 @@ def map_incident_type_to_hazard_name(incident_type):
     return 'Medical Emergency'
 
 
-def map_incident_type_to_severity(incident_type, victim_count):
-    lower = (incident_type or '').lower()
-
-    if victim_count >= 5:
-        return 'critical'
-    if victim_count >= 3:
-        return 'high'
-    if 'fire' in lower or 'drowning' in lower or 'crime' in lower:
-        return 'moderate'
-    if victim_count > 0:
-        return 'moderate'
-
-    return 'low'
-
-
 def _barangay_key(name):
     """'Barangay 10 (Pob.)' and 'Barangay 10' -> 'barangay10'; 'Gulang-Gulang' -> 'gulanggulang'."""
     return re.sub(r'[^a-z0-9]', '', re.sub(r'\(pob\.?\)', '', (name or '').lower()))
@@ -131,7 +123,10 @@ def validate_lucena_coordinates(latitude, longitude):
     lat = float(latitude)
     lng = float(longitude)
 
-    if not (13.89 <= lat <= 13.98 and 121.57 <= lng <= 121.69):
+    if not (
+        LUCENA_CITY_MIN_LATITUDE <= lat <= LUCENA_CITY_MAX_LATITUDE
+        and LUCENA_CITY_MIN_LONGITUDE <= lng <= LUCENA_CITY_MAX_LONGITUDE
+    ):
         raise serializers.ValidationError({
             'coordinates': 'Coordinates must be within Lucena City area.',
         })
@@ -212,6 +207,8 @@ class MedicalEmergencySerializer(serializers.ModelSerializer):
             'emergency_type',
             'transported',
             'hospital',
+            'triage_acuity',
+            'resource_utilization',
             'created_at',
             'updated_at',
         ]
@@ -545,7 +542,10 @@ class IncidentReportSerializer(serializers.ModelSerializer):
         validated_data['responder_team_record'] = profile.responder_team
 
         incoming_victim_count = validated_data.pop('victim_count', None)
-        if incoming_victim_count is None:
+        incident_type_config = get_incident_type(validated_data.get('incident_type'))
+        if incident_type_config and incident_type_config['key'] in ('rca', 'fire', 'crime', 'medical', 'ambulance'):
+            validated_data['victim_count'] = len(victims_data)
+        elif incoming_victim_count is None:
             validated_data['victim_count'] = len(victims_data)
         else:
             validated_data['victim_count'] = max(int(incoming_victim_count), len(victims_data))
@@ -654,8 +654,10 @@ class IncidentReportSerializer(serializers.ModelSerializer):
         if existing_incident:
             return existing_incident
 
-        severity = map_incident_type_to_severity(
+        severity = score_report_severity(
             incident_report.incident_type,
+            incident_report.details,
+            [victim.details for victim in incident_report.victims.all()],
             incident_report.victim_count,
         )
 

@@ -165,7 +165,8 @@ class EarthquakeDetails(models.Model):
     incident = models.OneToOneField(Incident, on_delete=models.CASCADE, related_name='earthquake_details')
     magnitude = models.DecimalField(max_digits=3, decimal_places=1)
     depth = models.DecimalField(max_digits=6, decimal_places=2, help_text="Depth in km")
-    intensity = models.CharField(max_length=50, blank=True, help_text="PEIS intensity scale")
+    intensity = models.CharField(max_length=50, blank=True, null=True, help_text="PEIS intensity scale")
+    source_event_id = models.CharField(max_length=100, unique=True, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     class Meta:
@@ -262,6 +263,8 @@ class MedicalEmergency(models.Model):
     emergency_type = models.CharField(max_length=100)
     transported = models.IntegerField(default=0, help_text="Number transported to hospital")
     hospital = models.CharField(max_length=200, blank=True)
+    triage_acuity = models.CharField(max_length=16, null=True, blank=True)
+    resource_utilization = models.CharField(max_length=32, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     class Meta:
@@ -548,6 +551,8 @@ class CrimeIncidentDetails(models.Model):
 
 class MedicalIncidentDetails(models.Model):
     incident_report = models.OneToOneField(IncidentReport, on_delete=models.CASCADE, related_name='medical_report_details')
+    triage_acuity = models.CharField(max_length=16, null=True, blank=True)
+    resource_utilization = models.CharField(max_length=32, null=True, blank=True)
     chief_complaint = models.CharField(max_length=32, null=True, blank=True)
     consciousness = models.CharField(max_length=32, null=True, blank=True)
     transported = models.BooleanField(null=True, blank=True)
@@ -556,6 +561,8 @@ class MedicalIncidentDetails(models.Model):
 
 class AmbulanceIncidentDetails(models.Model):
     incident_report = models.OneToOneField(IncidentReport, on_delete=models.CASCADE, related_name='ambulance_report_details')
+    triage_acuity = models.CharField(max_length=16, null=True, blank=True)
+    resource_utilization = models.CharField(max_length=32, null=True, blank=True)
     pickup_location = models.CharField(max_length=200, null=True, blank=True)
     destination_hospital = models.CharField(max_length=200, null=True, blank=True)
     transport_reason = models.CharField(max_length=32, null=True, blank=True)
@@ -567,6 +574,8 @@ class AmbulanceIncidentDetails(models.Model):
 
 class StandbyMedicalDetails(models.Model):
     incident_report = models.OneToOneField(IncidentReport, on_delete=models.CASCADE, related_name='standby_medical_details')
+    triage_acuity = models.CharField(max_length=16, null=True, blank=True)
+    resource_utilization = models.CharField(max_length=32, null=True, blank=True)
     event_name = models.CharField(max_length=200, null=True, blank=True)
     venue = models.CharField(max_length=200, null=True, blank=True)
     organizer = models.CharField(max_length=200, null=True, blank=True)
@@ -604,6 +613,7 @@ class DrowningReportDetails(models.Model):
 class RoadCrashVictimDetails(models.Model):
     victim = models.OneToOneField(VictimDetail, on_delete=models.CASCADE, related_name='road_crash_details')
     person_role = models.CharField(max_length=32, null=True, blank=True)
+    injury_severity = models.CharField(max_length=32, null=True, blank=True)
     protective_gear = models.CharField(max_length=32, null=True, blank=True)
 
 
@@ -619,6 +629,11 @@ class MedicalVictimDetails(models.Model):
     respiratory_rate = models.PositiveSmallIntegerField(null=True, blank=True)
     oxygen_saturation = models.PositiveSmallIntegerField(null=True, blank=True)
     temperature = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+
+
+class CrimeVictimDetails(models.Model):
+    victim = models.OneToOneField(VictimDetail, on_delete=models.CASCADE, related_name='crime_details')
+    outcome = models.CharField(max_length=16, null=True, blank=True)
 
 
 def _report_detail_config(report):
@@ -722,6 +737,7 @@ def get_victim_detail_values(victim):
     model_by_key = {
         'rca': ('road_crash_details', RoadCrashVictimDetails),
         'fire': ('fire_details', FireVictimDetails),
+        'crime': ('crime_details', CrimeVictimDetails),
         'medical': ('medical_details', MedicalVictimDetails),
     }
     relation = model_by_key.get(config['key'])
@@ -750,6 +766,7 @@ def save_victim_detail_values(victim, values):
     model_by_key = {
         'rca': RoadCrashVictimDetails,
         'fire': FireVictimDetails,
+        'crime': CrimeVictimDetails,
         'medical': MedicalVictimDetails,
     }
     model = model_by_key.get(config['key']) if config else None
