@@ -2,6 +2,7 @@ from django.urls import path
 
 from .views import (
     admin_dashboard_summary,
+    admin_dashboard_strategic_briefing,
     create_dashboard_account,
     dashboard_account_detail,
     dashboard_account_residency_proof,
@@ -30,6 +31,7 @@ from .views import (
 
 urlpatterns = [
     path('admin/summary/', admin_dashboard_summary, name='admin-dashboard-summary'),
+    path('admin/strategic-briefing/', admin_dashboard_strategic_briefing, name='admin-dashboard-strategic-briefing'),
     path('admin/accounts/', list_dashboard_accounts, name='admin-dashboard-accounts'),
     path('admin/accounts/create/', create_dashboard_account, name='admin-dashboard-create-account'),
     path('admin/accounts/<int:user_id>/', dashboard_account_detail, name='admin-dashboard-account-detail'),

@@ -8,11 +8,10 @@ from rest_framework.response import Response
 from rest_framework import status
 
 from incidents.models import Incident
-from .aggregators import get_barangay_profile, get_hazard_citywide_stats, get_incident_trend_comparison
+from .aggregators import get_barangay_profile, get_incident_trend_comparison
 from .performance import get_response_performance_metrics
-from .scoring import calculate_risk_score
+from .scoring import calculate_citywide_earthquake_risk_score, calculate_risk_score
 from .prediction import predict_top_hazard
-from .insights import format_insight_text, generate_hazard_insight_sections
 from locations.models import Barangay
 
 
@@ -243,56 +242,20 @@ def barangay_risk_view(request):
 
 @api_view(['GET'])
 @permission_classes([AllowAny])
-def hazard_insights_view(request):
-    """
-    Endpoint 2: Generates AI/Template Insights (Phase 5).
-    Params: hazard (required), days (optional, default 365), 
-            start_date (optional, YYYY-MM-DD), end_date (optional, YYYY-MM-DD)
-    """
-    hazard_name = request.query_params.get('hazard')
-    if not hazard_name:
-        return Response({'error': 'hazard query parameter is required.'}, status=status.HTTP_400_BAD_REQUEST)
-
+def citywide_earthquake_risk_view(request):
+    """Calculates the city-wide earthquake risk score for a rolling period."""
     try:
-        days = int(request.query_params.get('days', 365))
+        days = int(request.query_params.get('days', 90))
     except ValueError:
         return Response({'error': 'days must be an integer.'}, status=status.HTTP_400_BAD_REQUEST)
+    if days < 1:
+        return Response({'error': 'days must be at least 1.'}, status=status.HTTP_400_BAD_REQUEST)
 
-    # Parse custom date ranges if provided
-    start_date_str = request.query_params.get('start_date')
-    end_date_str = request.query_params.get('end_date')
-    
-    start_date = parse_date(start_date_str) if start_date_str else None
-    end_date = parse_date(end_date_str) if end_date_str else None
-
-    # 1. Get Aggregated Stats
-    stats = get_hazard_citywide_stats(
-        hazard_name, 
-        days=days, 
-        start_date=start_date, 
-        end_date=end_date
-    )
-
-    # 2. Generate Insight (sections for the page, plus the same content as text)
-    insight_sections = generate_hazard_insight_sections(
-        hazard_name,
-        stats,
-        days=days,
-        start_date=start_date,
-        end_date=end_date,
-    )
-
-    # 3. Return strategic intelligence
     return Response({
-        'hazard': hazard_name,
-        'timeframe': {
-            'rolling_days': days if not start_date else None,
-            'start_date': start_date_str,
-            'end_date': end_date_str
-        },
-        'raw_stats': stats,
-        'ai_insight': format_insight_text(insight_sections),
-        'ai_insight_sections': insight_sections,
+        'hazard': 'Earthquake',
+        'scope': 'citywide',
+        'timeframe_days': days,
+        'risk_score': calculate_citywide_earthquake_risk_score(days=days),
     })
 
 

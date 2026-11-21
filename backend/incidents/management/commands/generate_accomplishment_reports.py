@@ -21,6 +21,12 @@ from incidents.sample_details import (
     victim_count_for,
 )
 from incidents.teams import team_name
+from locations.constants import (
+    LUCENA_CITY_MAX_LATITUDE,
+    LUCENA_CITY_MAX_LONGITUDE,
+    LUCENA_CITY_MIN_LATITUDE,
+    LUCENA_CITY_MIN_LONGITUDE,
+)
 
 try:
     from incidents.models import Incident, HazardType
@@ -216,7 +222,10 @@ def get_randomized_coordinates(barangay_name):
     base_lat, base_lng = BARANGAY_COORDINATES.get(barangay_name, (13.9414, 121.6236))
     latitude = round(base_lat + random.uniform(-0.0018, 0.0018), 6)
     longitude = round(base_lng + random.uniform(-0.0018, 0.0018), 6)
-    return min(max(latitude, 13.89), 13.98), min(max(longitude, 121.57), 121.69)
+    return (
+        min(max(latitude, LUCENA_CITY_MIN_LATITUDE), LUCENA_CITY_MAX_LATITUDE),
+        min(max(longitude, LUCENA_CITY_MIN_LONGITUDE), LUCENA_CITY_MAX_LONGITUDE),
+    )
 
 def _boundary_rings(boundary):
     """Outer rings of a GeoJSON Polygon/MultiPolygon, as lists of (lng, lat)."""
@@ -546,7 +555,7 @@ class Command(BaseCommand):
                     description=get_incident_description(incident_type, location),
                     victim_count=victim_count,
                     action_taken=rng.choice(ACTIONS_BY_TYPE.get(incident_type, ACTIONS)),
-                    status='Approved' if approved else 'Pending',
+                    status='Pending',
                     details=cleaned,
                     created_by=responder.user,
                 )
@@ -565,8 +574,12 @@ class Command(BaseCommand):
                     )
                 victims_total += victim_count
 
+                if approved:
+                    report.status = 'Approved'
+                    report.save(update_fields=['status'])
+
                 if approved and Incident is not None:
-                    # The approval signal created the incident with today's date; give it the real dates.
+                    # Preserve the generated event timestamp after report approval creates the incident.
                     Incident.objects.filter(reference_code=report.incident_code).update(
                         incident_datetime=occurred_at,
                         date_reported=reported_at,

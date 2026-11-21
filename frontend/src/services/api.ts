@@ -4,7 +4,8 @@ import type {
   Barangay,
   BarangayRiskScoreResponse,
   BarangayRiskRankingResponse,
-  HazardInsightResponse,
+  CitywideEarthquakeRiskResponse,
+  StrategicDashboardBriefingResponse,
   DashboardAccountsResponse,
   DashboardCreateAccountPayload,
   DashboardCreateAccountResponse,
@@ -232,6 +233,11 @@ export async function getAdminDashboardSummary(): Promise<AdminDashboardSummaryR
   return data
 }
 
+export async function getStrategicDashboardBriefing(): Promise<StrategicDashboardBriefingResponse> {
+  const { data } = await api.get<StrategicDashboardBriefingResponse>('/dashboard/admin/strategic-briefing/')
+  return data
+}
+
 export async function createDashboardAccount(payload: DashboardCreateAccountPayload): Promise<DashboardCreateAccountResponse> {
   await ensureCsrfCookie()
   const { data } = await api.post<DashboardCreateAccountResponse>('/dashboard/admin/accounts/create/', payload)
@@ -413,6 +419,14 @@ export async function getBarangayRiskScore(
   return data
 }
 
+export async function getCitywideEarthquakeRisk(days = 90): Promise<CitywideEarthquakeRiskResponse> {
+  const { data } = await api.get<CitywideEarthquakeRiskResponse>(
+    '/api/analytics/citywide-earthquake-risk/',
+    { params: { days } },
+  )
+  return data
+}
+
 /** Risk score of every barangay for one period, highest first. */
 export async function getBarangayRiskRanking(options?: {
   days?: number
@@ -429,31 +443,6 @@ export async function getBarangayRiskRanking(options?: {
   if (options?.month !== undefined) params.append('month', String(options.month))
 
   const { data } = await api.get<BarangayRiskRankingResponse>('/api/analytics/barangay-risk-ranking/', { params })
-  return data
-}
-
-export async function getHazardInsights(
-  hazard: string,
-  options?: { days?: number; startDate?: string; endDate?: string },
-): Promise<HazardInsightResponse> {
-  const params = new URLSearchParams()
-  params.append('hazard', hazard)
-
-  if (options?.days !== undefined) {
-    params.append('days', String(options.days))
-  }
-
-  if (options?.startDate) {
-    params.append('start_date', options.startDate)
-  }
-
-  if (options?.endDate) {
-    params.append('end_date', options.endDate)
-  }
-
-  const { data } = await api.get<HazardInsightResponse>('/api/analytics/hazard-insights/', {
-    params,
-  })
   return data
 }
 

@@ -4,9 +4,11 @@ from django.db import connections
 from django.db.models.signals import post_migrate
 from .utils import get_nearest_barangay
 from .incident_types import detail_table_values, fit_detail_values
+from .severity import score_report_severity
 from django.dispatch import receiver
 from django.utils import timezone
-from datetime import datetime
+from django.utils.dateparse import parse_time
+from datetime import datetime, timedelta
 from decimal import Decimal
 from sms.utils import send_critical_alert
 from accounts.models import ResidencyVerification
@@ -63,100 +65,92 @@ def _fallback_detail_table(report):
     return None, {}
 
 
-def _map_severity(incident_type, victim_count):
-    lower = (incident_type or '').lower()
-    if victim_count >= 5:
-        return 'critical'
-    if victim_count >= 3:
-        return 'high'
-    if 'fire' in lower or 'drowning' in lower or 'crime' in lower:
-        return 'moderate'
-    if victim_count > 0:
-        return 'moderate'
-    return 'low'
-
-
 @receiver(post_save, sender=IncidentReport)
 def create_incident_on_approval(sender, instance: IncidentReport, created, **kwargs):
     # If the report is approved and no Incident exists yet, create one.
-    try:
-        if str(instance.status).lower() == 'approved':
-            existing = Incident.objects.filter(reference_code__iexact=instance.incident_code).first()
-            if existing:
-                if instance.incident_id != existing.pk:
-                    IncidentReport.objects.filter(pk=instance.pk).update(incident=existing)
-                    instance.incident = existing
-                return
+    if str(instance.status).lower() == 'approved':
+        existing = Incident.objects.filter(reference_code__iexact=instance.incident_code).first()
+        if existing:
+            if instance.incident_id != existing.pk:
+                IncidentReport.objects.filter(pk=instance.pk).update(incident=existing)
+                instance.incident = existing
+            return
 
-            hazard_name = instance.incident_type or 'Medical Emergency'
-            if 'fire' in hazard_name.lower():
-                hazard_name = 'Fire'
-            elif 'rca' in hazard_name.lower() or 'vehicular' in hazard_name.lower() or 'accident' in hazard_name.lower():
-                hazard_name = 'Vehicular Accident'
-            elif 'crime' in hazard_name.lower():
-                hazard_name = 'Crime'
-            elif 'drowning' in hazard_name.lower():
-                hazard_name = 'Drowning'
-            else:
-                hazard_name = 'Medical Emergency'
+        hazard_name = instance.incident_type or 'Medical Emergency'
+        if 'fire' in hazard_name.lower():
+            hazard_name = 'Fire'
+        elif 'rca' in hazard_name.lower() or 'vehicular' in hazard_name.lower() or 'accident' in hazard_name.lower():
+            hazard_name = 'Vehicular Accident'
+        elif 'crime' in hazard_name.lower():
+            hazard_name = 'Crime'
+        elif 'drowning' in hazard_name.lower():
+            hazard_name = 'Drowning'
+        else:
+            hazard_name = 'Medical Emergency'
 
-            hazard_type, _ = HazardType.objects.get_or_create(
-                name=hazard_name,
-                defaults={'description': f'{hazard_name} generated from approved report'},
-            )
+        hazard_type, _ = HazardType.objects.get_or_create(
+            name=hazard_name,
+            defaults={'description': f'{hazard_name} generated from approved report'},
+        )
 
-            lat, lng = _get_coords_for_report(instance)
+        lat, lng = _get_coords_for_report(instance)
 
-            now = timezone.localtime()
-            occurred_time = instance.time_occurred or now.time()
-            incident_datetime = timezone.make_aware(datetime.combine(now.date(), occurred_time))
+        filed_at = timezone.localtime(instance.created_at or timezone.now())
+        occurred_time = instance.time_occurred or filed_at.time()
+        if isinstance(occurred_time, str):
+            occurred_time = parse_time(occurred_time)
+            if occurred_time is None:
+                raise ValueError(f'Invalid time_occurred value for report {instance.pk}.')
+        occurred_date = filed_at.date()
+        if occurred_time > filed_at.time():
+            occurred_date -= timedelta(days=1)
+        incident_datetime = timezone.make_aware(datetime.combine(occurred_date, occurred_time))
 
-            severity = _map_severity(instance.incident_type, instance.victim_count)
+        severity = score_report_severity(
+            instance.incident_type,
+            instance.details,
+            [victim.details for victim in instance.victims.all()],
+            instance.victim_count,
+        )
 
-            # ✅ Prefer the report's barangay if provided; otherwise find nearest
-            barangay = instance.barangay if getattr(instance, 'barangay', None) else None
-            if barangay is None and lat and lng:
-                barangay = get_nearest_barangay(float(lat), float(lng))
+        barangay = instance.barangay if getattr(instance, 'barangay', None) else None
+        if barangay is None and lat and lng:
+            barangay = get_nearest_barangay(float(lat), float(lng))
 
-            incident = Incident.objects.create(
-                reference_code=instance.incident_code,
-                hazard_type=hazard_type,
-                latitude=Decimal(str(lat)),
-                longitude=Decimal(str(lng)),
-                address=instance.location or '',
-                barangay=barangay,
-                reported_by=instance.created_by,
-                incident_datetime=incident_datetime,
-                severity_level=severity,
-                status='verified',
-                impact_level='minor' if instance.victim_count > 0 else 'minimal',
-                description=instance.description or '',
-            )
-            IncidentReport.objects.filter(pk=instance.pk).update(incident=incident)
-            instance.incident = incident
+        incident = Incident.objects.create(
+            reference_code=instance.incident_code,
+            hazard_type=hazard_type,
+            latitude=Decimal(str(lat)),
+            longitude=Decimal(str(lng)),
+            address=instance.location or '',
+            barangay=barangay,
+            reported_by=instance.created_by,
+            incident_datetime=incident_datetime,
+            severity_level=severity,
+            status='verified',
+            impact_level='minor' if instance.victim_count > 0 else 'minimal',
+            description=instance.description or '',
+        )
+        IncidentReport.objects.filter(pk=instance.pk).update(incident=incident)
+        instance.incident = incident
 
-            # Copy the report's type-specific details into the matching detail table.
-            table, values = detail_table_values(
-                instance.incident_type,
-                getattr(instance, 'details', None) or {},
-                instance.victim_count,
-            )
-            if table is None:
-                table, values = _fallback_detail_table(instance)
+        table, values = detail_table_values(
+            instance.incident_type,
+            getattr(instance, 'details', None) or {},
+            instance.victim_count,
+        )
+        if table is None:
+            table, values = _fallback_detail_table(instance)
 
-            detail_models = {
-                'fire': FireDetails,
-                'vehicular': VehicularAccident,
-                'crime': CrimeReport,
-                'medical': MedicalEmergency,
-                'drowning': DrowningIncident,
-            }
-            if table in detail_models:
-                detail_models[table].objects.create(incident=incident, **fit_detail_values(table, values))
-
-    except Exception:
-        # Avoid raising during DB hooks; log could be added later
-        return
+        detail_models = {
+            'fire': FireDetails,
+            'vehicular': VehicularAccident,
+            'crime': CrimeReport,
+            'medical': MedicalEmergency,
+            'drowning': DrowningIncident,
+        }
+        if table in detail_models:
+            detail_models[table].objects.create(incident=incident, **fit_detail_values(table, values))
 
 @receiver(post_save, sender=Incident)
 def notify_affected_barangay_residents(sender, instance: Incident, created, **kwargs):

@@ -185,6 +185,7 @@ REST_FRAMEWORK = {
     'DEFAULT_THROTTLE_RATES': {
         'login': config('LOGIN_THROTTLE_RATE', default='10/min'),
         'otp': config('OTP_THROTTLE_RATE', default='20/min'),
+        'strategic_briefing': config('STRATEGIC_BRIEFING_THROTTLE_RATE', default='5/min'),
     },
 }
 

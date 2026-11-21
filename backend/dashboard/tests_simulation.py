@@ -12,7 +12,8 @@ from rest_framework.test import APIClient
 from accounts.models import AccountProfile, ensure_account_profile
 
 from .models import (
-    SimulationCourseCatalog,
+    SimulationCourse,
+    SimulationLesson,
     SimulationModuleQuiz,
     SimulationQuizChoice,
     SimulationQuizQuestion,
@@ -43,8 +44,6 @@ WRONG = {'q1': 1, 'q2': 0}
 
 class SimulationTestCase(TestCase):
     def setUp(self):
-        SimulationCourseCatalog.objects.create(key='default', courses=[COURSE])
-
         self.citizen = User.objects.create_user('learner', 'learner@test.local', 'Pass12345', first_name='Lea')
         ensure_account_profile(self.citizen)
         self.client = APIClient()
@@ -55,9 +54,18 @@ class SimulationTestCase(TestCase):
         self.admin_client = APIClient()
         self.admin_client.force_authenticate(admin)
 
+        sync_response = self.admin_client.put(
+            '/dashboard/admin/simulation/courses/sync/',
+            {'courses': [COURSE]},
+            format='json',
+        )
+        self.assertEqual(sync_response.status_code, 200, sync_response.data)
+        course = SimulationCourse.objects.get(course_id=COURSE_ID)
+        lesson = SimulationLesson.objects.get(course=course, lesson_id='intro')
+
         # A published module quiz on the video lesson.
         self.quiz = SimulationModuleQuiz.objects.create(
-            course_id=COURSE_ID, lesson_id='intro', lesson_title='Introduction', title='Intro quiz',
+            course_record=course, lesson_record=lesson, lesson_title='Introduction', title='Intro quiz',
             passing_score=100, status=SimulationModuleQuiz.STATUS_PUBLISHED,
         )
         question = SimulationQuizQuestion.objects.create(quiz=self.quiz, prompt='Exit?', explanation='Nearest exit.')
@@ -115,6 +123,8 @@ class ExamAnswersTests(SimulationTestCase):
         passed = self.submit_exam(RIGHT).json()
         self.assertTrue(passed['passed'])
         self.assertEqual(passed['details'][1]['correctOptionIndex'], 1)
+        progress = self.client.get('/dashboard/simulation/progress/').json()
+        self.assertTrue(progress['completedLessonVideos'][f'{COURSE_ID}:{EXAM["id"]}'])
 
     def test_unanswered_exam_is_not_graded_or_counted(self):
         response = self.submit_exam({'q1': 0})
@@ -165,3 +175,15 @@ class CertificateTests(SimulationTestCase):
             '/dashboard/simulation/certificates/request/', {'courseId': 'made-up', 'courseTitle': 'X'}, format='json',
         )
         self.assertEqual(response.status_code, 404)
+
+    def test_admin_can_reset_normalized_progress_and_attempts(self):
+        self.claim_course_finished()
+        self.submit_exam(RIGHT)
+        self.submit_quiz(self.right_choice)
+
+        response = self.admin_client.post('/dashboard/admin/simulation/progress/reset/', format='json')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['deletedAttempts'], 2)
+        self.assertEqual(response.data['resetUsers'], 1)
+        self.assertEqual(self.client.get('/dashboard/simulation/progress/').json()['completedLessonVideos'], {})

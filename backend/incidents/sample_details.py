@@ -33,7 +33,15 @@ WEIGHTS = {
     ('Fire Incident', 'suspected_cause'): {'electrical': 45, 'lpg': 12, 'cooking': 15, 'candle': 8,
                                            'smoking': 6, 'arson': 3, 'unknown': 11},
     ('Fire Incident', 'alarm_level'): {'first': 40, 'second': 20, 'third': 8, 'fourth': 3, 'fifth': 1,
+<<<<<<< HEAD
                                        'task_force_alpha': 1, 'under_control': 7, 'fire_out': 20},
+=======
+                                       'task_force_alpha': 1, 'task_force_bravo': 1, 'no_alarm': 2,
+                                       'under_control': 7, 'fire_out': 20},
+    ('Crime Against Person/Property', 'crime_type'): {'theft': 35, 'robbery': 12, 'physical_injury': 25,
+                                                      'stabbing': 8, 'shooting': 4, 'domestic_violence': 12, 'other': 4},
+    ('Crime Against Person/Property', 'outcome'): {'deceased': 2, 'injured': 28, 'not_injured': 70},
+>>>>>>> 7f31639f9beb2e97952a7d04c4df5c50ff6c6aff
     ('Medical Emergency', 'chief_complaint'): {'chest_pain': 14, 'difficulty_breathing': 16, 'stroke_symptoms': 10,
                                                'seizure': 8, 'injury': 22, 'fainting': 15, 'fever': 10, 'other': 5},
     ('Medical Emergency', 'consciousness'): {'alert': 60, 'voice': 18, 'pain': 12, 'unresponsive': 10},
@@ -98,6 +106,7 @@ def sample_details(rng, incident_type, victim_count, occurred_at, barangay_name)
             'road_condition': _pick(rng, incident_type, 'road_condition'),
             'traffic_blocked': rng.random() < 0.45,
             'police_notified': rng.random() < 0.75,
+            'fatalities': 0,
         }
         if victim_count and rng.random() < 0.06:
             details['fatalities'] = 1
@@ -107,7 +116,7 @@ def sample_details(rng, incident_type, victim_count, occurred_at, barangay_name)
     elif incident_type == 'Fire Incident':
         structure = _pick(rng, incident_type, 'structure_type')
         alarm = _pick(rng, incident_type, 'alarm_level')
-        big = alarm in ('third', 'fourth', 'fifth', 'task_force_alpha')
+        big = alarm in ('third', 'fourth', 'fifth', 'task_force_alpha', 'task_force_bravo')
         structures = 0 if structure in ('vehicle', 'grass_vegetation') else rng.randint(4, 25) if big else rng.randint(1, 3)
         details = {
             'structure_type': structure,
@@ -117,6 +126,7 @@ def sample_details(rng, incident_type, victim_count, occurred_at, barangay_name)
             'families_affected': structures * rng.randint(1, 3) if structure == 'residential' else 0,
             'bfp_present': rng.random() < 0.92,
             'fire_out_time': _time(occurred_at + timedelta(minutes=rng.randint(25, 240 if big else 90))),
+            'fatalities': 0,
         }
         if victim_count and rng.random() < 0.08:
             details['fatalities'] = 1
@@ -136,6 +146,11 @@ def sample_details(rng, incident_type, victim_count, occurred_at, barangay_name)
             'chief_complaint': _pick(rng, incident_type, 'chief_complaint'),
             'consciousness': _pick(rng, incident_type, 'consciousness'),
             'transported': transported,
+            'triage_acuity': rng.choices(['red', 'yellow', 'green'], weights=[10, 25, 65])[0],
+            'resource_utilization': (
+                rng.choices(['basic_ambulance', 'advanced_response'], weights=[80, 20])[0]
+                if transported else 'on_site'
+            ),
         }
         if transported:
             details['hospital'] = rng.choice(LUCENA_HOSPITALS)
@@ -150,6 +165,10 @@ def sample_details(rng, incident_type, victim_count, occurred_at, barangay_name)
             'departure_time': _time(departure),
             'arrival_time': _time(departure + timedelta(minutes=rng.randint(8, 35))),
             'condition_on_arrival': rng.choices(['stable', 'improved', 'deteriorated'], weights=[70, 22, 8])[0],
+            'triage_acuity': rng.choices(['red', 'yellow', 'green'], weights=[10, 25, 65])[0],
+            'resource_utilization': rng.choices(
+                ['basic_ambulance', 'advanced_response'], weights=[80, 20],
+            )[0],
         }
 
     elif incident_type == 'Stand-by Medical Team':
@@ -165,6 +184,8 @@ def sample_details(rng, incident_type, victim_count, occurred_at, barangay_name)
             'crowd_estimate': rng.randrange(200, 8000, 50),
             'team_members': rng.randint(3, 8),
             'persons_assisted': rng.randint(len(cases), 25) if cases else 0,
+            'triage_acuity': 'green' if cases else 'none',
+            'resource_utilization': 'on_site',
         }
         if cases:
             details['cases_handled'] = cases
@@ -179,7 +200,7 @@ def sample_details(rng, incident_type, victim_count, occurred_at, barangay_name)
         details = {
             'water_body': _pick(rng, incident_type, 'water_body'),
             'activity': _pick(rng, incident_type, 'activity'),
-            **{key: value for key, value in outcomes.items() if value},
+            **outcomes,
             'search_ongoing': outcomes['missing'] > 0,
             'coast_guard_involved': rng.random() < 0.4,
         }
@@ -197,7 +218,15 @@ def sample_victim_details(rng, incident_type, report_details):
             gear = rng.choices(['helmet', 'none'], weights=[65, 35])[0]
         else:
             gear = rng.choices(['seatbelt', 'none'], weights=[60, 40])[0]
-        return {'person_role': role, 'protective_gear': gear}
+        injury_severity = rng.choices(
+            ['none', 'minor_first_aid', 'severe_hospital_transport'],
+            weights=[35, 55, 10],
+        )[0]
+        return {
+            'person_role': role,
+            'injury_severity': injury_severity,
+            'protective_gear': gear,
+        }
 
     if incident_type == 'Fire Incident':
         return {'injury_type': rng.choices(['burns', 'smoke_inhalation', 'other'], weights=[45, 45, 10])[0]}
@@ -213,6 +242,9 @@ def sample_victim_details(rng, incident_type, report_details):
             'temperature': round(rng.uniform(38.0, 39.8) if report_details.get('chief_complaint') == 'fever'
                                  else rng.uniform(36.2, 37.4), 1),
         }
+
+    if incident_type == 'Crime Against Person/Property':
+        return {'outcome': _pick(rng, incident_type, 'outcome', victim=True)}
 
     return {}
 

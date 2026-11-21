@@ -100,6 +100,22 @@ export interface BarangayRiskScoreBreakdown {
   recency: number
 }
 
+export interface CitywideEarthquakeRiskResponse {
+  hazard: 'Earthquake'
+  scope: 'citywide'
+  timeframe_days: number
+  risk_score: {
+    score: number
+    breakdown: BarangayRiskScoreBreakdown
+    explanation: {
+      total_incidents: number
+      average_severity_weight: number
+      recent_incidents_30_days: number
+      calculation_details: string
+    }
+  }
+}
+
 export interface BarangayHazardProfileItem {
   id: string | null
   frequency: number
@@ -184,32 +200,30 @@ export interface BarangayRiskScoreResponse {
   hazard_share: BarangayHazardShareItem[]
 }
 
-export interface HazardInsightResponse {
-  hazard: string
-  timeframe: {
-    rolling_days: number | null
-    start_date: string | null
-    end_date: string | null
+export interface StrategicDashboardBriefingResponse {
+  generated_at: string
+  refreshes_at: string
+  window: {
+    start: string
+    end: string
+    days: 30
   }
-  raw_stats: Record<string, unknown>
-  ai_insight: string
-  ai_insight_sections?: HazardInsightSections
-}
-
-export interface HazardInsightSections {
-  headline: string
-  summary: string
-  findings: string[]
-  recommendations: string[]
-  stats?: {
+  stats: {
     total: number
     monthly_average: number
-    critical_high: number
+    high_critical_count: number
+    high_critical_percentage: number
     by_severity: Record<string, number>
-    hotspots: string[]
-    timeframe: string
+    hotspots: Array<{ name: string; count: number }>
   }
-  source?: 'gemini' | 'template'
+  briefing: {
+    headline: string
+    summary: string
+    key_findings: string[]
+    recommended_actions: string[]
+    source: 'gemini' | 'template'
+    source_reason?: 'sdk_unavailable' | 'api_key_not_configured' | 'generation_failed'
+  }
 }
 
 export interface BarangayRiskRankingItem {

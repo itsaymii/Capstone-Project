@@ -27,6 +27,7 @@ import { SimulationSection } from './sections/SimulationSection'
 import { UsersSection } from './sections/UsersSection'
 import { AccomplishmentReports } from './sections/AccomplishmentReports'
 import { IncidentReports } from './sections/IncidentReports'
+import { StrategicBriefingCard } from './sections/StrategicBriefingCard'
 import {
   getIncidentCategoryKey,
   getIncidentCategoryLabel,
@@ -2144,6 +2145,8 @@ export function AdminDashboardPage() {
                   </article>
                 ))}
               </div>
+
+              <StrategicBriefingCard />
 
               <div className="mt-5 overflow-hidden rounded-[28px] border border-blue-100 bg-white p-4 shadow-[0_16px_38px_rgba(15,23,42,0.09)] sm:p-5">
                 <div className="mb-4 flex flex-wrap items-start justify-between gap-3">

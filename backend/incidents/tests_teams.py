@@ -58,7 +58,13 @@ if DjangoTestCase is not None:
                 'timeOccurred': '14:30', 'incidentType': 'Stand-by Medical Team', 'location': 'Perez Park',
                 'latitude': 13.9339, 'longitude': 121.6172, 'description': 'Event', 'actionTaken': 'Stand-by',
                 'status': 'Pending', 'victims': [],
-                'details': {'event_name': 'Fun Run', 'venue': 'Perez Park', 'persons_assisted': 0}, **extra,
+                'details': {
+                    'event_name': 'Fun Run',
+                    'venue': 'Perez Park',
+                    'persons_assisted': 0,
+                    'triage_acuity': 'none',
+                    'resource_utilization': 'on_site',
+                }, **extra,
             }, format='json')
 
         def test_report_is_filed_under_the_account_team_not_its_name(self):

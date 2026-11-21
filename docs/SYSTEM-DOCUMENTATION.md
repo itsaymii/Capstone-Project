@@ -51,11 +51,11 @@ Everyone uses the same login page (`/login`) and is sent to the right dashboard 
 
 | Section | `section=` | What it does |
 |---|---|---|
-| Dashboard | *(none)* | Totals, risk scores, incident trend by month, type distribution, top barangays |
+| Dashboard | *(none)* | Totals, 30-day Strategic Quarterly Briefing, risk scores, incident trends, type distribution, top barangays |
 | Mapping | `map` | Incident map; approve responder reports |
 | Incidents | `incidents` | Responder incident reports with filters by team and date |
 | Accomplishment | `accomplishment` | Accomplishment reports compiled by responders; print |
-| Scoring | `scoring` | Barangay risk score, predicted hazard, AI insight |
+| Scoring | `scoring` | Barangay risk score and predicted hazard |
 | Analytics | `trends` | Incident and earthquake analytics |
 | Resources | `resources` | Evacuation centers: capacity, occupancy, status, CSV upload; vehicle maintenance |
 | Users | `users` | Create, edit, delete accounts; verify or reject residency |
@@ -68,11 +68,11 @@ Everyone uses the same login page (`/login`) and is sent to the right dashboard 
 | App | URL prefix | Responsibility |
 |---|---|---|
 | `accounts` | `/accounts/` | Registration, OTP, login, password reset, roles, residency verification |
-| `dashboard` | `/dashboard/` | Admin account management, simulation courses, quizzes, certificates |
+| `dashboard` | `/dashboard/` | Admin account management, cached strategic briefing, simulation courses, quizzes, certificates |
 | `incidents` | `/api/incidents/` | Hazard types, incidents, incident reports, victims, accomplishment reports |
 | `resources` | `/api/resources/` | Evacuation centers, supplies, equipment, volunteers |
 | `locations` | `/api/locations/` | Barangays, locations, population density, fault lines |
-| `analytics` | `/api/analytics/` | Barangay risk scores, hazard predictions, AI insights |
+| `analytics` | `/api/analytics/` | Barangay risk scores and hazard predictions |
 | `sms` | (no URLs) | Sends SMS alerts to citizens for critical incidents |
 
 Django admin is at `/admin/`.
@@ -85,7 +85,9 @@ Django admin is at `/admin/`.
 
 **Report locations** – Incident reports must have coordinates inside Lucena City: latitude 13.89–13.98, longitude 121.57–121.69.
 
-**Report → incident** – When an admin approves a responder report, an Incident is created automatically with the same `INC-` code, the matching hazard type, and a severity based on the number of victims. See [Incident and Evacuation Flows](system-flow.md).
+**Report → incident** – When an admin approves a responder report, an Incident is created automatically with the same `INC-` code and matching hazard type. Severity is scored using the submitted metrics for RCA, earthquake, medical, drowning, fire, and crime reports; legacy reports without complete metrics retain the prior fallback. See [Incident and Evacuation Flows](system-flow.md).
+
+**Report API compatibility** – New report clients must submit the required incident-type metrics (including triage acuity and resource utilization for medical, ambulance, and standby reports). Approval-only updates for older reports do not require re-submitting those fields.
 
 **SMS alerts** – Sent to every citizen with a phone number (starting `09` or `+63`) when an incident is created as, or changed to, **critical**, but only if it happened in the last 24 hours. Messages are logged in `SMSLog`; an approved report is not alerted twice.
 
@@ -100,11 +102,13 @@ severity  = average severity (low 1 … critical 4), scaled to 10
 recency   = share of incidents in the last 30 days × 10
 ```
 
-Default window is the last 90 days. Stored scores are refreshed with `python manage.py calculate_risk_scores`.
+False alarms are excluded. For historical ranges, recency is measured against the end of the selected range. The default window is the last 90 days. Stored scores are refreshed with `python manage.py calculate_risk_scores`.
+
+**Citywide earthquake risk** – Uses stored USGS events whose epicenters fall within Lucena City's documented bounds (latitude 13.89–13.98, longitude 121.57–121.69). Refresh the data daily with `python manage.py sync_earthquake_events --days 90`; configure this command as a 03:00 Asia/Manila Windows Task Scheduler job on the machine that runs the web app and owns its database. The disaster map's broader earthquake feed is separate.
 
 **Hazard prediction** – The hazard type with the highest frequency × severity in a barangay is predicted as the most likely to happen again in the next 30 days (`backend/analytics/prediction.py`).
 
-**AI insights** – Written by Google Gemini when `GEMINI_API_KEY` is set; otherwise a template is used (`backend/analytics/insights.py`).
+**Strategic Quarterly Briefing** – The admin dashboard briefing uses incident data from the rolling last 30 days, including total incidents, monthly average, High/Critical volume, and top barangay hotspots. Its narrative is generated with Google Gemini when `GEMINI_API_KEY` is set; otherwise a deterministic template is used. The result is cached and refreshed every 30 days (`backend/dashboard/briefing.py`).
 
 ## 5. API Reference
 
@@ -125,6 +129,7 @@ Base URL in development: `http://127.0.0.1:8000`. Requests use the Django sessio
 | Method | Endpoint | Purpose |
 |---|---|---|
 | GET | `admin/summary/` | Dashboard totals |
+| GET | `admin/strategic-briefing/` | Admin-only Strategic Quarterly Briefing, cached for 30 days and limited to 5 requests per minute per user |
 | GET / POST | `admin/accounts/` / `admin/accounts/create/` | List / create accounts |
 | PUT, PATCH, DELETE | `admin/accounts/<id>/` | Edit or delete an account |
 | PATCH | `admin/accounts/<id>/residency-verification/` | Verify or reject residency (`status`, `rejectionReason`) |
@@ -161,7 +166,7 @@ Base URL in development: `http://127.0.0.1:8000`. Requests use the Django sessio
 | GET | `/api/locations/barangays/` | Barangays with boundaries |
 | GET | `/api/locations/fault-lines/`, `population-density/` | Map layers |
 | GET | `/api/analytics/barangay-risk/?barangay_id=&days=90` | Risk score, prediction, trends for one barangay |
-| GET | `/api/analytics/hazard-insights/?hazard=Fire&days=365` | City-wide stats and AI insight for a hazard |
+| GET | `/api/analytics/citywide-earthquake-risk/?days=90` | Risk score for stored earthquake events within Lucena City bounds |
 
 ## 6. Frontend Structure
 

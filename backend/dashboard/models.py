@@ -2,6 +2,19 @@ from django.db import models
 from django.contrib.auth.models import User
 
 
+class DashboardInsightCache(models.Model):
+	key = models.CharField(max_length=64, primary_key=True, default='strategic-quarterly-briefing')
+	window_start = models.DateTimeField(blank=True, null=True)
+	window_end = models.DateTimeField(blank=True, null=True)
+	generated_at = models.DateTimeField(blank=True, null=True)
+	refresh_started_at = models.DateTimeField(blank=True, null=True)
+	stats = models.JSONField(default=dict, blank=True)
+	briefing = models.JSONField(default=dict, blank=True)
+
+	class Meta:
+		db_table = 'dashboard_insight_cache'
+
+
 class SimulationProgress(models.Model):
 	user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='simulation_progress')
 	created_at = models.DateTimeField(auto_now_add=True)
