@@ -1100,7 +1100,6 @@ function DashboardBarChart({
     <div className="dashboard-chart-enter flex h-full min-h-[240px] flex-col justify-center gap-3 rounded-[22px] bg-gradient-to-br from-amber-50 via-white to-slate-50 p-3 sm:p-4" key={chartKey}>
       {data.map((item, index) => {
         const width = `${Math.max(10, (item.count / maxCount) * 100)}%`
-        const percentage = Math.round((item.count / maxCount) * 100)
 
         return (
           <div
@@ -1128,8 +1127,6 @@ function DashboardBarChart({
                 }}
               />
             </div>
-
-            <p className="mt-1 text-right text-[10px] font-bold text-slate-400">{percentage}% of top count</p>
           </div>
         )
       })}
