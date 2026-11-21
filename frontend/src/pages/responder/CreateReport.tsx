@@ -579,9 +579,6 @@ export const CreateReport: FC = () => {
         </span>
 
         <div className="min-w-0">
-          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
-            Step {step + 1} of {steps.length}
-          </p>
           <h2 className="text-lg font-black tracking-tight text-slate-900 leading-tight">
             {info.title}
           </h2>
@@ -592,6 +589,10 @@ export const CreateReport: FC = () => {
       </div>
     );
   };
+
+  const SHORT_CHOICE_LIMIT = 4;
+  // Triage colors next to their options.
+  const CHOICE_DOTS: Record<string, string> = { red: "bg-red-500", yellow: "bg-amber-400", green: "bg-emerald-500" };
 
   const inputClass =
     "w-full text-sm border border-slate-200 rounded-xl px-3.5 py-2.5 bg-slate-50/50 focus:bg-white focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 transition-all outline-none font-medium placeholder-slate-400";
@@ -613,16 +614,54 @@ export const CreateReport: FC = () => {
     const wide = spec.kind === "multi_choice" || spec.kind === "bool" ? "sm:col-span-2" : "";
 
     if (spec.kind === "choice") {
+      const current = typeof value === "string" ? value : "";
+      // Up to 4 options: show them all as buttons, quicker to tap than a dropdown.
+      if (spec.choices.length <= SHORT_CHOICE_LIMIT) {
+        return (
+          <fieldset key={spec.name} className="sm:col-span-2">
+            <legend className="mb-1.5 block text-xs font-semibold text-slate-600">
+              {spec.label}
+              {spec.required ? <span className="text-red-500"> *</span> : null}
+            </legend>
+            <div className="grid gap-2" role="radiogroup" aria-label={spec.label}>
+              {spec.choices.map((choice) => {
+                const isOn = current === choice.value;
+                const dot = CHOICE_DOTS[choice.value];
+                return (
+                  <button
+                    key={choice.value}
+                    type="button"
+                    role="radio"
+                    aria-checked={isOn}
+                    onClick={() => onChange(isOn && !spec.required ? undefined : choice.value)}
+                    className={`flex w-full items-center gap-3 rounded-xl border px-3.5 py-3 text-left text-sm font-semibold transition-colors ${
+                      isOn
+                        ? "border-blue-600 bg-blue-50 text-blue-900 ring-1 ring-blue-600"
+                        : "border-slate-200 bg-white text-slate-700 hover:border-blue-300"
+                    }`}
+                  >
+                    <span
+                      className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 ${
+                        isOn ? "border-blue-600" : "border-slate-300"
+                      }`}
+                      aria-hidden="true"
+                    >
+                      {isOn ? <span className="h-2.5 w-2.5 rounded-full bg-blue-600" /> : null}
+                    </span>
+                    {dot ? <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${dot}`} aria-hidden="true" /> : null}
+                    <span className="min-w-0">{choice.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </fieldset>
+        );
+      }
       return (
         <div key={spec.name} className={wide}>
           {label}
-          <select
-            id={id}
-            className={inputClass}
-            value={typeof value === "string" ? value : ""}
-            onChange={(e) => onChange(e.target.value || undefined)}
-          >
-            <option value="">Select {spec.label.toLowerCase()}</option>
+          <select id={id} className={inputClass} value={current} onChange={(e) => onChange(e.target.value || undefined)}>
+            <option value="">Choose one</option>
             {spec.choices.map((choice) => (
               <option key={choice.value} value={choice.value}>
                 {choice.label}
@@ -651,7 +690,7 @@ export const CreateReport: FC = () => {
               onChange(next === OTHER_OPTION || next === "" ? undefined : next);
             }}
           >
-            <option value="">Select {spec.label.toLowerCase()}</option>
+            <option value="">{spec.label.toLowerCase().includes("hospital") ? "Choose a hospital" : "Choose one"}</option>
             {spec.choices.map((choice) => (
               <option key={choice.value} value={choice.value}>
                 {choice.label}
@@ -714,13 +753,12 @@ export const CreateReport: FC = () => {
 
     if (spec.kind === "bool") {
       return (
-        <fieldset key={spec.name} className={`${wide} flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50/50 px-3.5 py-2.5`}>
-          <legend className="sr-only">{spec.label}</legend>
-          <span className="text-xs font-semibold text-slate-600">
+        <fieldset key={spec.name} className="sm:col-span-2">
+          <legend className="mb-1.5 block text-xs font-semibold text-slate-600">
             {spec.label}
             {spec.required ? <span className="text-red-500"> *</span> : null}
-          </span>
-          <div className="flex gap-1.5">
+          </legend>
+          <div className="grid grid-cols-2 gap-2">
             {[
               { label: "Yes", value: true },
               { label: "No", value: false },
@@ -733,8 +771,10 @@ export const CreateReport: FC = () => {
                   aria-pressed={isOn}
                   aria-label={`${spec.label}: ${option.label}`}
                   onClick={() => onChange(isOn ? undefined : option.value)}
-                  className={`rounded-lg px-3.5 py-1.5 text-xs font-bold transition-all ${
-                    isOn ? "bg-blue-600 text-white shadow-sm" : "bg-white text-slate-500 border border-slate-200 hover:border-blue-300"
+                  className={`rounded-xl border py-2.5 text-sm font-bold transition-colors ${
+                    isOn
+                      ? "border-blue-600 bg-blue-600 text-white shadow-sm"
+                      : "border-slate-200 bg-white text-slate-600 hover:border-blue-300"
                   }`}
                 >
                   {option.label}
@@ -746,17 +786,65 @@ export const CreateReport: FC = () => {
       );
     }
 
-    const inputType = spec.kind === "time" ? "time" : spec.kind === "int" || spec.kind === "decimal" ? "number" : "text";
+    // Whole numbers: − and + buttons around the box, so a count can be set without the keyboard.
+    if (spec.kind === "int") {
+      const number = value === undefined || value === "" ? null : Number(value);
+      const lowest = spec.min ?? 0;
+      // From an empty box, − sets the lowest value (usually 0) and + sets one more than that.
+      const step = (by: number) => {
+        const next = number === null ? (by > 0 ? lowest + 1 : lowest) : Math.max(lowest, number + by);
+        onChange(spec.max !== null && next > spec.max ? spec.max : next);
+      };
+      return (
+        <div key={spec.name} className={wide}>
+          {label}
+          <div className="flex items-stretch gap-2">
+            <button
+              type="button"
+              onClick={() => step(-1)}
+              disabled={number !== null && number <= lowest}
+              aria-label={`${spec.label}: one less`}
+              className="w-12 shrink-0 rounded-xl border border-slate-200 bg-white text-lg font-bold text-slate-600 transition-colors hover:border-blue-300 disabled:text-slate-300 disabled:hover:border-slate-200"
+            >
+              −
+            </button>
+            <input
+              id={id}
+              type="number"
+              inputMode="numeric"
+              min={lowest}
+              max={spec.max !== null ? spec.max : undefined}
+              step={1}
+              placeholder="–"
+              className={`${inputClass} text-center text-base font-bold tabular-nums [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none`}
+              value={number === null ? "" : String(value)}
+              onChange={(e) => onChange(e.target.value === "" ? undefined : e.target.value)}
+            />
+            <button
+              type="button"
+              onClick={() => step(1)}
+              disabled={spec.max !== null && number !== null && number >= spec.max}
+              aria-label={`${spec.label}: one more`}
+              className="w-12 shrink-0 rounded-xl border border-slate-200 bg-white text-lg font-bold text-blue-700 transition-colors hover:border-blue-300 disabled:text-slate-300"
+            >
+              +
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    const inputType = spec.kind === "time" ? "time" : spec.kind === "decimal" ? "number" : "text";
     return (
       <div key={spec.name} className={wide}>
         {label}
         <input
           id={id}
           type={inputType}
-          inputMode={spec.kind === "int" ? "numeric" : spec.kind === "decimal" ? "decimal" : undefined}
+          inputMode={spec.kind === "decimal" ? "decimal" : undefined}
           min={inputType === "number" ? spec.min : undefined}
           max={inputType === "number" && spec.max !== null ? spec.max : undefined}
-          step={spec.kind === "decimal" ? "any" : spec.kind === "int" ? 1 : undefined}
+          step={spec.kind === "decimal" ? "any" : undefined}
           className={inputClass}
           value={value === undefined ? "" : String(value)}
           onChange={(e) => onChange(e.target.value === "" ? undefined : e.target.value)}
@@ -765,94 +853,36 @@ export const CreateReport: FC = () => {
     );
   };
 
-  const getAccentColor = (type: string) => {
-    switch (type) {
-      case "Fire Incident":
-        return "border-l-4 border-l-red-500";
-      case "RCA":
-        return "border-l-4 border-l-amber-500";
-      case "Medical Emergency":
-        return "border-l-4 border-l-blue-600";
-      case "Crime Against Person/Property":
-        return "border-l-4 border-l-orange-600";
-      default:
-        return "border-l-4 border-l-slate-400";
-    }
-  };
-
   return (
     <div className="min-h-screen bg-slate-100 pb-28 pt-4 antialiased text-slate-800">
       <main className="max-w-lg mx-auto px-4 space-y-4">
-        <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-slate-900 via-blue-950 to-slate-900 p-5 sm:p-7 text-white shadow-md">
+        <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-slate-900 via-blue-950 to-slate-900 p-5 text-white shadow-md">
           <div className="absolute inset-0 bg-gradient-to-r from-blue-600/10 to-indigo-600/10 opacity-60 pointer-events-none" />
 
-          <div className="relative z-10 flex items-start gap-4">
-            <button
-              type="button"
-              onClick={() => navigate("/responder-dashboard")}
-              className="group flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/10 text-white transition-all hover:bg-white/20 active:scale-90"
-              title="Back to Dashboard"
-            >
-              <svg
-                className="w-5 h-5 transform group-hover:-translate-x-0.5 transition-transform"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-                strokeWidth={2.5}
+          <div className="relative z-10 space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <button
+                type="button"
+                onClick={() => navigate("/responder-dashboard")}
+                className="-ml-1 inline-flex items-center gap-1 rounded-lg py-1 pl-1 pr-2 text-sm font-semibold text-slate-300 transition-colors hover:bg-white/10 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-white"
               >
-                <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
-              </svg>
-            </button>
-
-            <div className="min-w-0 flex-1">
-              <h1 className="text-2xl font-black tracking-tight leading-tight">
-                New incident report
-              </h1>
-              <p className="mt-1 text-sm text-slate-300 font-medium leading-relaxed">
-                Fill it in from the scene. An admin checks it before it counts in the city's records.
-              </p>
-              <div className="mt-3 inline-flex max-w-full items-center gap-2.5 rounded-xl border border-white/15 bg-white/10 px-3 py-2">
-                <svg className="h-5 w-5 shrink-0 text-blue-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M18 18.72a9.094 9.094 0 003.741-.479 3 3 0 00-4.682-2.72m.94 3.198l.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0112 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 016 18.719m12 0a5.971 5.971 0 00-.941-3.197m0 0A5.995 5.995 0 0012 12.75a5.995 5.995 0 00-5.058 2.772m0 0a3 3 0 00-4.681 2.72 8.986 8.986 0 003.74.477m.94-3.197a5.971 5.971 0 00-.94 3.197M15 6.75a3 3 0 11-6 0 3 3 0 016 0zm6 3a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0zm-13.5 0a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0z" />
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
                 </svg>
-                <span className="min-w-0">
-                  <span className="block text-[10px] font-bold uppercase tracking-widest text-blue-300">Responding Team</span>
-                  <span className="block break-words text-sm font-bold leading-snug text-white" data-testid="header-team">
-                    {formData.responderTeam || "Not set"}
-                  </span>
-                </span>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => navigate("/responder-dashboard")}
-              className="hidden sm:inline-flex shrink-0 text-xs font-bold text-slate-400 hover:text-red-400 transition-colors uppercase tracking-widest"
-            >
-              Discard
-            </button>
-          </div>
-
-          <div className="relative z-10 mt-6">
-            <div className="flex items-center justify-between gap-3 text-xs font-semibold">
-              <span className="text-blue-300">
-                Step {currentStep + 1} of {steps.length}
-              </span>
-              <span className="truncate text-slate-400">
-                {steps[currentStep].title}
+                Dashboard
+              </button>
+              <span
+                className="truncate rounded-full border border-white/15 bg-white/10 px-2.5 py-0.5 text-xs font-bold text-blue-200"
+                data-testid="header-team"
+              >
+                {formData.responderTeam ? `Team ${formData.responderTeam}` : "No team yet"}
               </span>
             </div>
-            <div
-              className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10"
-              role="progressbar"
-              aria-valuemin={1}
-              aria-valuemax={steps.length}
-              aria-valuenow={currentStep + 1}
-            >
-              <div
-                className="h-full rounded-full bg-gradient-to-r from-blue-500 to-indigo-400 transition-all duration-500"
-                style={{ width: `${((currentStep + 1) / steps.length) * 100}%` }}
-              />
+            <div>
+              <h1 className="text-2xl font-black tracking-tight">New incident report</h1>
+              <p className="mt-1 text-sm leading-relaxed text-slate-300">
+                Fill it in from the scene. An admin checks it before it counts in the city’s records.
+              </p>
             </div>
           </div>
         </div>
@@ -955,7 +985,7 @@ export const CreateReport: FC = () => {
 
           {currentStepId === "overview" && (
           <div
-            className={`p-6 space-y-5 transition-all ${getAccentColor(formData.incidentType)}`}
+            className="p-5 space-y-5 sm:p-6"
           >
             {renderSectionHeader("overview")}
 
@@ -1156,14 +1186,13 @@ export const CreateReport: FC = () => {
           )}
 
           {currentStepId === "details" && (
-          <div className="p-6 space-y-5 border-l-4 border-l-amber-500">
+          <div className="p-5 space-y-5 sm:p-6">
             {renderSectionHeader("details")}
 
             {typeConfig ? (
               <>
-                <p className="rounded-xl border border-amber-100 bg-amber-50/60 px-3.5 py-2.5 text-xs font-medium text-amber-800">
-                  These fields are only for <strong>{typeConfig.label}</strong> reports. Fields marked{" "}
-                  <span className="text-red-500">*</span> are required.
+                <p className="text-xs text-slate-500">
+                  Fields marked <span className="font-bold text-red-500">*</span> are required.
                 </p>
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   {typeConfig.fields.map((spec) =>
@@ -1178,7 +1207,7 @@ export const CreateReport: FC = () => {
           )}
 
           {currentStepId === "victims" && (
-          <div className="p-6 space-y-5 border-l-4 border-l-indigo-500">
+          <div className="p-5 space-y-5 sm:p-6">
             {renderSectionHeader("victims")}
 
             <div className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-2 pl-4">
@@ -1218,7 +1247,7 @@ export const CreateReport: FC = () => {
                   className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4"
                 >
                   <div className="text-xs font-bold text-slate-400 border-b border-slate-100 pb-2 flex justify-between items-center">
-                    <span className="uppercase">{victimSingular} #{idx + 1}</span>
+                    <span className="text-sm font-black text-slate-900">{victimSingular} {idx + 1}</span>
 
                     <button
                       type="button"
@@ -1231,7 +1260,7 @@ export const CreateReport: FC = () => {
 
                   <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
                     <div className="sm:col-span-2">
-                      <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-1">
+                      <label className="block text-xs font-semibold text-slate-600 mb-1.5">
                         Full Name
                       </label>
 
@@ -1248,7 +1277,7 @@ export const CreateReport: FC = () => {
                     </div>
 
                     <div>
-                      <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-1">
+                      <label className="block text-xs font-semibold text-slate-600 mb-1.5">
                         Age
                       </label>
 
@@ -1265,7 +1294,7 @@ export const CreateReport: FC = () => {
                     </div>
 
                     <div>
-                      <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-1">
+                      <label className="block text-xs font-semibold text-slate-600 mb-1.5">
                         Biological Sex
                       </label>
 
@@ -1289,7 +1318,7 @@ export const CreateReport: FC = () => {
                   </div>
 
                   <div>
-                    <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-1">
+                    <label className="block text-xs font-semibold text-slate-600 mb-1.5">
                       Permanent/Temporary Address
                     </label>
 
@@ -1306,7 +1335,7 @@ export const CreateReport: FC = () => {
                   </div>
 
                   <div>
-                    <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-1">
+                    <label className="block text-xs font-semibold text-slate-600 mb-1.5">
                       Physical Condition / Medical Assessment
                     </label>
 
@@ -1349,7 +1378,7 @@ export const CreateReport: FC = () => {
           )}
 
           {currentStepId === "operation" && (
-          <div className="p-6 space-y-5 border-l-4 border-l-emerald-500">
+          <div className="p-5 space-y-5 sm:p-6">
             {renderSectionHeader("operation")}
 
             <div>
