@@ -113,6 +113,11 @@ const hazardTypeMeta: Record<HazardType, { label: string; color: string; descrip
 
 const hazardTabOrder: HazardType[] = ['FR', 'AC', 'EQ']
 
+// Fire and accident maps open on the last 7 days so the map stays readable as reports pile up.
+// Picking a year, a filter or searching looks through every date again.
+const RECENT_PERIOD = 'recent'
+const RECENT_DAYS = 7
+
 // Report cards shown at first in the side list; scrolling down adds this many more.
 const LIST_PAGE_SIZE = 10
 // "On map" without any filter or search lists only this many of the newest reports: with thousands
@@ -656,7 +661,8 @@ export function AdminIncidentMapPanel({
   const [eqLastRefreshed, setEqLastRefreshed] = useState<Date | null>(null)
   const [eqIsRefreshing, setEqIsRefreshing] = useState(false)
   const [eqSearchQuery, setEqSearchQuery] = useState('')
-  const [selectedYear, setSelectedYear] = useState('')
+  // '' = all years, RECENT_PERIOD = last 7 days (default for fire and accident), or a year such as '2026'.
+  const [selectedYear, setSelectedYear] = useState(selectedType === 'EQ' ? '' : RECENT_PERIOD)
   const [selectedMonth, setSelectedMonth] = useState('')
   const [typeFilter, setTypeFilter] = useState('all')
   const [barangayFilter, setBarangayFilter] = useState('all')
@@ -802,8 +808,10 @@ export function AdminIncidentMapPanel({
     [incidentReports, selectedType],
   )
 
-  // Filters reset when they no longer match the tab.
+  // Filters reset when they no longer match the tab; fire and accident start on the last 7 days again.
   useEffect(() => {
+    setSelectedYear(selectedType === 'EQ' ? '' : RECENT_PERIOD)
+    setSelectedMonth('')
     setTypeFilter('all')
     setBarangayFilter('all')
     setSeverityFilter('all')
@@ -811,29 +819,40 @@ export function AdminIncidentMapPanel({
     setFocusRequest(null)
   }, [selectedType])
 
+  const isRecentPeriod = selectedYear === RECENT_PERIOD
+  // A type, barangay or severity filter looks through every date (the 7-day view is only the default).
+  // A search does too, but only in the side list: the map itself stays on the last 7 days.
+  const searchesAllDates = typeFilter !== 'all' || barangayFilter !== 'all' || severityFilter !== 'all'
+  const recentCutoff = useMemo(() => Date.now() - RECENT_DAYS * 24 * 60 * 60 * 1000, [])
+
+  // applyRecent = false for the "For review" list: pending reports always show, however old.
   const matchesDate = useCallback(
-    (date: Date | null): boolean => {
+    (date: Date | null, applyRecent = true): boolean => {
       if (!selectedYear) return true
+      if (selectedYear === RECENT_PERIOD) {
+        if (!applyRecent || searchesAllDates) return true
+        return Boolean(date) && (date as Date).getTime() >= recentCutoff
+      }
       if (!date) return false
       if (date.getFullYear().toString() !== selectedYear) return false
       if (selectedMonth && (date.getMonth() + 1).toString().padStart(2, '0') !== selectedMonth) return false
       return true
     },
-    [selectedMonth, selectedYear],
+    [recentCutoff, searchesAllDates, selectedMonth, selectedYear],
   )
 
   // Every filter except the incident type: the legend uses it to keep listing all types.
   const matchesFiltersExceptType = useCallback(
-    (incident: MapIncident): boolean =>
-      matchesDate(incident.date) &&
+    (incident: MapIncident, applyRecent = true): boolean =>
+      matchesDate(incident.date, applyRecent) &&
       (barangayFilter === 'all' || incident.barangay === barangayFilter) &&
       (severityFilter === 'all' || incident.severity === severityFilter),
     [barangayFilter, matchesDate, severityFilter],
   )
 
   const matchesFilters = useCallback(
-    (incident: MapIncident): boolean =>
-      matchesFiltersExceptType(incident) && (typeFilter === 'all' || incident.incidentTypeLabel === typeFilter),
+    (incident: MapIncident, applyRecent = true): boolean =>
+      matchesFiltersExceptType(incident, applyRecent) && (typeFilter === 'all' || incident.incidentTypeLabel === typeFilter),
     [matchesFiltersExceptType, typeFilter],
   )
 
@@ -851,23 +870,36 @@ export function AdminIncidentMapPanel({
 
   // Right side "For review" list: pending reports that match the filters.
   const reviewIncidents = useMemo(
-    () => tabReports.filter((incident) => incident.status === 'pending' && matchesFilters(incident) && matchesSearch(incident)).sort(sortNewestFirst),
+    () =>
+      tabReports
+        .filter((incident) => incident.status === 'pending' && matchesFilters(incident, false) && matchesSearch(incident))
+        .sort(sortNewestFirst),
     [matchesFilters, matchesSearch, tabReports],
   )
 
   // Approved reports plotted on the map (same filters, search only narrows the side list).
+  // A report opened from the list stays on the map even if it is older than the 7-day view.
   const plottableMapIncidents = useMemo(
-    () => tabReports.filter((incident) => incident.status === 'approved' && matchesFilters(incident)),
-    [matchesFilters, tabReports],
+    () =>
+      tabReports.filter(
+        (incident) => incident.status === 'approved' && (matchesFilters(incident) || incident.id === focusRequest?.id),
+      ),
+    [focusRequest, matchesFilters, tabReports],
   )
 
   const onMapListIncidents = useMemo(
-    () => plottableMapIncidents.filter(matchesSearch).sort(sortNewestFirst),
-    [matchesSearch, plottableMapIncidents],
+    () =>
+      (listSearch.trim()
+        ? tabReports.filter((incident) => incident.status === 'approved' && matchesFilters(incident, false))
+        : plottableMapIncidents
+      )
+        .filter(matchesSearch)
+        .sort(sortNewestFirst),
+    [listSearch, matchesFilters, matchesSearch, plottableMapIncidents, tabReports],
   )
 
   const isListNarrowed =
-    Boolean(selectedYear) || typeFilter !== 'all' || barangayFilter !== 'all' || severityFilter !== 'all' || listSearch.trim() !== ''
+    (Boolean(selectedYear) && !isRecentPeriod) || typeFilter !== 'all' || barangayFilter !== 'all' || severityFilter !== 'all' || listSearch.trim() !== ''
   const showsLatestOnly = sideTab === 'map' && !isListNarrowed && onMapListIncidents.length > ON_MAP_LATEST_LIMIT
 
   // The side list shows LIST_PAGE_SIZE cards at first and adds more as the user scrolls,
@@ -922,12 +954,12 @@ export function AdminIncidentMapPanel({
     } else {
       tabReports.forEach((incident) => incident.date && years.add(incident.date.getFullYear().toString()))
     }
-    if (selectedYear) years.add(selectedYear)
+    if (selectedYear && selectedYear !== RECENT_PERIOD) years.add(selectedYear)
     return Array.from(years).sort((a, b) => Number(b) - Number(a))
   }, [earthquakeEvents, selectedType, selectedYear, tabReports])
 
   const monthValues = useMemo(() => {
-    if (!selectedYear) return []
+    if (!selectedYear || selectedYear === RECENT_PERIOD) return []
     const months = new Set<string>()
     const add = (date: Date | null) => {
       if (date && date.getFullYear().toString() === selectedYear) months.add((date.getMonth() + 1).toString().padStart(2, '0'))
@@ -947,10 +979,21 @@ export function AdminIncidentMapPanel({
   const barangayOptions = useMemo(() => withAllBarangays(tabReports.map((incident) => incident.barangay)), [tabReports])
 
   const hasActiveFilters =
-    Boolean(selectedYear) || typeFilter !== 'all' || barangayFilter !== 'all' || severityFilter !== 'all'
+    (Boolean(selectedYear) && !isRecentPeriod) || typeFilter !== 'all' || barangayFilter !== 'all' || severityFilter !== 'all'
+
+  // Approved reports older than 7 days that the default view leaves off the map.
+  const hiddenOlderCount = useMemo(
+    () =>
+      isRecentPeriod && !searchesAllDates
+        ? tabReports.filter(
+            (incident) => incident.status === 'approved' && !(incident.date && incident.date.getTime() >= recentCutoff),
+          ).length
+        : 0,
+    [isRecentPeriod, recentCutoff, searchesAllDates, tabReports],
+  )
 
   function clearFilters(): void {
-    setSelectedYear('')
+    setSelectedYear(selectedType === 'EQ' ? '' : RECENT_PERIOD)
     setSelectedMonth('')
     setTypeFilter('all')
     setBarangayFilter('all')
@@ -1654,7 +1697,7 @@ export function AdminIncidentMapPanel({
               <label className="min-w-0">
                 <select
                   aria-label="Year"
-                  className={`${compactSelectClass} w-[7rem]`}
+                  className={`${compactSelectClass} w-[8.5rem]`}
                   title="Year"
                   onChange={(event) => {
                     setSelectedYear(event.target.value)
@@ -1662,6 +1705,7 @@ export function AdminIncidentMapPanel({
                   }}
                   value={selectedYear}
                 >
+                  {selectedType !== 'EQ' ? <option value={RECENT_PERIOD}>Last {RECENT_DAYS} days</option> : null}
                   <option value="">All years</option>
                   {yearOptions.map((year) => (
                     <option key={year} value={year}>{year}</option>
@@ -1673,9 +1717,9 @@ export function AdminIncidentMapPanel({
                 <select
                   aria-label="Month"
                   className={`${compactSelectClass} w-[8rem] disabled:cursor-not-allowed disabled:opacity-50`}
-                  disabled={!selectedYear}
+                  disabled={!selectedYear || isRecentPeriod}
                   onChange={(event) => setSelectedMonth(event.target.value)}
-                  title={selectedYear ? undefined : 'Choose a year first'}
+                  title={selectedYear && !isRecentPeriod ? undefined : 'Choose a year first'}
                   value={selectedMonth}
                 >
                   <option value="">All months</option>
@@ -1747,6 +1791,32 @@ export function AdminIncidentMapPanel({
             </div>
           </div>
 
+          {/* Explains the 7-day default and how to see older reports. */}
+          {isRecentPeriod && selectedType !== 'EQ' ? (
+            <p className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-blue-100 bg-blue-50/60 px-4 py-2 text-xs text-blue-900 sm:px-5" role="status">
+              {searchesAllDates ? (
+                <span>Showing all dates because a filter is on. Clear it to go back to the last {RECENT_DAYS} days.</span>
+              ) : (
+                <>
+                  <span>
+                    Showing approved reports from the last {RECENT_DAYS} days
+                    {hiddenOlderCount > 0 ? `; ${hiddenOlderCount} older ${hiddenOlderCount === 1 ? 'report is' : 'reports are'} hidden` : ''}.
+                    Reports waiting for review always show in the list, and the search looks through every date.
+                  </span>
+                  {hiddenOlderCount > 0 ? (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedYear('')}
+                      className="font-bold text-blue-700 underline-offset-2 hover:underline"
+                    >
+                      Show all years
+                    </button>
+                  ) : null}
+                </>
+              )}
+            </p>
+          ) : null}
+
           {/* Legend: what each color means. On Accident & Others a type can be picked to show only it. */}
           <div className="flex flex-wrap items-center gap-1.5 border-b border-slate-200 px-4 py-2 text-xs sm:px-5">
             {selectedType === 'EQ' ? (
@@ -1817,7 +1887,10 @@ export function AdminIncidentMapPanel({
                   {reportsLoading && rawReports.length === 0 ? (
                     <span className="font-semibold text-blue-600">Loading reports...</span>
                   ) : (
-                    <span className="font-semibold text-emerald-700">{plottableMapIncidents.length} on map</span>
+                    <span className="font-semibold text-emerald-700">
+                      {plottableMapIncidents.length} on map
+                      {isRecentPeriod ? (searchesAllDates ? ', all dates' : `, last ${RECENT_DAYS} days`) : ''}
+                    </span>
                   )}
                 </span>
               </>
