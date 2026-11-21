@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import { getIncidentReports, type IncidentReport } from '../../../services/incidents'
 import { LUCENA_BARANGAYS, toLucenaBarangay } from '../../../data/barangays'
 import { ANALYTICS_TYPES, getIncidentCategoryKey, type AnalyticsTypeKey } from '../../../data/incidentCategories'
@@ -6,6 +6,8 @@ import { TEAM_NAMES, toTeamName } from '../../../data/teams'
 import { TablePagination } from '../../../components/TablePagination'
 import { filterControlClass, filterLabelClass } from './constants'
 import { PAGE_SIZE_OPTIONS, clampPage } from '../../../components/pagination'
+import { SeverityBadge } from '../../../components/SeverityBadge'
+import { IncidentReportDetails } from './IncidentReportDetails'
 
 type ReportStatus = 'pending' | 'approved'
 type DateGrouping = 'weekly' | 'monthly' | 'yearly'
@@ -146,6 +148,8 @@ export function IncidentReports() {
   const [reports, setReports] = useState<IncidentReport[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [selectedIds, setSelectedIds] = useState<string[]>([])
+  const [detailsReport, setDetailsReport] = useState<IncidentReport | null>(null)
+  const closeDetails = useCallback(() => setDetailsReport(null), [])
   const [dateGrouping, setDateGrouping] = useState<DateGrouping>('weekly')
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS)
   const [sortOrder, setSortOrder] = useState<SortOrder>('newest')
@@ -714,7 +718,13 @@ export function IncidentReports() {
                     Status
                   </th>
                   <th className="px-4 py-3 text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
+                    Severity
+                  </th>
+                  <th className="px-4 py-3 text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
                     Date
+                  </th>
+                  <th className="px-4 py-3">
+                    <span className="sr-only">Details</span>
                   </th>
                 </tr>
               </thead>
@@ -722,13 +732,13 @@ export function IncidentReports() {
               <tbody className="divide-y divide-slate-100 bg-white">
                 {isLoading ? (
                   <tr>
-                    <td className="px-4 py-8 text-center text-sm text-slate-500" colSpan={8}>
+                    <td className="px-4 py-8 text-center text-sm text-slate-500" colSpan={10}>
                       Loading approved incidents...
                     </td>
                   </tr>
                 ) : filteredReports.length === 0 ? (
                   <tr>
-                    <td className="px-4 py-8 text-center text-sm text-slate-500" colSpan={8}>
+                    <td className="px-4 py-8 text-center text-sm text-slate-500" colSpan={10}>
                       {activeFilterCount > 0 ? 'No approved incidents match these filters.' : 'No approved incidents found.'}
                     </td>
                   </tr>
@@ -736,7 +746,7 @@ export function IncidentReports() {
                   groupedReports.map(({ group, items, total }) => (
                     <Fragment key={group}>
                       <tr className="bg-slate-100">
-                        <td className="px-4 py-3 text-sm font-semibold uppercase tracking-[0.12em] text-slate-700" colSpan={8}>
+                        <td className="px-4 py-3 text-sm font-semibold uppercase tracking-[0.12em] text-slate-700" colSpan={10}>
                           {group} ({total})
                         </td>
                       </tr>
@@ -780,8 +790,21 @@ export function IncidentReports() {
                                 Approved
                               </span>
                             </td>
+                            <td className="px-4 py-4">
+                              <SeverityBadge level={report.severityLevel} />
+                            </td>
                             <td className="px-4 py-4 text-sm text-slate-600">
                               {formatDate(report.createdAt || report.created_at)}
+                            </td>
+                            <td className="px-4 py-4 text-right">
+                              <button
+                                type="button"
+                                onClick={() => setDetailsReport(report)}
+                                aria-label={`View details of ${reportCode}`}
+                                className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-blue-700 transition hover:border-blue-300 hover:bg-blue-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                              >
+                                View
+                              </button>
                             </td>
                           </tr>
                         )
@@ -803,6 +826,8 @@ export function IncidentReports() {
           />
         </div>
       </div>
+
+      {detailsReport ? <IncidentReportDetails report={detailsReport} onClose={closeDetails} /> : null}
     </section>
   )
 }

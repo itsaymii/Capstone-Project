@@ -601,6 +601,8 @@ if DjangoTestCase is not None:
             incident = Incident.objects.get(reference_code=report.incident_code)
             # 1 fatality (20) + 3 injuries (25) + 5 victims (10) = 55, High.
             self.assertEqual(incident.severity_level, 'high')
+            # The report API passes the same severity on, for the admin report details.
+            self.assertEqual(self.admin_client.get(f'{REPORTS_URL}{report.id}/').data['severityLevel'], 'high')
 
         def test_road_crash_severity_uses_weighted_metrics_on_approval(self):
             victims = [
