@@ -926,9 +926,29 @@ function DashboardLineChart({
   )
 }
 
-function DashboardDonutChart({ data }: { data: CountDataItem[] }) {
+const ALL_YEARS = 'all'
+
+/**
+ * Reports by incident type: the donut and a ranked list side by side. Hovering or focusing a type
+ * highlights it in both, and the donut's middle shows that type's count and share.
+ */
+function DashboardDonutChart({
+  data,
+  previousCounts,
+  previousLabel,
+  scopeLabel,
+}: {
+  data: CountDataItem[]
+  /** Counts per type for the year before, to show the change; omitted for "All years". */
+  previousCounts?: Map<string, number>
+  previousLabel?: string
+  /** e.g. "in 2026" or "in 2026, Ibabang Dupay". */
+  scopeLabel: string
+}) {
+  const [activeName, setActiveName] = useState<string | null>(null)
+
   if (data.length === 0) {
-    return <EmptyChartState message="No distribution data available yet." />
+    return <EmptyChartState message="No reports match these filters." />
   }
 
   const chartKey = data.map((item) => `${item.name}:${item.count}`).join('|')
@@ -937,147 +957,127 @@ function DashboardDonutChart({ data }: { data: CountDataItem[] }) {
   const circumference = 2 * Math.PI * radius
   let runningTotal = 0
   const leading = data[0]
-  const leadingPercentage = total > 0 ? Math.round((leading.count / total) * 100) : 0
+  const share = (count: number) => (total > 0 ? Math.round((count / total) * 100) : 0)
+  const active = data.find((item) => item.name === activeName) ?? null
 
   return (
-    <div className="dashboard-chart-enter relative flex h-full w-full flex-col gap-5 overflow-hidden rounded-[24px] border border-blue-100 bg-[radial-gradient(circle_at_top_left,#eff6ff_0%,#ffffff_44%,#f8fafc_100%)] p-5" key={chartKey}>
-      <div className="pointer-events-none absolute -left-16 top-8 h-36 w-36 rounded-full bg-blue-500/10 blur-3xl" />
-      <div className="pointer-events-none absolute -right-12 bottom-8 h-36 w-36 rounded-full bg-emerald-400/10 blur-3xl" />
+    <div className="dashboard-chart-enter w-full" key={chartKey}>
+      <p className="text-sm leading-6 text-slate-600">
+        <span className="font-bold text-slate-900">{leading.name}</span> is the most reported type: {share(leading.count)}% of{' '}
+        {total.toLocaleString()} reports {scopeLabel}.
+      </p>
 
-      <div className="relative flex w-full items-center justify-center pb-3">
-        <div className="absolute inset-0 m-auto h-40 w-40 rounded-full bg-white/70 shadow-[0_18px_50px_rgba(37,99,235,0.12)]" />
+      <div className="mt-4 grid items-center gap-6 md:grid-cols-[200px_1fr] lg:grid-cols-[220px_1fr]">
+        <div className="relative mx-auto flex items-center justify-center">
+          <svg
+            className="h-[180px] w-[180px] lg:h-[200px] lg:w-[200px]"
+            viewBox="0 0 240 240"
+            role="img"
+            aria-label={`Reports by incident type ${scopeLabel}: ${data.map((item) => `${item.name} ${item.count}`).join(', ')}`}
+          >
+            <circle cx="120" cy="120" fill="#ffffff" r="108" />
+            <circle cx="120" cy="120" fill="none" r={radius} stroke="#e2e8f0" strokeWidth="30" />
 
-        <svg className="relative h-[160px] w-[160px] drop-shadow-sm sm:h-[175px] sm:w-[175px] lg:h-[180px] lg:w-[180px]" viewBox="0 0 240 240">
-          <defs>
-            <filter id="donutGlow" height="180%" width="180%" x="-40%" y="-40%">
-              <feGaussianBlur result="coloredBlur" stdDeviation="3" />
-              <feMerge>
-                <feMergeNode in="coloredBlur" />
-                <feMergeNode in="SourceGraphic" />
-              </feMerge>
-            </filter>
-          </defs>
+            {data.map((item, index) => {
+              const percentage = total > 0 ? item.count / total : 0
+              const dashLength = percentage * circumference
+              const dashOffset = -runningTotal * circumference
+              runningTotal += percentage
+              const dimmed = activeName !== null && activeName !== item.name
 
-          <circle cx="120" cy="120" fill="#ffffff" r="108" />
-          <circle cx="120" cy="120" fill="none" r={radius} stroke="#e2e8f0" strokeWidth="30" />
+              return (
+                <circle
+                  cx="120"
+                  cy="120"
+                  fill="none"
+                  key={item.name}
+                  r={radius}
+                  stroke={getCategoryColor(item.name, index)}
+                  strokeDasharray={`${dashLength} ${circumference - dashLength}`}
+                  strokeDashoffset={dashOffset}
+                  strokeWidth={activeName === item.name ? 36 : 30}
+                  transform="rotate(-90 120 120)"
+                  className="dashboard-donut-segment cursor-pointer transition-[opacity,stroke-width] duration-200"
+                  style={{ animationDelay: `${index * 100}ms`, opacity: dimmed ? 0.25 : 1 }}
+                  onMouseEnter={() => setActiveName(item.name)}
+                  onMouseLeave={() => setActiveName(null)}
+                >
+                  <animate
+                    attributeName="stroke-dasharray"
+                    begin={`${index * 0.12}s`}
+                    dur="0.9s"
+                    fill="freeze"
+                    values={`0 ${circumference}; ${dashLength} ${circumference - dashLength}`}
+                  />
+                </circle>
+              )
+            })}
 
-          {data.map((item, index) => {
-            const percentage = total > 0 ? item.count / total : 0
-            const dashLength = percentage * circumference
-            const dashOffset = -runningTotal * circumference
-            runningTotal += percentage
-
-            return (
-              <circle
-                cx="120"
-                cy="120"
-                fill="none"
-                filter="url(#donutGlow)"
-                key={item.name}
-                r={radius}
-                stroke={getCategoryColor(item.name, index)}
-                strokeDasharray={`${dashLength} ${circumference - dashLength}`}
-                strokeDashoffset={dashOffset}
-                strokeLinecap="round"
-                strokeWidth="30"
-                transform="rotate(-90 120 120)"
-                className="dashboard-donut-segment"
-                style={{ animationDelay: `${index * 100}ms` }}
-              >
-                <animate
-                  attributeName="stroke-dasharray"
-                  begin={`${index * 0.12}s`}
-                  dur="0.9s"
-                  fill="freeze"
-                  values={`0 ${circumference}; ${dashLength} ${circumference - dashLength}`}
-                />
-              </circle>
-            )
-          })}
-
-          <circle cx="120" cy="120" fill="#ffffff" r="58" />
-          <circle cx="120" cy="120" fill="none" r="59" stroke="#dbeafe" strokeDasharray="4 8" strokeWidth="2">
-            <animateTransform
-              attributeName="transform"
-              dur="18s"
-              from="0 120 120"
-              repeatCount="indefinite"
-              to="360 120 120"
-              type="rotate"
-            />
-          </circle>
-
-          <text fill="#0f172a" fontSize="34" fontWeight="900" textAnchor="middle" x="120" y="112">
-            {total}
-          </text>
-          <text fill="#64748b" fontSize="12" fontWeight="800" textAnchor="middle" x="120" y="136">
-            Total reports
-          </text>
-        </svg>
-      </div>
-
-      <div className="relative z-10 w-full min-w-0 space-y-3">
-        <div className="rounded-2xl border border-blue-100 bg-white/85 p-4 shadow-sm backdrop-blur">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-[10px] font-black uppercase tracking-[0.18em] text-blue-500">
-                Main incident type
-              </p>
-              <p className="mt-1 truncate text-lg font-black text-slate-900">{leading.name}</p>
-              <p className="mt-1 text-xs font-semibold leading-relaxed text-slate-500">
-                This means most submitted reports belong to this incident category.
-              </p>
-            </div>
-
-            <div className="rounded-2xl bg-blue-50 px-3 py-2 text-center">
-              <p className="text-xl font-black text-blue-700">{leadingPercentage}%</p>
-              <p className="text-[9px] font-bold uppercase tracking-wide text-blue-500">Share</p>
-            </div>
-          </div>
+            <circle cx="120" cy="120" fill="#ffffff" r="58" />
+            <text fill="#0f172a" fontSize="34" fontWeight="900" textAnchor="middle" x="120" y="114">
+              {active ? active.count : total}
+            </text>
+            <text fill="#64748b" fontSize="12" fontWeight="700" textAnchor="middle" x="120" y="136">
+              {active ? `${share(active.count)}% of reports` : 'Total reports'}
+            </text>
+          </svg>
         </div>
 
-        <div className="space-y-2">
+        <ol className="min-w-0 divide-y divide-slate-100" aria-label="Reports by incident type">
           {data.map((entry, index) => {
-            const percentage = total > 0 ? Math.round((entry.count / total) * 100) : 0
+            const percentage = share(entry.count)
+            const color = getCategoryColor(entry.name, index)
+            const previous = previousCounts?.get(entry.name) ?? 0
+            const change = entry.count - previous
+            const isActive = activeName === entry.name
 
             return (
-              <div
-                className="dashboard-chart-row-enter group rounded-2xl border border-white/80 bg-white/80 p-3 shadow-sm transition-all duration-300 hover:-translate-y-0.5 hover:border-blue-100 hover:bg-white hover:shadow-md"
+              <li
                 key={entry.name}
-                style={{ animationDelay: `${260 + index * 75}ms` }}
+                tabIndex={0}
+                onMouseEnter={() => setActiveName(entry.name)}
+                onMouseLeave={() => setActiveName(null)}
+                onFocus={() => setActiveName(entry.name)}
+                onBlur={() => setActiveName(null)}
+                className={`dashboard-chart-row-enter rounded-lg px-2 py-2 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-blue-500 ${
+                  isActive ? 'bg-slate-50' : ''
+                }`}
+                style={{ animationDelay: `${200 + index * 60}ms` }}
               >
-                <div className="mb-2 flex items-center justify-between gap-3">
-                  <div className="flex min-w-0 items-center gap-2">
+                <div className="flex items-center gap-3 text-sm">
+                  <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: color }} aria-hidden="true" />
+                  <span className="min-w-0 flex-1 truncate font-semibold text-slate-800">{entry.name}</span>
+                  <span className="shrink-0 font-bold tabular-nums text-slate-900">{entry.count}</span>
+                  <span className="w-10 shrink-0 text-right text-xs font-semibold tabular-nums text-slate-500">{percentage}%</span>
+                  {previousCounts ? (
                     <span
-                      className="h-3 w-3 shrink-0 rounded-full shadow-sm ring-4 ring-slate-50"
-                      style={{ backgroundColor: getCategoryColor(entry.name, index) }}
-                    />
-                    <span className="truncate text-xs font-black text-slate-700">{entry.name}</span>
-                  </div>
-                  <span className="shrink-0 text-xs font-black text-slate-900">
-                    {entry.count} reports
-                  </span>
+                      className={`w-20 shrink-0 text-right text-xs font-semibold tabular-nums ${
+                        change > 0 ? 'text-red-600' : change < 0 ? 'text-emerald-600' : 'text-slate-400'
+                      }`}
+                      title={`${previous} in ${previousLabel}`}
+                    >
+                      {change > 0 ? `▲ ${change}` : change < 0 ? `▼ ${Math.abs(change)}` : 'same'}
+                      <span className="sr-only"> compared with {previousLabel}</span>
+                    </span>
+                  ) : null}
                 </div>
-
-                <div className="h-2 overflow-hidden rounded-full bg-slate-100">
+                <div className="ml-[22px] mt-1.5 h-1.5 overflow-hidden rounded-full bg-slate-100">
                   <div
-                    className="dashboard-chart-bar-fill h-full rounded-full transition-all duration-700 group-hover:brightness-110"
-                    style={{
-                      animationDelay: `${310 + index * 75}ms`,
-                      background: `linear-gradient(90deg, ${getCategoryColor(entry.name, index)}33, ${getCategoryColor(entry.name, index)})`,
-                      width: `${Math.max(5, percentage)}%`,
-                    }}
+                    className="dashboard-chart-bar-fill h-full rounded-full"
+                    style={{ animationDelay: `${260 + index * 60}ms`, backgroundColor: color, width: `${Math.max(3, percentage)}%` }}
                   />
                 </div>
-
-                <p className="mt-1 text-right text-[10px] font-bold text-slate-400">
-                  {percentage}% of all reports
-                </p>
-              </div>
+              </li>
             )
           })}
-        </div>
+        </ol>
       </div>
+
+      {previousCounts ? (
+        <p className="mt-3 text-right text-xs text-slate-400">
+          ▲ ▼ change compared with {previousLabel}
+        </p>
+      ) : null}
     </div>
   )
 }
@@ -1666,7 +1666,7 @@ export function AdminDashboardPage() {
   useEffect(() => {
     if (availableHotspotYears.length === 0) return
 
-    if (!distributionYear || !availableHotspotYears.includes(distributionYear)) {
+    if (!distributionYear || (distributionYear !== ALL_YEARS && !availableHotspotYears.includes(distributionYear))) {
       setDistributionYear(availableHotspotYears[0])
     }
   }, [availableHotspotYears, distributionYear])
@@ -1674,7 +1674,7 @@ export function AdminDashboardPage() {
   const distributionRecords = useMemo(() => {
     return dashboardIncidentRecords
       .filter((record) => {
-        if (!distributionYear) return true
+        if (!distributionYear || distributionYear === ALL_YEARS) return true
         return getIncidentTimelineDate(record).getFullYear() === Number(distributionYear)
       })
       .filter((record) => {
@@ -1683,10 +1683,24 @@ export function AdminDashboardPage() {
       })
   }, [dashboardIncidentRecords, distributionBarangay, distributionYear])
 
+  // The same filters one year earlier, to show how each type changed. Not shown for "All years".
+  const previousDistributionCounts = useMemo(() => {
+    if (!distributionYear || distributionYear === ALL_YEARS) return undefined
+    const previousYear = Number(distributionYear) - 1
+    const counts = new Map<string, number>()
+    dashboardIncidentRecords.forEach((record) => {
+      if (getIncidentTimelineDate(record).getFullYear() !== previousYear) return
+      if (distributionBarangay && getDashboardBarangay(record) !== distributionBarangay) return
+      const type = getDashboardIncidentType(record)
+      counts.set(type, (counts.get(type) || 0) + 1)
+    })
+    return counts
+  }, [dashboardIncidentRecords, distributionBarangay, distributionYear])
+
   const availableDistributionBarangays = useMemo(() => {
     const items = dashboardIncidentRecords
       .filter((record) => {
-        if (!distributionYear) return true
+        if (!distributionYear || distributionYear === ALL_YEARS) return true
         return getIncidentTimelineDate(record).getFullYear() === Number(distributionYear)
       })
       .filter((record) => !isPlaceholderLocation(getDashboardLocation(record)))
@@ -2226,55 +2240,58 @@ export function AdminDashboardPage() {
 
               <div className="mt-5 space-y-5">
                 <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white p-4 shadow-[0_16px_38px_rgba(15,23,42,0.09)] sm:p-5">
-                  <p className="text-xs font-bold uppercase tracking-[0.22em] text-slate-500">
-                    Incident Distribution
-                  </p>
-                  <h2 className="mt-1 text-lg font-bold text-slate-900 sm:text-xl">
-                    Reports by Incident Type
-                  </h2>
-                  <p className="mt-1 text-sm text-slate-500">
-                    Shows which incident type has the largest share of all submitted reports.
-                  </p>
-
-                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                    <label className="text-[11px] font-semibold uppercase tracking-[0.13em] text-slate-500">
-                      Year
-                      <select
-                        className="mt-2 block w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900"
-                        value={distributionYear}
-                        onChange={(event) => setDistributionYear(event.target.value)}
-                      >
-                        {availableHotspotYears.map((year) => (
-                          <option key={`distribution-year-${year}`} value={year}>{year}</option>
-                        ))}
-                      </select>
-                    </label>
-
-                    <label className="text-[11px] font-semibold uppercase tracking-[0.13em] text-slate-500">
-                      Barangay
-                      <select
-                        className="mt-2 block w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900"
-                        value={distributionBarangay}
-                        onChange={(event) => setDistributionBarangay(event.target.value)}
-                      >
-                        <option value="">All barangays</option>
-                        {availableDistributionBarangays.map((barangay) => (
-                          <option key={`distribution-barangay-${barangay}`} value={barangay}>{barangay}</option>
-                        ))}
-                      </select>
-                    </label>
+                  <div className="flex flex-wrap items-end justify-between gap-4">
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-[0.22em] text-slate-500">
+                        Incident Distribution
+                      </p>
+                      <h2 className="mt-1 text-lg font-bold text-slate-900 sm:text-xl">
+                        Reports by Incident Type
+                      </h2>
+                      <p className="mt-1 text-sm text-slate-500">
+                        Which incident types make up the reports. Point at a type to highlight it.
+                      </p>
+                    </div>
+                    <div className="grid w-full gap-3 sm:w-auto sm:grid-cols-2">
+                      <label className="text-xs font-semibold text-slate-600">
+                        Year
+                        <select
+                          className="mt-1.5 block w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900 sm:w-44"
+                          value={distributionYear}
+                          onChange={(event) => setDistributionYear(event.target.value)}
+                        >
+                          {availableHotspotYears.map((year) => (
+                            <option key={`distribution-year-${year}`} value={year}>{year}</option>
+                          ))}
+                          <option value={ALL_YEARS}>All years</option>
+                        </select>
+                      </label>
+                      <label className="text-xs font-semibold text-slate-600">
+                        Barangay
+                        <select
+                          className="mt-1.5 block w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900 sm:w-56"
+                          value={distributionBarangay}
+                          onChange={(event) => setDistributionBarangay(event.target.value)}
+                        >
+                          <option value="">All barangays</option>
+                          {availableDistributionBarangays.map((barangay) => (
+                            <option key={`distribution-barangay-${barangay}`} value={barangay}>{barangay}</option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
                   </div>
-
-                  <p className="mt-3 text-[11px] font-semibold uppercase tracking-[0.13em] text-slate-500">
-                    Viewing: {distributionYear || 'All years'} • {distributionBarangay || 'All barangays'}
-                  </p>
-
-                  <div className="mt-4 min-h-[720px] w-full sm:min-h-[700px] lg:min-h-[720px]">
-                    <DashboardDonutChart data={incidentDistributionData} />
+                  <div className="mt-5">
+                    <DashboardDonutChart
+                      data={incidentDistributionData}
+                      previousCounts={previousDistributionCounts}
+                      previousLabel={distributionYear && distributionYear !== ALL_YEARS ? String(Number(distributionYear) - 1) : undefined}
+                      scopeLabel={`${distributionYear === ALL_YEARS ? 'across all years' : `in ${distributionYear}`}${
+                        distributionBarangay ? `, ${distributionBarangay}` : ''
+                      }`}
+                    />
                   </div>
-
                 </div>
-
                 <div className="group overflow-hidden rounded-[28px] border border-slate-100 bg-white/90 p-4 shadow-[0_20px_50px_rgba(15,23,42,0.06)] backdrop-blur-md transition-all duration-300 hover:shadow-[0_20px_50px_rgba(15,23,42,0.12)] sm:p-5 lg:p-6">
 
                   <div className="flex items-start justify-between gap-4">
