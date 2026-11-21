@@ -207,7 +207,7 @@ class FieldRulesTests(PlainTestCase):
 
         _, _, errors = validate_report_details(
             'Crime Against Person/Property',
-            crime_details,
+            {},
             [{'details': {}}],
         )
         self.assertIn('outcome', errors['victims']['#1'])
