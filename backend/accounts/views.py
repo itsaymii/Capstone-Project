@@ -24,7 +24,7 @@ from .models import (
 	user_bypasses_login_otp, get_user_role, AccountProfile, OneTimePassword, ResidencyVerification,
 	ensure_account_profile, user_has_dashboard_access
 )
-from .permissions import IsAdminOrStaff
+from .permissions import IsAdminOrStaff, IsDashboardUser
 from incidents.models import Incident, HazardType
 from incidents.teams import team_name
 from locations.models import Barangay
@@ -621,6 +621,38 @@ def current_user_profile(request):
 		{
 			'message': 'Profile updated successfully.',
 			'user': _serialize_user(user, fallback_identifier=user.email),
+		},
+		status=status.HTTP_200_OK,
+	)
+
+
+@api_view(['GET'])
+@permission_classes([IsDashboardUser])
+def my_team_members(request):
+	"""The accounts on the logged-in responder's team, for the Profile page. Teams are set by an admin."""
+	profile = getattr(request.user, 'account_profile', None)
+	team = profile.responder_team if profile and profile.responder_team_id else None
+	if team is None:
+		return Response({'team': None, 'members': []}, status=status.HTTP_200_OK)
+
+	members = (
+		AccountProfile.objects.filter(responder_team=team, user__is_active=True)
+		.select_related('user')
+		.order_by('user__first_name', 'user__last_name', 'user__username')
+	)
+	return Response(
+		{
+			'team': team_name(team.name),
+			'members': [
+				{
+					'id': member.user_id,
+					'fullName': _get_user_full_name(member.user),
+					'username': member.user.username,
+					'phoneNumber': member.phone_number or None,
+					'isMe': member.user_id == request.user.id,
+				}
+				for member in members
+			],
 		},
 		status=status.HTTP_200_OK,
 	)
