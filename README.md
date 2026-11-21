@@ -136,13 +136,13 @@ Admins and staff log in at `/login` without an OTP. Citizens receive an OTP by e
 | Recalculate risk scores | `python manage.py calculate_risk_scores --days 365` |
 | Sync Lucena-area earthquakes | `python manage.py sync_earthquake_events --days 90` |
 
-For fresh citywide earthquake-risk data, create a **daily Windows Task Scheduler** task at 03:00 (Asia/Manila). Set its action to:
+For fresh citywide earthquake-risk data, run the USGS sync every day. On the Windows computer that runs Django (the one with `backend\db.sqlite3`):
 
-- **Program:** `C:\path\to\Capstone-Project\backend\.venv\Scripts\python.exe`
-- **Arguments:** `manage.py sync_earthquake_events --days 90`
-- **Start in:** `C:\path\to\Capstone-Project\backend`
+1. Double-click `backend\scripts\register_earthquake_task.bat`. It creates the **DRRMO Earthquake Sync** task, daily at 03:00. If it says it could not create the task, right-click it and choose **Run as administrator**.
+2. To sync right away, double-click `backend\scripts\sync_earthquakes.bat` (or run `schtasks /Run /TN "DRRMO Earthquake Sync"`).
+3. Results are written to `backend\logs\earthquake_sync.log`.
 
-Run the task under an account that can access the project, its `.env`, and the same `backend\db.sqlite3` used by the web app. Re-syncing 90 days daily also picks up revised USGS event data after missed runs.
+`sync_earthquakes.bat` finds the project's `.venv` (next to `backend` or inside it) by itself, so the project folder can be anywhere. The computer must be on and online at 03:00; Windows runs a missed task the next time it can only if **Run task as soon as possible after a scheduled start is missed** is ticked in the task's Settings tab. Re-syncing 90 days daily also picks up revised USGS event data after missed runs.
 
 ## Tests
 
