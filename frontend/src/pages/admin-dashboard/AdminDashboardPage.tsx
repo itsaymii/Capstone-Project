@@ -659,14 +659,8 @@ function DashboardLineChart({
   const peakIndex = points.findIndex((point) => point.date === peakPoint.date && point.count === peakPoint.count)
   const safeSelectedIndex = Math.max(0, Math.min(selectedIndex, points.length - 1))
   const activeIndex = hoveredIndex === null ? safeSelectedIndex : Math.max(0, Math.min(hoveredIndex, points.length - 1))
-  const selectedPoint = points[safeSelectedIndex]
   const activePoint = points[activeIndex]
-  const selectedComparisonPoint = comparisonPoints[safeSelectedIndex]
   const activeComparisonPoint = comparisonPoints[activeIndex]
-  const selectedCurrentCount = Math.round(selectedPoint?.count || 0)
-  const selectedComparisonCount = Math.round(selectedComparisonPoint?.count || 0)
-  const selectedDifference = selectedCurrentCount - selectedComparisonCount
-  const selectedPercentChange = calculateTrendPercentChange(selectedCurrentCount, selectedComparisonCount)
   const activeCurrentCount = Math.round(activePoint?.count || 0)
   const activeComparisonCount = Math.round(activeComparisonPoint?.count || 0)
   const activeDifference = activeCurrentCount - activeComparisonCount
@@ -713,23 +707,36 @@ function DashboardLineChart({
   }
 
   return (
-    <div className="relative h-full w-full overflow-hidden rounded-[18px] border border-slate-200 bg-gradient-to-br from-blue-50 via-sky-50 to-cyan-50 p-3 shadow-[0_10px_24px_rgba(15,23,42,0.06)]">
+    <div className="relative flex h-full w-full flex-col overflow-hidden rounded-[18px] border border-slate-200 bg-gradient-to-br from-blue-50 via-sky-50 to-cyan-50 p-3 shadow-[0_10px_24px_rgba(15,23,42,0.06)]">
 
       <div className="pointer-events-none absolute -right-10 -top-10 h-32 w-32 rounded-full bg-blue-200/20 blur-2xl" />
 
-      <div className="absolute left-4 top-4 z-10 flex flex-wrap items-center gap-2 sm:left-5 sm:top-5">
-        <span className="rounded-full bg-blue-600 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-white">
-          Live trend
-        </span>
-        <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-700">
-          {data.length} monthly points
-        </span>
+      {/* Legend: each swatch is drawn like its line on the chart (solid blue = year, dashed orange = compared year). */}
+      <ul
+        className="relative z-10 flex flex-wrap items-center gap-x-5 gap-y-1.5 px-1 pb-2 pt-0.5 text-xs"
+        aria-label="Chart legend"
+      >
+        <li className="flex items-center gap-2">
+          <svg width="26" height="8" aria-hidden="true">
+            <line x1="1" y1="4" x2="25" y2="4" stroke="#2d5bff" strokeWidth="3" strokeLinecap="round" />
+          </svg>
+          <span className="font-bold text-slate-900">{currentYearLabel || 'Current year'}</span>
+          <span className="text-slate-500">selected year</span>
+        </li>
         {comparisonData.length > 0 ? (
-          <span className="rounded-full border border-orange-200 bg-white px-3 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-orange-700">
-            Comparison overlay
-          </span>
+          <li className="flex items-center gap-2">
+            <svg width="26" height="8" aria-hidden="true">
+              <line x1="1" y1="4" x2="25" y2="4" stroke="#ff7b1a" strokeWidth="3" strokeDasharray="4 4" strokeLinecap="round" />
+            </svg>
+            <span className="font-bold text-slate-900">{comparisonYearLabel || 'Comparison year'}</span>
+            <span className="text-slate-500">compare year</span>
+          </li>
         ) : null}
-      </div>
+        <li className="flex items-center gap-2 text-slate-500">
+          <span className="h-2.5 w-2.5 rounded-full bg-amber-500" aria-hidden="true" />
+          Highest month
+        </li>
+      </ul>
 
       <div className="absolute right-4 top-4 z-10 hidden rounded-xl border border-slate-200 bg-white px-3 py-2 text-right sm:right-5 sm:top-5">
         <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">Trend total</p>
@@ -737,7 +744,9 @@ function DashboardLineChart({
       </div>
 
       <svg
-        className="relative z-[1] h-full w-full cursor-crosshair"
+        role="img"
+        aria-label={`Monthly ${incidentTypeLabel || 'incident'} reports, ${currentYearLabel || 'this year'} compared with ${comparisonYearLabel || 'the year before'}`}
+        className="relative z-[1] min-h-0 w-full flex-1 cursor-crosshair"
         preserveAspectRatio="xMidYMid meet"
         viewBox={`0 0 ${width} ${height}`}
         onClick={handleChartClick}
@@ -913,47 +922,6 @@ function DashboardLineChart({
         ) : null}
       </svg>
 
-      <div className="mt-3 flex flex-wrap items-center gap-4 text-[11px] font-semibold text-slate-600">
-        <span className="inline-flex items-center gap-2">
-          <span className="h-2.5 w-2.5 rounded-full bg-[#2d5bff]" />
-          {currentYearLabel || 'Current year'}
-        </span>
-        {comparisonData.length > 0 ? (
-          <span className="inline-flex items-center gap-2">
-            <span className="h-2.5 w-2.5 rounded-full bg-[#ff7b1a]" />
-            {comparisonYearLabel || 'Comparison year'}
-          </span>
-        ) : null}
-        <span className="inline-flex items-center gap-2">
-          <span className="h-2.5 w-2.5 rounded-full bg-amber-500" />
-          Peak marker
-        </span>
-      </div>
-
-      {selectedPoint ? (
-        <div className="mt-3 grid gap-3 rounded-2xl border border-slate-200 bg-white/95 p-3 text-xs text-slate-700 shadow-[0_8px_18px_rgba(15,23,42,0.05)] sm:grid-cols-4">
-          <div>
-            <p className="font-semibold uppercase tracking-[0.12em] text-slate-500">Selected month</p>
-            <p className="mt-1 text-sm font-bold text-slate-900">{selectedPoint.date}</p>
-          </div>
-          <div>
-            <p className="font-semibold uppercase tracking-[0.12em] text-slate-500">{currentYearLabel || 'Current year'}</p>
-            <p className="mt-1 text-sm font-bold text-slate-900">{selectedCurrentCount} reports</p>
-          </div>
-          <div>
-            <p className="font-semibold uppercase tracking-[0.12em] text-slate-500">{comparisonYearLabel || 'Comparison year'}</p>
-            <p className="mt-1 text-sm font-bold text-slate-900">{selectedComparisonCount} reports</p>
-          </div>
-          <div>
-            <p className="font-semibold uppercase tracking-[0.12em] text-slate-500">Difference</p>
-            <p className="mt-1 text-sm font-bold text-slate-900">
-              {selectedDifference > 0 ? '+' : ''}{selectedDifference}
-              {selectedPercentChange === null ? ' (N/A%)' : ` (${selectedPercentChange > 0 ? '+' : ''}${selectedPercentChange}%)`}
-            </p>
-            <p className="mt-1 text-[11px] text-slate-500">{incidentTypeLabel || 'All incident types'}</p>
-          </div>
-        </div>
-      ) : null}
     </div>
   )
 }
