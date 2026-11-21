@@ -131,6 +131,8 @@ FRONTEND_ORIGINS = config(
 )
 CORS_ALLOWED_ORIGINS = FRONTEND_ORIGINS
 CORS_ALLOW_CREDENTIALS = True
+# Lets the dashboard read how long to wait when the strategic briefing is busy (HTTP 503).
+CORS_EXPOSE_HEADERS = ['Retry-After']
 CSRF_TRUSTED_ORIGINS = FRONTEND_ORIGINS
 
 if not DEBUG:
