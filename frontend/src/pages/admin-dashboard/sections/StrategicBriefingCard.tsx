@@ -17,6 +17,47 @@ function formatRefreshAt(value: string): string {
     : `Next refresh ${date.toLocaleString()}`
 }
 
+const SEVERITY_ORDER = ['low', 'moderate', 'high', 'critical'] as const
+const SEVERITY_STYLE: Record<(typeof SEVERITY_ORDER)[number], { label: string; bar: string; dot: string }> = {
+  low: { label: 'Low', bar: 'bg-emerald-500', dot: 'bg-emerald-500' },
+  moderate: { label: 'Moderate', bar: 'bg-amber-400', dot: 'bg-amber-400' },
+  high: { label: 'High', bar: 'bg-orange-500', dot: 'bg-orange-500' },
+  critical: { label: 'Critical', bar: 'bg-red-600', dot: 'bg-red-600' },
+}
+
+function formatShortDate(value: string): string {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? '—' : date.toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+/** One thin bar of how the window's incidents split by severity, with the counts written under it. */
+function SeverityStrip({ bySeverity }: { bySeverity: Record<string, number> }) {
+  const rows = SEVERITY_ORDER.map((level) => ({ level, count: Number(bySeverity?.[level] ?? 0) }))
+  const counted = rows.reduce((sum, row) => sum + row.count, 0)
+  if (counted === 0) return null
+  const summary = rows.map((row) => `${SEVERITY_STYLE[row.level].label} ${row.count}`).join(', ')
+  return (
+    <div className="mt-5">
+      <div className="flex h-1.5 w-full gap-0.5 overflow-hidden rounded-full" role="img" aria-label={`Incidents by severity: ${summary}`}>
+        {rows.map((row) =>
+          row.count > 0 ? (
+            <div key={row.level} className={SEVERITY_STYLE[row.level].bar} style={{ width: `${(row.count / counted) * 100}%` }} />
+          ) : null,
+        )}
+      </div>
+      <ul className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs text-slate-500" aria-hidden="true">
+        {rows.map((row) => (
+          <li key={row.level} className="flex items-center gap-1.5">
+            <span className={`h-1.5 w-1.5 rounded-full ${SEVERITY_STYLE[row.level].dot}`} />
+            {SEVERITY_STYLE[row.level].label}
+            <span className="font-semibold tabular-nums text-slate-700">{row.count}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
 function sourceLabel(briefing: StrategicDashboardBriefingResponse['briefing']): string {
   if (briefing.source === 'gemini') return 'Gemini-generated'
   if (briefing.source_reason === 'api_key_not_configured') return 'Rule-based fallback · AI key not configured'
@@ -121,18 +162,19 @@ export function StrategicBriefingCard() {
             A city-wide readiness brief, refreshed every 30 days. It always covers the last 30 days and does not change with the
             dashboard filters.
           </p>
-          {data ? (
-            <p className="mt-1 text-xs font-semibold text-slate-600">Data window: {formatWindow(data.window)}</p>
-          ) : null}
         </div>
-        {data && (
-          <div className="text-xs text-slate-500 sm:text-right">
-            <p>{sourceLabel(data.briefing)}</p>
-            <p className="mt-1">{formatGeneratedAt(data.generated_at)}</p>
-            <p className="mt-1">{formatRefreshAt(data.refreshes_at)}</p>
-          </div>
-        )}
       </div>
+      {data ? (
+        <p className="mt-2 text-xs text-slate-500">
+          <span className="font-semibold text-slate-700">{formatWindow(data.window)}</span>
+          <span className="mx-2 text-slate-300" aria-hidden="true">|</span>
+          <span className={data.briefing.source === 'gemini' ? '' : 'text-amber-700'}>{sourceLabel(data.briefing)}</span>
+          <span className="mx-2 text-slate-300" aria-hidden="true">|</span>
+          <span title={`${formatGeneratedAt(data.generated_at)}. ${formatRefreshAt(data.refreshes_at)}.`}>
+            Generated {formatShortDate(data.generated_at)}, next refresh {formatShortDate(data.refreshes_at)}
+          </span>
+        </p>
+      ) : null}
 
       {problem?.kind === 'busy' ? (
         <div role="status" aria-live="polite" className="mt-5 rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
@@ -169,27 +211,35 @@ export function StrategicBriefingCard() {
         </div>
       ) : (
         <>
-          <dl className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <div className="rounded-xl bg-slate-50 p-3">
-              <dt className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Incidents · last 30 days</dt>
-              <dd className="mt-1 text-xl font-bold tabular-nums text-slate-900">{data.stats.total.toLocaleString()}</dd>
+          <div className="mt-6 max-w-3xl">
+            <h3 className="text-xl font-bold leading-snug tracking-tight text-slate-900">{data.briefing.headline}</h3>
+            <p className="mt-2 text-[15px] leading-7 text-slate-600">{data.briefing.summary}</p>
+          </div>
+
+          <dl className="mt-6 grid grid-cols-2 gap-5 sm:grid-cols-3 sm:gap-0 sm:divide-x sm:divide-slate-200">
+            <div className="sm:pr-6">
+              <dt className="text-xs font-medium text-slate-500">Incidents, last 30 days</dt>
+              <dd className="mt-1 text-3xl font-bold tabular-nums tracking-tight text-slate-900">{data.stats.total.toLocaleString()}</dd>
             </div>
-            <div className="rounded-xl bg-slate-50 p-3">
-              <dt className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Monthly average</dt>
-              <dd className="mt-1 text-xl font-bold tabular-nums text-slate-900">{data.stats.monthly_average.toLocaleString()}</dd>
-            </div>
-            <div className="rounded-xl bg-slate-50 p-3">
-              <dt className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">High or Critical</dt>
-              <dd className="mt-1 text-xl font-bold tabular-nums text-slate-900">
+            <div className="sm:px-6">
+              <dt className="text-xs font-medium text-slate-500">High or critical</dt>
+              <dd className="mt-1 text-3xl font-bold tabular-nums tracking-tight text-red-700">
                 {data.stats.high_critical_count.toLocaleString()}
-                <span className="ml-1 text-sm font-semibold text-slate-500">({data.stats.high_critical_percentage}%)</span>
+                <span className="ml-1.5 text-sm font-semibold text-slate-400">{data.stats.high_critical_percentage}%</span>
               </dd>
             </div>
-            <div className="rounded-xl bg-slate-50 p-3">
-              <dt className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Hotspots</dt>
-              <dd className="mt-1 text-sm font-bold text-slate-900">
+            <div className="col-span-2 min-w-0 sm:col-span-1 sm:pl-6">
+              <dt className="text-xs font-medium text-slate-500">Hotspots</dt>
+              <dd className="mt-1.5 text-sm text-slate-700">
                 {data.stats.hotspots.length ? (
-                  <span className="break-words">{data.stats.hotspots.map((item) => `${item.name} (${item.count})`).join(', ')}</span>
+                  <ol className="space-y-0.5">
+                    {data.stats.hotspots.map((item) => (
+                      <li key={item.name} className="flex items-baseline justify-between gap-3">
+                        <span className="min-w-0 break-words font-semibold text-slate-900">{item.name}</span>
+                        <span className="shrink-0 tabular-nums text-slate-500">{item.count}</span>
+                      </li>
+                    ))}
+                  </ol>
                 ) : (
                   'None identified'
                 )}
@@ -197,29 +247,26 @@ export function StrategicBriefingCard() {
             </div>
           </dl>
 
-          <div className="mt-5">
-            <h3 className="text-base font-bold text-slate-900">{data.briefing.headline}</h3>
-            <p className="mt-1.5 max-w-4xl text-sm leading-6 text-slate-700">{data.briefing.summary}</p>
-          </div>
+          <SeverityStrip bySeverity={data.stats.by_severity} />
 
-          <div className="mt-5 grid gap-6 lg:grid-cols-2">
+          <div className="mt-6 grid gap-8 border-t border-slate-100 pt-6 lg:grid-cols-2">
             <section>
               <h3 className="text-sm font-bold text-slate-900">Key findings</h3>
-              <ul className="mt-2 space-y-2">
+              <ul className="mt-3 space-y-2.5">
                 {data.briefing.key_findings.map((finding, index) => (
-                  <li key={`${index}-${finding}`} className="flex gap-2.5 text-sm leading-6 text-slate-700">
-                    <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-slate-400" aria-hidden="true" />
+                  <li key={`${index}-${finding}`} className="flex gap-3 text-sm leading-6 text-slate-700">
+                    <span className="mt-2.5 h-1 w-3 shrink-0 rounded-full bg-blue-600" aria-hidden="true" />
                     {finding}
                   </li>
                 ))}
               </ul>
             </section>
             <section>
-              <h3 className="text-sm font-bold text-slate-900">Recommended actions · next quarter</h3>
-              <ol className="mt-2 space-y-2">
+              <h3 className="text-sm font-bold text-slate-900">Recommended actions for the next quarter</h3>
+              <ol className="mt-3 space-y-2.5">
                 {data.briefing.recommended_actions.map((action, index) => (
-                  <li key={`${index}-${action}`} className="flex gap-2.5 text-sm leading-6 text-slate-700">
-                    <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-blue-50 text-[11px] font-bold text-blue-700">
+                  <li key={`${index}-${action}`} className="flex gap-3 text-sm leading-6 text-slate-700">
+                    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-blue-600 text-xs font-bold text-white">
                       {index + 1}
                     </span>
                     {action}
