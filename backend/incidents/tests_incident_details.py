@@ -48,12 +48,8 @@ class FieldRulesTests(PlainTestCase):
             'structure_type': 'residential',
             'alarm_level': 'no_alarm',
             'structures_affected': '3',
-<<<<<<< HEAD
-=======
             'families_affected': '0',
             'fatalities': '0',
-            'estimated_damage': '150000.50',
->>>>>>> 7f31639f9beb2e97952a7d04c4df5c50ff6c6aff
             'bfp_present': 'true',
             'fire_out_time': '14:05',
             'suspected_cause': '',
@@ -63,12 +59,8 @@ class FieldRulesTests(PlainTestCase):
             'structure_type': 'residential',
             'alarm_level': 'no_alarm',
             'structures_affected': 3,
-<<<<<<< HEAD
-=======
             'families_affected': 0,
             'fatalities': 0,
-            'estimated_damage': 150000.5,
->>>>>>> 7f31639f9beb2e97952a7d04c4df5c50ff6c6aff
             'bfp_present': True,
             'fire_out_time': '14:05',
         })
@@ -205,10 +197,9 @@ class FieldRulesTests(PlainTestCase):
         self.assertIn('injury_severity', errors['victims']['#1'])
 
     def test_crime_victim_outcome_is_required_and_cleaned(self):
-        crime_details = {'crime_type': 'physical_injury'}
         _, victim_details, errors = validate_report_details(
             'Crime Against Person/Property',
-            crime_details,
+            {},
             [{'details': {'outcome': 'injured'}}],
         )
         self.assertEqual(errors, {})
@@ -532,12 +523,8 @@ if DjangoTestCase is not None:
         def test_fire_report_saves_details_and_fills_fire_table_on_approval(self):
             response = self.report('Fire Incident', {
                 'structure_type': 'residential', 'alarm_level': 'third',
-<<<<<<< HEAD
-                'suspected_cause': 'electrical', 'structures_affected': 3,
-=======
                 'suspected_cause': 'electrical', 'structures_affected': 3, 'families_affected': 0,
-                'fatalities': 0, 'estimated_damage': 500000,
->>>>>>> 7f31639f9beb2e97952a7d04c4df5c50ff6c6aff
+                'fatalities': 0,
             }, victims=[{
                 'name': 'Juan Dela Cruz', 'age': '40', 'gender': 'M', 'address': 'Market View',
                 'condition': 'Minor burns', 'details': {'injury_type': 'burns'},
@@ -589,9 +576,7 @@ if DjangoTestCase is not None:
                 ('injured', 'Fracture'),
                 ('not_injured', 'No physical injury'),
             ]
-            response = self.report('Crime Against Person/Property', {
-                'crime_type': 'physical_injury',
-            }, victims=[
+            response = self.report('Crime Against Person/Property', {}, victims=[
                 {
                     'name': f'Person {index}',
                     'age': '30',

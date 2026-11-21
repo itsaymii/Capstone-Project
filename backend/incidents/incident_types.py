@@ -118,16 +118,9 @@ INCIDENT_TYPES = {
                 ('candle', 'Candle / open flame'), ('smoking', 'Cigarette'), ('arson', 'Arson'),
                 ('unknown', 'Unknown'),
             ]),
-<<<<<<< HEAD
-            field('structures_affected', 'Structures affected', 'int'),
-            field('families_affected', 'Families affected / displaced', 'int'),
-            field('fatalities', 'Fatalities', 'int'),
-=======
             field('structures_affected', 'Structures affected', 'int', required=True),
             field('families_affected', 'Families affected / displaced', 'int', required=True),
-            field('estimated_damage', 'Estimated damage (PHP)', 'decimal'),
             field('fatalities', 'Fatalities', 'int', required=True),
->>>>>>> 7f31639f9beb2e97952a7d04c4df5c50ff6c6aff
             field('bfp_present', 'BFP on scene', 'bool'),
             field('fire_out_time', 'Time declared fire out', 'time'),
         ],

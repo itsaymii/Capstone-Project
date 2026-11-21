@@ -152,16 +152,9 @@ export const INCIDENT_TYPE_CONFIGS: IncidentTypeConfig[] = [
         { value: 'arson', label: 'Arson' },
         { value: 'unknown', label: 'Unknown' },
       ] },
-<<<<<<< HEAD
-      { name: 'structures_affected', label: 'Structures affected', kind: 'int', required: false, min: 0, max: null, choices: [] },
-      { name: 'families_affected', label: 'Families affected / displaced', kind: 'int', required: false, min: 0, max: null, choices: [] },
-      { name: 'fatalities', label: 'Fatalities', kind: 'int', required: false, min: 0, max: null, choices: [] },
-=======
       { name: 'structures_affected', label: 'Structures affected', kind: 'int', required: true, min: 0, max: null, choices: [] },
       { name: 'families_affected', label: 'Families affected / displaced', kind: 'int', required: true, min: 0, max: null, choices: [] },
-      { name: 'estimated_damage', label: 'Estimated damage (PHP)', kind: 'decimal', required: false, min: 0, max: null, choices: [] },
       { name: 'fatalities', label: 'Fatalities', kind: 'int', required: true, min: 0, max: null, choices: [] },
->>>>>>> 7f31639f9beb2e97952a7d04c4df5c50ff6c6aff
       { name: 'bfp_present', label: 'BFP on scene', kind: 'bool', required: false, min: 0, max: null, choices: [] },
       { name: 'fire_out_time', label: 'Time declared fire out', kind: 'time', required: false, min: 0, max: null, choices: [] },
     ],
