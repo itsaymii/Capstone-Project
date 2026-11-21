@@ -1082,12 +1082,21 @@ function DashboardDonutChart({
   )
 }
 
+/** Top barangays as ranked rows: rank, name, bar, count, and the change from the year before. */
 function DashboardBarChart({
   data,
   emptyMessage = 'No barangay hotspot data available yet.',
+  previousCounts,
+  previousLabel,
+  scopeLabel,
 }: {
   data: CountDataItem[]
   emptyMessage?: string
+  /** Counts per barangay for the year before; omitted for "All years". */
+  previousCounts?: Map<string, number>
+  previousLabel?: string
+  /** e.g. "Fire Incident reports in 2026". */
+  scopeLabel: string
 }) {
   if (data.length === 0) {
     return <EmptyChartState message={emptyMessage} />
@@ -1095,44 +1104,68 @@ function DashboardBarChart({
 
   const chartKey = data.map((item) => `${item.name}:${item.count}`).join('|')
   const maxCount = Math.max(1, ...data.map((item) => item.count))
+  const [first, second] = data
 
   return (
-    <div className="dashboard-chart-enter flex h-full min-h-[240px] flex-col justify-center gap-3 rounded-[22px] bg-gradient-to-br from-amber-50 via-white to-slate-50 p-3 sm:p-4" key={chartKey}>
-      {data.map((item, index) => {
-        const width = `${Math.max(10, (item.count / maxCount) * 100)}%`
-        const percentage = Math.round((item.count / maxCount) * 100)
+    <div className="dashboard-chart-enter w-full" key={chartKey}>
+      <p className="text-sm leading-6 text-slate-600">
+        <span className="font-bold text-slate-900">{first.name}</span> has the most {scopeLabel}: {first.count}
+        {second ? (second.count === first.count ? `, tied with ${second.name}` : `, ahead of ${second.name} (${second.count})`) : ''}.
+      </p>
 
-        return (
-          <div
-            className="dashboard-chart-row-enter rounded-2xl border border-white/80 bg-white/80 p-3 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
-            key={item.name}
-            style={{ animationDelay: `${index * 90}ms` }}
-          >
-            <div className="mb-2 flex items-center justify-between gap-3">
-              <div className="flex min-w-0 items-center gap-2">
-                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white" style={{ backgroundColor: chartPalette[index % chartPalette.length] }}>
-                  {index + 1}
-                </span>
-                <span className="truncate text-sm font-bold text-slate-800">{item.name}</span>
+      <ol className="mt-4 divide-y divide-slate-100" aria-label={`Top barangays by ${scopeLabel}`}>
+        {data.map((item, index) => {
+          const color = chartPalette[index % chartPalette.length]
+          const previous = previousCounts?.get(item.name) ?? 0
+          const change = item.count - previous
+
+          return (
+            <li
+              className="dashboard-chart-row-enter flex items-center gap-3 py-3"
+              key={item.name}
+              style={{ animationDelay: `${index * 90}ms` }}
+            >
+              <span
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white"
+                style={{ backgroundColor: color }}
+              >
+                {index + 1}
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-baseline justify-between gap-3">
+                  <span className="truncate text-sm font-bold text-slate-800">{item.name}</span>
+                  <span className="shrink-0 text-sm font-bold tabular-nums text-slate-900">{item.count}</span>
+                </div>
+                <div className="relative mt-1.5 h-2 overflow-hidden rounded-full bg-slate-100">
+                  <div
+                    className="dashboard-chart-bar-fill absolute inset-y-0 left-0 rounded-full"
+                    style={{
+                      animationDelay: `${120 + index * 90}ms`,
+                      background: `linear-gradient(90deg, ${softChartPalette[index % softChartPalette.length]}, ${color})`,
+                      width: `${Math.max(6, (item.count / maxCount) * 100)}%`,
+                    }}
+                  />
+                </div>
               </div>
-              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-900">{item.count}</span>
-            </div>
+              {previousCounts ? (
+                <span
+                  className={`w-14 shrink-0 text-right text-xs font-semibold tabular-nums ${
+                    change > 0 ? 'text-red-600' : change < 0 ? 'text-emerald-600' : 'text-slate-400'
+                  }`}
+                  title={`${previous} in ${previousLabel}`}
+                >
+                  {change > 0 ? `▲ ${change}` : change < 0 ? `▼ ${Math.abs(change)}` : 'same'}
+                  <span className="sr-only"> compared with {previousLabel}</span>
+                </span>
+              ) : null}
+            </li>
+          )
+        })}
+      </ol>
 
-            <div className="relative h-4 overflow-hidden rounded-full bg-slate-100">
-              <div
-                className="dashboard-chart-bar-fill absolute inset-y-0 left-0 rounded-full shadow-[0_4px_14px_rgba(15,23,42,0.16)]"
-                style={{
-                  animationDelay: `${120 + index * 90}ms`,
-                  background: `linear-gradient(90deg, ${softChartPalette[index % softChartPalette.length]}, ${chartPalette[index % chartPalette.length]})`,
-                  width,
-                }}
-              />
-            </div>
-
-            <p className="mt-1 text-right text-[10px] font-bold text-slate-400">{percentage}% of top count</p>
-          </div>
-        )
-      })}
+      {previousCounts ? (
+        <p className="mt-2 text-right text-xs text-slate-400">▲ ▼ change compared with {previousLabel}</p>
+      ) : null}
     </div>
   )
 }
@@ -1725,7 +1758,7 @@ export function AdminDashboardPage() {
   useEffect(() => {
     if (availableHotspotYears.length === 0) return
 
-    if (!hotspotYear || !availableHotspotYears.includes(hotspotYear)) {
+    if (!hotspotYear || (hotspotYear !== ALL_YEARS && !availableHotspotYears.includes(hotspotYear))) {
       setHotspotYear(availableHotspotYears[0])
     }
   }, [availableHotspotYears, hotspotYear])
@@ -1734,13 +1767,28 @@ export function AdminDashboardPage() {
     return dashboardIncidentRecords
       .filter((record) => !isPlaceholderLocation(getDashboardLocation(record)))
       .filter((record) => {
-        if (!hotspotYear) return true
+        if (!hotspotYear || hotspotYear === ALL_YEARS) return true
         return getIncidentTimelineDate(record).getFullYear() === Number(hotspotYear)
       })
       .filter((record) => {
         if (!hotspotIncidentType) return true
         return getDashboardIncidentType(record) === hotspotIncidentType
       })
+  }, [dashboardIncidentRecords, hotspotIncidentType, hotspotYear])
+
+  // Same type filter one year earlier, for the change shown beside each barangay. Not for "All years".
+  const previousHotspotCounts = useMemo(() => {
+    if (!hotspotYear || hotspotYear === ALL_YEARS) return undefined
+    const previousYear = Number(hotspotYear) - 1
+    const counts = new Map<string, number>()
+    dashboardIncidentRecords.forEach((record) => {
+      if (isPlaceholderLocation(getDashboardLocation(record))) return
+      if (getIncidentTimelineDate(record).getFullYear() !== previousYear) return
+      if (hotspotIncidentType && getDashboardIncidentType(record) !== hotspotIncidentType) return
+      const barangay = getDashboardBarangay(record)
+      counts.set(barangay, (counts.get(barangay) || 0) + 1)
+    })
+    return counts
   }, [dashboardIncidentRecords, hotspotIncidentType, hotspotYear])
 
   const topBarangayData = useMemo(
@@ -2292,83 +2340,63 @@ export function AdminDashboardPage() {
                     />
                   </div>
                 </div>
-                <div className="group overflow-hidden rounded-[28px] border border-slate-100 bg-white/90 p-4 shadow-[0_20px_50px_rgba(15,23,42,0.06)] backdrop-blur-md transition-all duration-300 hover:shadow-[0_20px_50px_rgba(15,23,42,0.12)] sm:p-5 lg:p-6">
-
-                  <div className="flex items-start justify-between gap-4">
-                    <div>
-                      <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-slate-400">
-                        Barangay Hotspots
-                      </p>
-                      <h2 className="mt-1 text-lg font-bold tracking-tight text-slate-800 sm:text-xl">
-                        Top 5 Barangays with Most Incidents
-                      </h2>
-                      <p className="mt-1.5 text-xs text-slate-500 leading-relaxed">
-                        Identify barangays with the highest number of a specific incident type.
-                      </p>
+                <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white p-4 shadow-[0_16px_38px_rgba(15,23,42,0.09)] sm:p-5">
+                  <div className="flex flex-wrap items-end justify-between gap-4">
+                    <div className="flex items-start gap-3">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-rose-50 text-rose-500" aria-hidden="true">
+                        <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M17.657 16.657L13.414 20.9a2 2 0 01-2.828 0l-4.243-4.243a8 8 0 1111.314 0z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                        </svg>
+                      </div>
+                      <div>
+                        <p className="text-xs font-bold uppercase tracking-[0.22em] text-slate-500">Barangay Hotspots</p>
+                        <h2 className="mt-1 text-lg font-bold text-slate-900 sm:text-xl">Top 5 Barangays with Most Incidents</h2>
+                        <p className="mt-1 text-sm text-slate-500">Where reports come from most. Pick a type to see its hotspots.</p>
+                      </div>
                     </div>
-
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-rose-50 text-rose-500 transition-colors group-hover:bg-rose-100">
-                      <svg
-                        className="h-5 w-5"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          d="M17.657 16.657L13.414 20.9a2 2 0 01-2.828 0l-4.243-4.243a8 8 0 1111.314 0z"
-                        />
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"
-                        />
-                      </svg>
+                    <div className="grid w-full gap-3 sm:w-auto sm:grid-cols-2">
+                      <label className="text-xs font-semibold text-slate-600">
+                        Year
+                        <select
+                          className="mt-1.5 block w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900 sm:w-44"
+                          value={hotspotYear}
+                          onChange={(event) => setHotspotYear(event.target.value)}
+                        >
+                          {availableHotspotYears.map((year) => (
+                            <option key={`hotspot-year-${year}`} value={year}>{year}</option>
+                          ))}
+                          <option value={ALL_YEARS}>All years</option>
+                        </select>
+                      </label>
+                      <label className="text-xs font-semibold text-slate-600">
+                        Incident type
+                        <select
+                          className="mt-1.5 block w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900 sm:w-56"
+                          value={hotspotIncidentType}
+                          onChange={(event) => setHotspotIncidentType(event.target.value)}
+                        >
+                          <option value="">All incident types</option>
+                          {availableTrendIncidentTypes.map((type) => (
+                            <option key={`hotspot-type-${type}`} value={type}>{type}</option>
+                          ))}
+                        </select>
+                      </label>
                     </div>
                   </div>
-
-                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                    <label className="text-[11px] font-semibold uppercase tracking-[0.13em] text-slate-500">
-                      Year
-                      <select
-                        className="mt-2 block w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900"
-                        value={hotspotYear}
-                        onChange={(event) => setHotspotYear(event.target.value)}
-                      >
-                        {availableHotspotYears.map((year) => (
-                          <option key={`hotspot-year-${year}`} value={year}>{year}</option>
-                        ))}
-                      </select>
-                    </label>
-
-                    <label className="text-[11px] font-semibold uppercase tracking-[0.13em] text-slate-500">
-                      Incident Type
-                      <select
-                        className="mt-2 block w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900"
-                        value={hotspotIncidentType}
-                        onChange={(event) => setHotspotIncidentType(event.target.value)}
-                      >
-                        <option value="">All incident types</option>
-                        {availableTrendIncidentTypes.map((type) => (
-                          <option key={`hotspot-type-${type}`} value={type}>{type}</option>
-                        ))}
-                      </select>
-                    </label>
-                  </div>
-
-                  <p className="mt-3 text-[11px] font-semibold uppercase tracking-[0.13em] text-slate-500">
-                    Viewing: {hotspotIncidentType || 'All incident types'} in {hotspotYear || 'All years'}
-                  </p>
-
-                  <div className="mt-5 min-h-[340px] w-full sm:min-h-[360px]">
+                  <div className="mt-5">
                     <DashboardBarChart
                       data={topBarangayData}
-                      emptyMessage={`No hotspot data found for ${hotspotIncidentType || 'the selected incident filter'} in ${hotspotYear || 'the selected year'}.`}
+                      previousCounts={previousHotspotCounts}
+                      previousLabel={hotspotYear && hotspotYear !== ALL_YEARS ? String(Number(hotspotYear) - 1) : undefined}
+                      scopeLabel={`${hotspotIncidentType ? `${hotspotIncidentType} reports` : 'reports'} ${
+                        hotspotYear === ALL_YEARS ? 'across all years' : `in ${hotspotYear}`
+                      }`}
+                      emptyMessage={`No ${hotspotIncidentType || 'incident'} reports ${
+                        hotspotYear === ALL_YEARS ? 'yet' : `in ${hotspotYear}`
+                      }.`}
                     />
                   </div>
-
                 </div>
               </div>
             </section>
