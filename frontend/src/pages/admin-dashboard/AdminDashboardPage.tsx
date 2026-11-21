@@ -57,8 +57,24 @@ type MetricCard = {
   value: number | string
   comparison: string
   delta: string
-  accent: string
   valueClass: string
+  /** Opens the page where the number can be acted on. */
+  action?: { label: string; section: WorkspaceSection }
+}
+
+/** Dashboard cards are grouped by topic so related numbers sit side by side. */
+type MetricGroup = {
+  title: string
+  description: string
+  /** Tailwind classes for the group's colored top edge and dot. */
+  edgeClass: string
+  dotClass: string
+  cards: MetricCard[]
+}
+
+function isInCurrentMonth(date: Date): boolean {
+  const now = new Date()
+  return date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth()
 }
 
 function getDashboardSeverityScoreFromRecord(record: any): number {
@@ -1527,72 +1543,128 @@ export function AdminDashboardPage() {
     [lucenaEarthquakeEvents],
   )
 
-  const overviewMetricCards: MetricCard[] = [
+  const reportsThisMonth = useMemo(
+    () => dashboardIncidentRecords.filter((record) => isInCurrentMonth(getIncidentTimelineDate(record))).length,
+    [dashboardIncidentRecords],
+  )
+
+  const pendingApprovalCount = useMemo(
+    () => dashboardIncidentRecords.filter((record) => getDashboardIncidentStatus(record) === 'pending').length,
+    [dashboardIncidentRecords],
+  )
+
+  // Severity comes from the backend (set when a report is approved); it is only counted here.
+  const highOrCriticalCount = useMemo(
+    () =>
+      approvedDashboardIncidentRecords.filter((record) =>
+        ['high', 'critical'].includes(String(record.severityLevel || '').toLowerCase()),
+      ).length,
+    [approvedDashboardIncidentRecords],
+  )
+
+  const firesThisMonth = useMemo(
+    () => fireDashboardRecords.filter((record) => isInCurrentMonth(getIncidentTimelineDate(record))).length,
+    [fireDashboardRecords],
+  )
+
+  const earthquakeFeedLoading = eqCardStatus === 'loading'
+  const earthquakeFeedError = eqCardStatus === 'error'
+
+  const overviewMetricGroups: MetricGroup[] = [
     {
-      label: 'Total fire incidents',
-      value: fireDashboardRecords.length,
-      comparison: 'Current incident records in dashboard',
-      delta:
-        fireDashboardRecords.length > 0
-          ? `${fireDashboardRecords.filter((record) => getDashboardIncidentStatus(record) === 'pending').length} currently active`
-          : 'No fire incidents recorded yet',
-      accent: 'border-t-[7px] border-t-red-600',
-      valueClass: 'text-red-700',
+      title: 'Incidents',
+      description: 'Reports filed by responder teams',
+      edgeClass: 'border-t-blue-600',
+      dotClass: 'bg-blue-600',
+      cards: [
+        {
+          label: 'Incident reports',
+          value: totalIncidentReportsCount,
+          comparison:
+            totalIncidentReportsCount > 0
+              ? `Across ${incidentTypeCount} incident type${incidentTypeCount === 1 ? '' : 's'}`
+              : 'No incident reports yet',
+          delta: `${reportsThisMonth} this month`,
+          valueClass: 'text-blue-700',
+          action: { label: 'Open incidents', section: 'incidents' },
+        },
+        {
+          label: 'Waiting for approval',
+          value: pendingApprovalCount,
+          comparison: pendingApprovalCount === 1 ? 'Report not reviewed yet' : 'Reports not reviewed yet',
+          delta: pendingApprovalCount > 0 ? 'Needs an admin to review' : 'Nothing to review',
+          valueClass: pendingApprovalCount > 0 ? 'text-amber-600' : 'text-slate-900',
+          action: { label: 'Review on map', section: 'map' },
+        },
+        {
+          label: 'High or critical',
+          value: highOrCriticalCount,
+          comparison:
+            approvedDashboardIncidentRecords.length > 0
+              ? `${Math.round((highOrCriticalCount / approvedDashboardIncidentRecords.length) * 100)}% of approved reports`
+              : 'No approved reports yet',
+          delta: 'Severity set on approval',
+          valueClass: 'text-red-700',
+        },
+      ],
     },
     {
-      label: 'Total earthquake occurrences',
-      value: eqCardStatus === 'loading' ? '...' : filteredEarthquakeEvents.length,
-      comparison:
-        eqCardStatus === 'error'
-          ? 'Live seismic API unavailable'
-          : normalizedDashboardSearchQuery
-            ? 'Search results in the live seismic feed'
-            : 'USGS live data, Philippines, last 2 years',
-      delta:
-        eqCardStatus === 'loading'
-          ? 'Updating from live seismic feed'
-          : eqCardStatus === 'error'
-            ? 'Unable to refresh right now'
-            : 'Auto-refresh every 5 minutes',
-      accent: 'border-t-[7px] border-t-emerald-600',
-      valueClass: 'text-emerald-700',
+      title: 'Fire',
+      description: 'Fire incident reports',
+      edgeClass: 'border-t-orange-500',
+      dotClass: 'bg-orange-500',
+      cards: [
+        {
+          label: 'Fire incidents',
+          value: fireDashboardRecords.length,
+          comparison: `${firesThisMonth} this month`,
+          delta:
+            fireDashboardRecords.length > 0
+              ? `${fireDashboardRecords.filter((record) => getDashboardIncidentStatus(record) === 'pending').length} waiting for approval`
+              : 'No fire incidents yet',
+          valueClass: 'text-orange-700',
+        },
+        {
+          label: 'Fire risk score',
+          value: `${fireRiskScore}%`,
+          comparison: 'Based on fire records',
+          delta: fireRiskScore >= 70 ? 'High vigilance required' : 'Within managed threshold',
+          valueClass: 'text-orange-700',
+        },
+      ],
     },
     {
-      label: 'Total incident reports',
-      value: totalIncidentReportsCount,
-      comparison: 'All current report records in dashboard',
-      delta:
-        totalIncidentReportsCount > 0
-          ? `Across ${incidentTypeCount} incident type${incidentTypeCount === 1 ? '' : 's'}`
-          : 'No incident reports recorded yet',
-      accent: 'border-t-[7px] border-t-blue-700',
-      valueClass: 'text-blue-700',
-    },
-    {
-      label: 'Current fire risk score',
-      value: `${fireRiskScore}%`,
-      comparison: 'Based on active fire records',
-      delta: fireRiskScore >= 70 ? 'High vigilance required' : 'Within managed threshold',
-      accent: 'border-t-[7px] border-t-orange-600',
-      valueClass: 'text-orange-700',
-    },
-    {
-      label: 'Current earthquake risk score',
-      value: eqCardStatus === 'loading' ? '...' : `${earthquakeRiskScore}%`,
-      comparison:
-        eqCardStatus === 'error'
-          ? 'Live seismic API unavailable'
-          : 'Lucena-only seismic recency + magnitude',
-      delta:
-        eqCardStatus === 'loading'
-          ? 'Updating from live seismic feed'
-          : eqCardStatus === 'error'
-            ? 'Unable to refresh right now'
-            : earthquakeRiskScore >= 70
-              ? 'Heightened seismic watch'
-              : 'Routine monitoring level',
-      accent: 'border-t-[7px] border-t-teal-600',
-      valueClass: 'text-teal-700',
+      title: 'Earthquake',
+      description: 'USGS seismic feed',
+      edgeClass: 'border-t-teal-600',
+      dotClass: 'bg-teal-600',
+      cards: [
+        {
+          label: 'Earthquakes recorded',
+          value: earthquakeFeedLoading ? '…' : filteredEarthquakeEvents.length,
+          comparison: earthquakeFeedError
+            ? 'Seismic feed unavailable'
+            : normalizedDashboardSearchQuery
+              ? 'Matching the search'
+              : 'Philippines, last 2 years',
+          delta: earthquakeFeedLoading ? 'Updating…' : earthquakeFeedError ? 'Could not refresh' : 'Refreshes every 5 minutes',
+          valueClass: 'text-teal-700',
+        },
+        {
+          label: 'Earthquake risk score',
+          value: earthquakeFeedLoading ? '…' : `${earthquakeRiskScore}%`,
+          comparison: earthquakeFeedError ? 'Seismic feed unavailable' : 'Lucena area, recency and magnitude',
+          delta: earthquakeFeedLoading
+            ? 'Updating…'
+            : earthquakeFeedError
+              ? 'Could not refresh'
+              : earthquakeRiskScore >= 70
+                ? 'Heightened seismic watch'
+                : 'Routine monitoring',
+          valueClass: 'text-teal-700',
+          action: { label: 'See Scoring', section: 'scoring' },
+        },
+      ],
     },
   ]
 
@@ -2106,43 +2178,52 @@ export function AdminDashboardPage() {
 
           {activeSection === 'overview' ? (
             <section className="w-full px-3 pb-8 sm:px-6 lg:pb-10">
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 xl:gap-4">
-                {overviewMetricCards.map((card) => (
-                  <article
-                    className={`group relative flex min-h-[210px] flex-col overflow-hidden rounded-[22px] border border-slate-200 bg-white p-4 shadow-[0_10px_26px_rgba(15,23,42,0.07)] transition-all duration-300 ease-out hover:-translate-y-1.5 hover:border-blue-200 hover:shadow-[0_22px_42px_rgba(15,23,42,0.14)] sm:min-h-[220px] sm:p-5 xl:min-h-[230px] ${card.accent}`}
-                    key={card.label}
+              {/* Incidents across the top on laptops, Fire and Earthquake side by side under it; all three in a row on wide screens. */}
+              <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-[3fr_2fr_2fr]">
+                {overviewMetricGroups.map((group, groupIndex) => (
+                  <section
+                    key={group.title}
+                    aria-labelledby={`metric-group-${group.title}`}
+                    className={`rounded-[22px] border border-t-4 border-slate-200 bg-white/70 p-3 shadow-[0_10px_26px_rgba(15,23,42,0.06)] ${group.edgeClass} ${
+                      groupIndex === 0 ? 'lg:col-span-2 2xl:col-span-1' : ''
+                    }`}
                   >
-                    <div className="pointer-events-none absolute -right-10 -top-10 h-28 w-28 rounded-full bg-blue-500/10 opacity-0 blur-2xl transition-opacity duration-300 group-hover:opacity-100" />
-                    <div className="pointer-events-none absolute inset-x-0 bottom-0 h-1 bg-gradient-to-r from-blue-500/0 via-blue-500/30 to-blue-500/0 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
-
-                    <div className="relative z-10">
-                      <div className="flex items-start justify-between gap-3">
-                        <p className="line-clamp-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400 transition-colors group-hover:text-slate-500 sm:text-[11px]">
-                          {card.label}
-                        </p>
-
-                        {/* badge removed - hover effects preserved */}
-                      </div>
-
-                      <div className="mt-4 flex items-end justify-between gap-3">
-                        <p className={`text-3xl font-bold tracking-tight transition-transform duration-300 group-hover:scale-[1.04] sm:text-4xl xl:text-3xl 2xl:text-4xl ${card.valueClass}`}>
-                          {card.value}
-                        </p>
-
-                        <span className="rounded-full bg-slate-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-slate-500 transition-all duration-300 group-hover:bg-blue-50 group-hover:text-blue-700 group-hover:shadow-sm">
-                          Live
-                        </span>
-                      </div>
-
-                      <p className="mt-3 min-h-[42px] text-sm font-medium leading-5 text-slate-600">
-                        {card.comparison}
-                      </p>
-
-                      <p className="mt-3 border-t border-slate-100 pt-3 text-xs font-bold text-slate-700 transition-colors duration-300 group-hover:text-slate-900">
-                        {card.delta}
-                      </p>
+                    <div className="flex items-baseline justify-between gap-2 px-1 pb-2.5 pt-0.5">
+                      <h2 id={`metric-group-${group.title}`} className="flex items-center gap-2 text-sm font-bold text-slate-900">
+                        <span className={`h-2 w-2 rounded-full ${group.dotClass}`} aria-hidden="true" />
+                        {group.title}
+                      </h2>
+                      <p className="truncate text-xs text-slate-500">{group.description}</p>
                     </div>
-                  </article>
+                    <div
+                      className={`grid gap-3 sm:grid-cols-2 ${group.cards.length === 3 ? 'lg:grid-cols-3' : ''}`}
+                    >
+                      {group.cards.map((card) => (
+                        <article
+                          key={card.label}
+                          className="flex min-h-[176px] flex-col rounded-2xl border border-slate-200 bg-white p-4 transition-shadow hover:shadow-md"
+                        >
+                          <h3 className="text-sm font-semibold text-slate-600">{card.label}</h3>
+                          <p className={`mt-2 text-3xl font-bold tabular-nums tracking-tight sm:text-4xl ${card.valueClass}`}>
+                            {card.value}
+                          </p>
+                          <p className="mt-1.5 text-sm leading-5 text-slate-500">{card.comparison}</p>
+                          <div className="mt-auto space-y-1 border-t border-slate-100 pt-2.5">
+                            <p className="text-xs font-semibold text-slate-700">{card.delta}</p>
+                            {card.action ? (
+                              <button
+                                type="button"
+                                onClick={() => handleSelectSection(card.action!.section)}
+                                className="text-xs font-bold text-blue-700 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                              >
+                                {card.action.label} →
+                              </button>
+                            ) : null}
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  </section>
                 ))}
               </div>
 
