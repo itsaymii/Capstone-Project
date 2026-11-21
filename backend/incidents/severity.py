@@ -300,9 +300,9 @@ def score_report_severity(incident_type, details, victim_details, victim_count):
         )) and count == len(victim_details)
         result = score_fire_incident(details, count) if complete else None
     elif key == 'crime':
+        # The form no longer asks for the type of crime; the victims' outcomes are what is scored.
         complete = (
-            bool(details.get('crime_type'))
-            and count == len(victim_details)
+            count == len(victim_details)
             and all(victim.get('outcome') in ('deceased', 'injured', 'not_injured') for victim in victim_details)
         )
         result = score_crime_incident(victim_details) if complete else None

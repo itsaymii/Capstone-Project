@@ -33,15 +33,9 @@ WEIGHTS = {
     ('Fire Incident', 'suspected_cause'): {'electrical': 45, 'lpg': 12, 'cooking': 15, 'candle': 8,
                                            'smoking': 6, 'arson': 3, 'unknown': 11},
     ('Fire Incident', 'alarm_level'): {'first': 40, 'second': 20, 'third': 8, 'fourth': 3, 'fifth': 1,
-<<<<<<< HEAD
-                                       'task_force_alpha': 1, 'under_control': 7, 'fire_out': 20},
-=======
                                        'task_force_alpha': 1, 'task_force_bravo': 1, 'no_alarm': 2,
                                        'under_control': 7, 'fire_out': 20},
-    ('Crime Against Person/Property', 'crime_type'): {'theft': 35, 'robbery': 12, 'physical_injury': 25,
-                                                      'stabbing': 8, 'shooting': 4, 'domestic_violence': 12, 'other': 4},
     ('Crime Against Person/Property', 'outcome'): {'deceased': 2, 'injured': 28, 'not_injured': 70},
->>>>>>> 7f31639f9beb2e97952a7d04c4df5c50ff6c6aff
     ('Medical Emergency', 'chief_complaint'): {'chest_pain': 14, 'difficulty_breathing': 16, 'stroke_symptoms': 10,
                                                'seizure': 8, 'injury': 22, 'fainting': 15, 'fever': 10, 'other': 5},
     ('Medical Emergency', 'consciousness'): {'alert': 60, 'voice': 18, 'pain': 12, 'unresponsive': 10},
