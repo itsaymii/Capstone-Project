@@ -12,6 +12,7 @@ import { isConnectionError, saveReportForLater } from "../../services/offlineRep
 import {
   cleanDetailValues,
   getIncidentTypeConfig,
+  validateDetailValue,
   validateDetailValues,
   type DetailFieldSpec,
   type DetailValue,
@@ -115,6 +116,45 @@ function singularVictimLabel(label: string | null | undefined): string {
 const EMPTY_VICTIM: VictimDetails = { name: "", age: "", gender: "", address: "", condition: "", details: {} };
 
 // Option value for "Others" in dropdowns where another value can be typed.
+// Short help under fields that are easy to misread. Keys are "<type key>.<field name>".
+const FIELD_HINTS: Record<string, string> = {
+  "rca.vehicles_involved": "Every vehicle involved, including parked ones that were hit.",
+  "rca.fatalities": "People who died. Enter 0 if no one died.",
+  "fire.structures_affected": "Houses or buildings damaged. Enter 0 if none.",
+  "fire.families_affected": "Families who lost their home or had to leave it. Enter 0 if none.",
+  "fire.fatalities": "People who died. People who were hurt go in the casualty list on the next step.",
+  "drowning.rescued_alive": "Brought out alive without needing CPR.",
+  "drowning.revived_cpr": "Needed CPR and survived.",
+  "drowning.fatalities": "People who died.",
+  "drowning.missing": "People not found yet.",
+  "medical.triage_acuity": "The most serious patient you handled.",
+  "ambulance.triage_acuity": "The patient's condition when you picked them up.",
+  "standby.triage_acuity": "The most serious person you handled during the duty.",
+  "standby.persons_assisted": "Everyone the team treated or helped. Enter 0 if none.",
+};
+
+// Details pages with many fields are split into labeled groups. Fields not listed go in a last group.
+const DETAIL_GROUPS: Record<string, { title: string; names: string[] }[]> = {
+  fire: [
+    { title: "The fire", names: ["structure_type", "alarm_level", "suspected_cause", "bfp_present", "fire_out_time"] },
+    { title: "Impact", names: ["structures_affected", "families_affected", "fatalities"] },
+  ],
+  drowning: [
+    { title: "Scene", names: ["water_body", "activity"] },
+    { title: "Victim status", names: ["rescued_alive", "revived_cpr", "fatalities", "missing"] },
+    { title: "Rescue complexity", names: ["search_ongoing", "coast_guard_involved"] },
+  ],
+};
+
+// A line above the list of people, so responders know who to add.
+const VICTIM_STEP_NOTES: Record<string, string> = {
+  rca: "Add everyone involved, including people who were not hurt, and choose each one's injury severity.",
+  fire: "List each person who was hurt. People who died are counted in Fatalities on the previous step.",
+  crime: "Add every victim and choose their outcome. The deceased, injured and total counts come from this list.",
+  medical: "Add one card per patient. The number of patients is counted from these cards.",
+  ambulance: "One patient per ambulance assistance report.",
+};
+
 const OTHER_OPTION = "__other__";
 
 const VICTIM_FIELD_LABELS: Record<Exclude<keyof VictimDetails, "details">, string> = {
@@ -198,7 +238,38 @@ export const CreateReport: FC = () => {
   const victimSingular = singularVictimLabel(victimRules.label);
   const atVictimLimit = victimRules.max !== null && formData.victims.length >= victimRules.max;
 
+  // Field-level problems found when "Next" or "Submit" is pressed, keyed by the field's element id.
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [focusTarget, setFocusTarget] = useState<string | null>(null);
+
+  const clearFieldError = (id: string) =>
+    setFieldErrors((current) => {
+      if (!(id in current)) return current;
+      const next = { ...current };
+      delete next[id];
+      return next;
+    });
+
+  // After a failed step, scroll to the first field with a problem and put the cursor in it.
+  useEffect(() => {
+    if (!focusTarget) return;
+    const frame = requestAnimationFrame(() => {
+      const wrap = document.getElementById(`${focusTarget}-wrap`) ?? document.getElementById(focusTarget);
+      if (wrap) {
+        wrap.scrollIntoView({ behavior: "smooth", block: "center" });
+        const control =
+          (wrap.matches("input, select, textarea") ? wrap : null) ??
+          wrap.querySelector<HTMLElement>("input:not([type=hidden]), select, textarea") ??
+          wrap.querySelector<HTMLElement>("button");
+        (control as HTMLElement | null)?.focus({ preventScroll: true });
+      }
+      setFocusTarget(null);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [focusTarget, currentStep]);
+
   const setDetail = (name: string, value: DetailValue | undefined) => {
+    clearFieldError(`detail-${name}`);
     setDetailsByType((prev) => {
       const next = { ...(prev[formData.incidentType] ?? {}) };
       if (value === undefined) delete next[name];
@@ -208,6 +279,7 @@ export const CreateReport: FC = () => {
   };
 
   const setVictimDetail = (index: number, name: string, value: DetailValue | undefined) => {
+    clearFieldError(`victim-${index}-${name}`);
     setFormData((prev) => {
       const victims = [...prev.victims];
       const nextDetails = { ...victims[index].details };
@@ -306,6 +378,7 @@ export const CreateReport: FC = () => {
     field: keyof VictimDetails,
     value: string,
   ) => {
+    clearFieldError(`victim-${index}-${field}`);
     setFormData((prev) => {
       const updatedVictims = [...prev.victims];
       updatedVictims[index] = {
@@ -318,6 +391,7 @@ export const CreateReport: FC = () => {
   };
 
   const syncVictimCount = (requestedCount: number) => {
+    setFieldErrors({}); // Rows move, so their errors would point at the wrong person.
     const count = victimRules.max !== null ? Math.min(requestedCount, victimRules.max) : requestedCount;
     setFormData((prev) => {
       let currentVictims = [...prev.victims];
@@ -350,6 +424,7 @@ export const CreateReport: FC = () => {
   };
 
   const removeVictimRow = (index: number) => {
+    setFieldErrors({}); // Rows move, so their errors would point at the wrong person.
     setFormData((prev) => {
       const updatedVictims = prev.victims.filter((_, idx) => idx !== index);
 
@@ -410,11 +485,11 @@ export const CreateReport: FC = () => {
     for (const [index, victim] of formData.victims.entries()) {
       for (const field of Object.keys(VICTIM_FIELD_LABELS) as (keyof typeof VICTIM_FIELD_LABELS)[]) {
         if (!String(victim[field]).trim()) {
-          return `${victimSingular} #${index + 1}: ${VICTIM_FIELD_LABELS[field]} is required.`;
+          return `${victimSingular} ${index + 1}: ${VICTIM_FIELD_LABELS[field]} is required.`;
         }
       }
       if (typeConfig) {
-        const victimError = validateDetailValues(typeConfig.victimFields, victim.details, `${victimSingular} #${index + 1}: `);
+        const victimError = validateDetailValues(typeConfig.victimFields, victim.details, `${victimSingular} ${index + 1}: `);
         if (victimError) return victimError;
       }
     }
@@ -425,6 +500,36 @@ export const CreateReport: FC = () => {
   const validateOperationLog = (): string | null => {
     if (!formData.actionTaken.trim()) return "Action taken details are required.";
     return null;
+  };
+
+  /** Every field on a page that has a problem, in page order, as [element id, message]. */
+  const collectFieldErrors = (stepId: StepId): [string, string][] => {
+    const found: [string, string][] = [];
+    if (stepId === "details" && typeConfig) {
+      for (const spec of typeConfig.fields) {
+        const message = validateDetailValue(spec, details[spec.name]);
+        if (message) found.push([`detail-${spec.name}`, message]);
+      }
+    }
+    if (stepId === "victims" && victimRules.allowed) {
+      formData.victims.forEach((victim, index) => {
+        for (const field of Object.keys(VICTIM_FIELD_LABELS) as (keyof typeof VICTIM_FIELD_LABELS)[]) {
+          if (!String(victim[field]).trim()) found.push([`victim-${index}-${field}`, `${VICTIM_FIELD_LABELS[field]} is required.`]);
+        }
+        for (const spec of typeConfig?.victimFields ?? []) {
+          const message = validateDetailValue(spec, victim.details[spec.name]);
+          if (message) found.push([`victim-${index}-${spec.name}`, message]);
+        }
+      });
+    }
+    return found;
+  };
+
+  /** Mark the fields with problems on a page and send the cursor to the first one. */
+  const flagFields = (stepId: StepId) => {
+    const found = collectFieldErrors(stepId);
+    setFieldErrors(Object.fromEntries(found));
+    if (found.length) setFocusTarget(found[0][0]);
   };
 
   const stepValidators: Record<StepId, () => string | null> = {
@@ -441,6 +546,7 @@ export const CreateReport: FC = () => {
 
   const goToStep = (step: number) => {
     setError(null);
+    setFieldErrors({});
     setCurrentStep(step);
 
     // Types that need at least one patient start with an empty patient card ready to fill in.
@@ -489,6 +595,7 @@ export const CreateReport: FC = () => {
       const stepError = stepValidators[currentStepId]();
       if (stepError) {
         showError(stepError);
+        flagFields(currentStepId);
         return;
       }
 
@@ -501,6 +608,7 @@ export const CreateReport: FC = () => {
       const stepError = stepValidators[step.id]();
       if (stepError) {
         showStepError(step.id, stepError);
+        flagFields(step.id);
         return;
       }
     }
@@ -597,7 +705,57 @@ export const CreateReport: FC = () => {
   const inputClass =
     "w-full text-sm border border-slate-200 rounded-xl px-3.5 py-2.5 bg-slate-50/50 focus:bg-white focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 transition-all outline-none font-medium placeholder-slate-400";
 
-  // One input for a type-specific field. The control depends on the kind of field.
+  // The details page's fields in their groups (one untitled group for types without groups).
+  const detailGroups = (() => {
+    if (!typeConfig) return [];
+    const groups = DETAIL_GROUPS[typeConfig.key];
+    if (!groups) return [{ title: "", specs: typeConfig.fields }];
+    const placed = new Set(groups.flatMap((group) => group.names));
+    const result = groups.map((group) => ({
+      title: group.title,
+      specs: group.names
+        .map((name) => typeConfig.fields.find((spec) => spec.name === name))
+        .filter((spec): spec is DetailFieldSpec => Boolean(spec)),
+    }));
+    const rest = typeConfig.fields.filter((spec) => !placed.has(spec.name));
+    if (rest.length) result.push({ title: "Other details", specs: rest });
+    return result.filter((group) => group.specs.length > 0);
+  })();
+
+  // Drowning: survivors are rescued alive plus revived with CPR; that is not the total number of victims.
+  const renderDrowningTotals = () => {
+    const count = (name: string) => {
+      const value = details[name];
+      return value === undefined || value === "" ? null : Number(value);
+    };
+    const rescued = count("rescued_alive");
+    const revived = count("revived_cpr");
+    const died = count("fatalities");
+    const missing = count("missing");
+    const survivors = rescued === null || revived === null ? null : rescued + revived;
+    const everyone = survivors === null || died === null || missing === null ? null : survivors + died + missing;
+    return (
+      <dl className="grid grid-cols-2 gap-2 rounded-xl bg-slate-50 p-3 text-xs" aria-live="polite">
+        <div>
+          <dt className="font-semibold text-slate-500">Survivors</dt>
+          <dd className="text-base font-black tabular-nums text-slate-900">{survivors ?? "–"}</dd>
+          <dd className="text-[11px] text-slate-400">Rescued alive plus revived</dd>
+        </div>
+        <div>
+          <dt className="font-semibold text-slate-500">All people accounted for</dt>
+          <dd className="text-base font-black tabular-nums text-slate-900">{everyone ?? "–"}</dd>
+          <dd className="text-[11px] text-slate-400">Survivors, fatalities and missing</dd>
+        </div>
+      </dl>
+    );
+  };
+
+  const renderVictimFieldError = (index: number, field: string) => {
+    const message = fieldErrors[`victim-${index}-${field}`];
+    return message ? <p className="mt-1.5 text-xs font-semibold text-red-600">{message}</p> : null;
+  };
+
+  // One type-specific field: its control, a short hint when it is easy to misread, and its error.
   const renderDetailField = (
     spec: DetailFieldSpec,
     value: DetailValue | undefined,
@@ -605,6 +763,46 @@ export const CreateReport: FC = () => {
     idPrefix: string,
   ) => {
     const id = `${idPrefix}-${spec.name}`;
+    const fieldError = fieldErrors[id];
+    const hint = typeConfig && idPrefix === "detail" ? FIELD_HINTS[`${typeConfig.key}.${spec.name}`] : undefined;
+    const isWide =
+      spec.kind === "multi_choice" || spec.kind === "bool" || (spec.kind === "choice" && spec.choices.length <= SHORT_CHOICE_LIMIT);
+    return (
+      <div
+        key={spec.name}
+        id={`${id}-wrap`}
+        className={`${isWide ? "sm:col-span-2" : ""} ${
+          fieldError
+            ? "[&_input]:border-red-400 [&_select]:border-red-400 [&_[role=radio]]:border-red-300 [&_[aria-pressed]]:border-red-300"
+            : ""
+        }`}
+      >
+        {renderDetailControl(spec, value, onChange, idPrefix, hint ? `${id}-hint` : undefined, fieldError ? `${id}-error` : undefined)}
+        {hint ? (
+          <p id={`${id}-hint`} className="mt-1.5 text-[11px] leading-snug text-slate-500">
+            {hint}
+          </p>
+        ) : null}
+        {fieldError ? (
+          <p id={`${id}-error`} className="mt-1.5 text-xs font-semibold text-red-600">
+            {fieldError}
+          </p>
+        ) : null}
+      </div>
+    );
+  };
+
+  // The control for one type-specific field. It depends on the kind of field.
+  const renderDetailControl = (
+    spec: DetailFieldSpec,
+    value: DetailValue | undefined,
+    onChange: (value: DetailValue | undefined) => void,
+    idPrefix: string,
+    hintId?: string,
+    errorId?: string,
+  ) => {
+    const id = `${idPrefix}-${spec.name}`;
+    const describedBy = [hintId, errorId].filter(Boolean).join(" ") || undefined;
     const label = (
       <label htmlFor={id} className="block text-xs font-semibold text-slate-600 mb-1.5">
         {spec.label}
@@ -623,7 +821,7 @@ export const CreateReport: FC = () => {
               {spec.label}
               {spec.required ? <span className="text-red-500"> *</span> : null}
             </legend>
-            <div className="grid gap-2" role="radiogroup" aria-label={spec.label}>
+            <div className="grid gap-2" role="radiogroup" aria-label={spec.label} aria-describedby={describedBy}>
               {spec.choices.map((choice) => {
                 const isOn = current === choice.value;
                 const dot = CHOICE_DOTS[choice.value];
@@ -660,7 +858,7 @@ export const CreateReport: FC = () => {
       return (
         <div key={spec.name} className={wide}>
           {label}
-          <select id={id} className={inputClass} value={current} onChange={(e) => onChange(e.target.value || undefined)}>
+          <select id={id} className={inputClass} value={current} aria-invalid={Boolean(errorId)} aria-describedby={describedBy} onChange={(e) => onChange(e.target.value || undefined)}>
             <option value="">Choose one</option>
             {spec.choices.map((choice) => (
               <option key={choice.value} value={choice.value}>
@@ -815,6 +1013,8 @@ export const CreateReport: FC = () => {
               min={lowest}
               max={spec.max !== null ? spec.max : undefined}
               step={1}
+              aria-invalid={Boolean(errorId)}
+              aria-describedby={describedBy}
               placeholder="–"
               className={`${inputClass} text-center text-base font-bold tabular-nums [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none`}
               value={number === null ? "" : String(value)}
@@ -976,7 +1176,7 @@ export const CreateReport: FC = () => {
 
               <div className="flex-1">
                 <p className="text-sm font-semibold text-red-800">
-                  Submission Error
+                  Check this before you continue
                 </p>
                 <p className="text-sm text-red-700 mt-0.5">{error}</p>
               </div>
@@ -1192,13 +1392,21 @@ export const CreateReport: FC = () => {
             {typeConfig ? (
               <>
                 <p className="text-xs text-slate-500">
-                  Fields marked <span className="font-bold text-red-500">*</span> are required.
+                  Fields marked <span className="font-bold text-red-500">*</span> are required. For counts, 0 is a valid answer.
                 </p>
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  {typeConfig.fields.map((spec) =>
-                    renderDetailField(spec, details[spec.name], (value) => setDetail(spec.name, value), "detail"),
-                  )}
-                </div>
+                {detailGroups.map((group) => (
+                  <section key={group.title} className="space-y-3" aria-label={group.title || undefined}>
+                    {group.title ? (
+                      <h3 className="border-b border-slate-100 pb-1.5 text-sm font-black text-slate-900">{group.title}</h3>
+                    ) : null}
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                      {group.specs.map((spec) =>
+                        renderDetailField(spec, details[spec.name], (value) => setDetail(spec.name, value), "detail"),
+                      )}
+                    </div>
+                    {typeConfig.key === "drowning" && group.title === "Victim status" ? renderDrowningTotals() : null}
+                  </section>
+                ))}
               </>
             ) : (
               <p className="text-sm text-slate-500">This incident type has no extra fields. Continue to the next step.</p>
@@ -1209,6 +1417,12 @@ export const CreateReport: FC = () => {
           {currentStepId === "victims" && (
           <div className="p-5 space-y-5 sm:p-6">
             {renderSectionHeader("victims")}
+
+            {typeConfig && VICTIM_STEP_NOTES[typeConfig.key] ? (
+              <p className="rounded-xl bg-blue-50 px-3.5 py-2.5 text-xs font-medium leading-relaxed text-blue-900">
+                {VICTIM_STEP_NOTES[typeConfig.key]}
+              </p>
+            ) : null}
 
             <div className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-2 pl-4">
               <label className="flex items-center gap-2 text-xs font-bold text-slate-500">
@@ -1260,45 +1474,53 @@ export const CreateReport: FC = () => {
 
                   <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
                     <div className="sm:col-span-2">
-                      <label className="block text-xs font-semibold text-slate-600 mb-1.5">
+                      <label htmlFor={`victim-${idx}-name`} className="block text-xs font-semibold text-slate-600 mb-1.5">
                         Full Name
                       </label>
 
                       <input
                         type="text"
+                        id={`victim-${idx}-name`}
+                        aria-invalid={Boolean(fieldErrors[`victim-${idx}-name`])}
                         value={victim.name}
                         onChange={(e) =>
                           handleVictimChange(idx, "name", e.target.value)
                         }
                         placeholder="Full name"
-                        className="w-full text-sm border border-slate-200 rounded-xl px-3 py-2 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/5 transition font-medium"
+                        className="w-full text-sm border border-slate-200 aria-[invalid=true]:border-red-400 rounded-xl px-3 py-2 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/5 transition font-medium"
                         required
                       />
+                      {renderVictimFieldError(idx, "name")}
                     </div>
 
                     <div>
-                      <label className="block text-xs font-semibold text-slate-600 mb-1.5">
+                      <label htmlFor={`victim-${idx}-age`} className="block text-xs font-semibold text-slate-600 mb-1.5">
                         Age
                       </label>
 
                       <input
                         type="text"
+                        id={`victim-${idx}-age`}
+                        aria-invalid={Boolean(fieldErrors[`victim-${idx}-age`])}
                         value={victim.age}
                         onChange={(e) =>
                           handleVictimChange(idx, "age", e.target.value)
                         }
                         placeholder="Age"
-                        className="w-full text-sm border border-slate-200 rounded-xl px-3 py-2 text-center outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/5 transition font-medium"
+                        className="w-full text-sm border border-slate-200 aria-[invalid=true]:border-red-400 rounded-xl px-3 py-2 text-center outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/5 transition font-medium"
                         required
                       />
+                      {renderVictimFieldError(idx, "age")}
                     </div>
 
                     <div>
-                      <label className="block text-xs font-semibold text-slate-600 mb-1.5">
+                      <label htmlFor={`victim-${idx}-gender`} className="block text-xs font-semibold text-slate-600 mb-1.5">
                         Biological Sex
                       </label>
 
                       <select
+                        id={`victim-${idx}-gender`}
+                        aria-invalid={Boolean(fieldErrors[`victim-${idx}-gender`])}
                         value={victim.gender}
                         onChange={(e) =>
                           handleVictimChange(
@@ -1307,48 +1529,55 @@ export const CreateReport: FC = () => {
                             e.target.value as "M" | "F",
                           )
                         }
-                        className="w-full text-sm border border-slate-200 rounded-xl px-3 py-2 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/5 transition font-medium"
+                        className="w-full text-sm border border-slate-200 aria-[invalid=true]:border-red-400 rounded-xl px-3 py-2 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/5 transition font-medium"
                         required
                       >
                         <option value="">Select</option>
                         <option value="M">Male</option>
                         <option value="F">Female</option>
                       </select>
+                      {renderVictimFieldError(idx, "gender")}
                     </div>
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1.5">
+                    <label htmlFor={`victim-${idx}-address`} className="block text-xs font-semibold text-slate-600 mb-1.5">
                       Permanent/Temporary Address
                     </label>
 
                     <input
                       type="text"
+                      id={`victim-${idx}-address`}
+                      aria-invalid={Boolean(fieldErrors[`victim-${idx}-address`])}
                       value={victim.address}
                       onChange={(e) =>
                         handleVictimChange(idx, "address", e.target.value)
                       }
                       placeholder="Street, barangay, city/municipality"
-                      className="w-full text-sm border border-slate-200 rounded-xl px-3 py-2 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/5 transition font-medium placeholder-slate-400"
+                      className="w-full text-sm border border-slate-200 aria-[invalid=true]:border-red-400 rounded-xl px-3 py-2 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/5 transition font-medium placeholder-slate-400"
                       required
                     />
+                    {renderVictimFieldError(idx, "address")}
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1.5">
+                    <label htmlFor={`victim-${idx}-condition`} className="block text-xs font-semibold text-slate-600 mb-1.5">
                       Physical Condition / Medical Assessment
                     </label>
 
                     <input
                       type="text"
+                      id={`victim-${idx}-condition`}
+                      aria-invalid={Boolean(fieldErrors[`victim-${idx}-condition`])}
                       value={victim.condition}
                       onChange={(e) =>
                         handleVictimChange(idx, "condition", e.target.value)
                       }
                       placeholder="e.g. conscious, abrasion, transported"
-                      className="w-full text-sm border border-slate-200 rounded-xl px-3 py-2 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/5 transition font-medium placeholder-slate-400"
+                      className="w-full text-sm border border-slate-200 aria-[invalid=true]:border-red-400 rounded-xl px-3 py-2 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/5 transition font-medium placeholder-slate-400"
                       required
                     />
+                    {renderVictimFieldError(idx, "condition")}
                   </div>
 
                   {typeConfig && typeConfig.victimFields.length > 0 ? (
