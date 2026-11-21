@@ -1648,8 +1648,18 @@ export function AdminDashboardPage() {
     }
   }, [availableTrendYears, trendYear])
 
+  // Years to compare with: every year with data plus the year before the chosen one, never the chosen year itself.
+  const compareYearOptions = useMemo(() => {
+    const chosen = trendYear || String(new Date().getFullYear())
+    return Array.from(new Set([...availableTrendYears, String(Number(chosen) - 1)]))
+      .filter((year) => year !== chosen)
+      .sort((left, right) => Number(right) - Number(left))
+  }, [availableTrendYears, trendYear])
+
+  // Default to the year before; if the chosen year becomes the compare year, move the compare year back too.
   useEffect(() => {
-    if (trendYear && !trendCompareYear) {
+    if (!trendYear) return
+    if (!trendCompareYear || trendCompareYear === trendYear) {
       setTrendCompareYear(String(Number(trendYear) - 1))
     }
   }, [trendYear, trendCompareYear])
@@ -2186,7 +2196,7 @@ export function AdminDashboardPage() {
                       value={trendCompareYear}
                       onChange={(event) => setTrendCompareYear(event.target.value)}
                     >
-                      {availableTrendYears.concat(String(Number(trendYear || new Date().getFullYear()) - 1)).filter((value, index, array) => array.indexOf(value) === index).map((year) => (
+                      {compareYearOptions.map((year) => (
                         <option key={`compare-${year}`} value={year}>{year}</option>
                       ))}
                     </select>
