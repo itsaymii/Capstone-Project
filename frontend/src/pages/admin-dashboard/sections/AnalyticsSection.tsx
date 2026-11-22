@@ -1171,27 +1171,48 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
     return counts
   }, [filteredReports])
 
+  // Headline for the day × hour grid, read from the same counts the grid draws.
+  // Ties are named instead of silently picking the first day or hour.
   const busiestSlot = useMemo(() => {
     const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-    let best = { day: 0, hour: 0, value: 0 }
-    dayHourCounts.forEach((hours, day) =>
-      hours.forEach((value, hour) => {
-        if (value > best.value) best = { day, hour, value }
-      }),
-    )
-    const dayTotals = dayHourCounts.map((hours) => hours.reduce((sum, value) => sum + value, 0))
-    const busiestDayIndex = dayTotals.indexOf(Math.max(...dayTotals))
-    const hourTotals = Array.from({ length: 24 }, (_, hour) => dayHourCounts.reduce((sum, hours) => sum + hours[hour], 0))
-    const busiestHour = hourTotals.indexOf(Math.max(...hourTotals))
+    const shortDays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
     const hourText = (hour: number) => new Date(2026, 0, 1, hour).toLocaleTimeString(undefined, { hour: 'numeric' })
-    return best.value > 0
-      ? {
-          day: days[busiestDayIndex],
-          hour: `${hourText(busiestHour)}–${hourText((busiestHour + 1) % 24)}`,
-          slot: `${days[best.day]} ${hourText(best.hour)}`,
-          value: best.value,
-        }
-      : null
+    const hourRange = (hour: number) => `${hourText(hour)}–${hourText((hour + 1) % 24)}`
+    const incidents = (count: number) => `${count} ${count === 1 ? 'incident' : 'incidents'}`
+
+    const dayTotals = dayHourCounts.map((hours) => hours.reduce((sum, value) => sum + value, 0))
+    const hourTotals = Array.from({ length: 24 }, (_, hour) => dayHourCounts.reduce((sum, hours) => sum + hours[hour], 0))
+    const dayMax = Math.max(0, ...dayTotals)
+    const hourMax = Math.max(0, ...hourTotals)
+    const cellMax = Math.max(0, ...dayHourCounts.flat())
+    if (cellMax === 0) return null
+
+    const topDays = dayTotals.flatMap((total, index) => (total === dayMax ? [index] : []))
+    const topHours = hourTotals.flatMap((total, index) => (total === hourMax ? [index] : []))
+    const topCells = dayHourCounts.flatMap((hours, day) => hours.flatMap((value, hour) => (value === cellMax ? [{ day, hour }] : [])))
+
+    const dayPart =
+      topDays.length === 1
+        ? `${days[topDays[0]]} is the busiest day (${dayMax})`
+        : topDays.length === 2
+          ? `${days[topDays[0]]} and ${days[topDays[1]]} tie as the busiest days (${dayMax} each)`
+          : `${topDays.length} days tie as the busiest (${dayMax} each)`
+    const hourPart =
+      topHours.length === 1
+        ? `${hourRange(topHours[0])} is the busiest hour (${hourMax})`
+        : topHours.length === 2
+          ? `${hourRange(topHours[0])} and ${hourRange(topHours[1])} tie as the busiest hours (${hourMax} each)`
+          : `${topHours.length} hours tie as the busiest (${hourMax} each)`
+
+    // Same rule as the grid's outline: only when a few squares stand out.
+    const standsOut = cellMax >= 2 && topCells.length <= 3
+    const peakNote = !standsOut
+      ? `No single hour stands out: at most ${incidents(cellMax)} in any one hour.`
+      : topCells.length === 1
+        ? `The single busiest hour (outlined) was ${days[topCells[0].day]}, ${hourRange(topCells[0].hour)}, with ${incidents(cellMax)}.`
+        : `The busiest single hours (outlined) were ${topCells.map(({ day, hour }) => `${shortDays[day]} ${hourRange(hour)}`).join(', ')}, with ${incidents(cellMax)} each.`
+
+    return { title: `${dayPart}; ${hourPart}`, peakNote, topDays, topHours }
   }, [dayHourCounts])
 
   // Barangay boundaries for the map (public/lucena_barangays.geojson).
@@ -1902,9 +1923,9 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
         <div className={`${glassPanelClass} p-5 sm:p-6`}>
           <SectionHeader
             badge="When"
-            description="Each square is one hour of one weekday: yellow-green for few incidents, through yellow and orange, to red for the most. Use it to plan responder shifts and stand-by teams."
+            description={`${busiestSlot ? `${busiestSlot.peakNote} ` : ''}Each square is one hour of one weekday: yellow-green for few incidents, through yellow and orange, to red for the most. The busiest day and hour totals are shown in red. Use it to plan responder shifts and stand-by teams.`}
             eyebrow="Incident Timing"
-            title={busiestSlot ? `${busiestSlot.day} is the busiest day; ${busiestSlot.hour} is the busiest hour` : 'When incidents happen'}
+            title={busiestSlot ? busiestSlot.title : 'When incidents happen'}
           />
           <DayHourGrid counts={dayHourCounts} />
         </div>

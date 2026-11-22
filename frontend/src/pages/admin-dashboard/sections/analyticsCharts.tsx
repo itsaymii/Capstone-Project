@@ -774,6 +774,10 @@ export function DayHourGrid({ counts, emptyText = 'No incident times for these f
   const height = top + 7 * (cell + gap) + 30
   const hourTotals = Array.from({ length: 24 }, (_, hour) => counts.reduce((sum, day) => sum + day[hour], 0))
   const hourMax = Math.max(1, ...hourTotals)
+  const dayMax = Math.max(0, ...counts.map((day) => day.reduce((sum, value) => sum + value, 0)))
+  // Outline the busiest square(s) only when a few stand out (not when every square is tied at 1).
+  const peakCount = counts.flat().filter((value) => value === max).length
+  const outlinePeak = max >= 2 && peakCount <= 3
   if (max === 0) return <ChartEmpty message={emptyText} />
 
   return (
@@ -797,7 +801,7 @@ export function DayHourGrid({ counts, emptyText = 'No incident times for these f
               </text>
               {day.map((value, hour) => (
                 <rect
-                  aria-label={`${DAY_NAMES[dayIndex]} ${hourLabel(hour)}: ${value}`}
+                  aria-label={`${DAY_NAMES[dayIndex]} ${hourLabel(hour)}: ${value}${outlinePeak && value === max ? ' (busiest)' : ''}`}
                   className="outline-none hover:opacity-80"
                   fill={sequentialColor(value, max)}
                   height={cell}
@@ -808,12 +812,22 @@ export function DayHourGrid({ counts, emptyText = 'No incident times for these f
                     ])
                   }
                   rx="3"
+                  // The busiest single hour(s) are outlined, matching the note above the grid.
+                  stroke={outlinePeak && value === max ? INK.primary : undefined}
+                  strokeWidth={outlinePeak && value === max ? 2 : undefined}
                   width={cell}
                   x={left + hour * (cell + gap)}
                   y={rowY}
                 />
               ))}
-              <text fill={INK.primary} fontSize="11" fontWeight="600" textAnchor="start" x={left + 24 * (cell + gap) + 8} y={rowY + cell / 2 + 4}>
+              <text
+                fill={dayTotal === dayMax ? HEAT_RAMP[5] : INK.primary}
+                fontSize={dayTotal === dayMax ? '12' : '11'}
+                fontWeight={dayTotal === dayMax ? '700' : '600'}
+                textAnchor="start"
+                x={left + 24 * (cell + gap) + 8}
+                y={rowY + cell / 2 + 4}
+              >
                 {dayTotal}
               </text>
             </g>
@@ -827,7 +841,8 @@ export function DayHourGrid({ counts, emptyText = 'No incident times for these f
               height={barH}
               key={hour}
               onPointerMove={(event) => tooltip.show(event, `${hourLabel(hour)}–${hourLabel((hour + 1) % 24)}, all days`, [{ label: 'incidents', value: total.toLocaleString(), color: SERIES_RED }])}
-              opacity="0.7"
+              // The busiest hour(s) are solid; the rest are faded.
+              opacity={total === hourMax ? 1 : 0.4}
               rx="2"
               width={cell}
               x={left + hour * (cell + gap)}
@@ -839,7 +854,7 @@ export function DayHourGrid({ counts, emptyText = 'No incident times for these f
       </div>
       <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
         <SequentialLegend label="Incidents" max={max} />
-        <span className="text-[11px]" style={{ color: INK.muted }}>Right: total per day · Bottom: total per hour</span>
+        <span className="text-[11px]" style={{ color: INK.muted }}>Right: total per day · Bottom: total per hour · Outlined: busiest single hour</span>
       </div>
     </ChartBox>
   )
