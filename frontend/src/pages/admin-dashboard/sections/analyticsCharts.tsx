@@ -20,8 +20,11 @@ export const INK = {
 /** Default color for a single series. */
 export const SERIES_BLUE = '#2a78d6'
 
-/** Sequential red ramp for heat maps (light = few, dark = many), so busy places and hours read as danger. Index 0 is the lightest non-zero step. */
-export const SEQUENTIAL_RED = ['#fde0dc', '#f9b3a8', '#f28170', '#e2513d', '#bd2f22', '#8a1c14']
+/**
+ * Heat ramp for maps and grids, in the severity colors: yellow (few) → orange → red (many),
+ * so busy places and hours read as danger. Index 0 is the lightest non-zero step.
+ */
+export const SEQUENTIAL_RED = ['#fdeaa8', '#fac94f', '#f5a01f', '#ec6f2d', '#d93a2b', '#9e1c15']
 /** Solid red for marks that go with the red heat maps (hour totals, tooltips). */
 export const SERIES_RED = '#d03b3b'
 
@@ -708,7 +711,7 @@ export function HeatTable({
                 {columns.map((column, colIndex) => {
                   const value = cells[rowIndex][colIndex]
                   const background = sequentialColor(value, max)
-                  const dark = [SEQUENTIAL_RED[3], SEQUENTIAL_RED[4], SEQUENTIAL_RED[5]].includes(background)
+                  const dark = [SEQUENTIAL_RED[4], SEQUENTIAL_RED[5]].includes(background)
                   const tooltipRows = [{ label: column.label, value: value.toLocaleString(), color: column.color }]
                   return (
                     <td
