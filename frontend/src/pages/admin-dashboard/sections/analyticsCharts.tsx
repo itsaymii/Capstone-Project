@@ -24,9 +24,9 @@ export const SERIES_BLUE = '#2a78d6'
  * Heat ramp for maps and grids, in the severity colors: yellow (few) → orange → red (many),
  * so busy places and hours read as danger. Index 0 is the lightest non-zero step.
  */
-export const SEQUENTIAL_RED = ['#fdeaa8', '#fac94f', '#f5a01f', '#ec6f2d', '#d93a2b', '#9e1c15']
+export const SEQUENTIAL_RED = ['#ffee58', '#ffd600', '#ffab00', '#ff6d00', '#ff1744', '#d50000']
 /** Solid red for marks that go with the red heat maps (hour totals, tooltips). */
-export const SERIES_RED = '#d03b3b'
+export const SERIES_RED = '#ff1744'
 
 /** Status colors, always shown with a label. */
 export const STATUS_COLORS = {
