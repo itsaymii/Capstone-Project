@@ -2025,13 +2025,17 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
                         {chart.share ? (
                           <ShareBar
                             emptyText={`No ${chart.title.toLowerCase()} recorded yet.`}
-                            segments={chart.items.map((item, index) => ({
-                              label: item.label,
-                              value: item.value,
-                              color: SHARE_COLORS[index % SHARE_COLORS.length],
-                              textColor: SHARE_COLORS[index % SHARE_COLORS.length] === '#eda100' ? '#0b0b0b' : undefined,
-                            }))}
-                            unit={chart.title === 'Victim outcomes' || chart.title === 'Helmet / seatbelt use' ? 'persons' : 'reports'}
+                            segments={chart.items.map((item, index) => {
+                              // Level fields (triage, injury severity, outcome) carry their own red-to-green colors.
+                              const color = chart.colors?.[index] ?? SHARE_COLORS[index % SHARE_COLORS.length]
+                              return {
+                                label: item.label,
+                                value: item.value,
+                                color,
+                                textColor: ['#eda100', '#fab219'].includes(color) ? '#0b0b0b' : undefined,
+                              }
+                            })}
+                            unit={chart.unit ?? 'reports'}
                           />
                         ) : (
                           <BarList
