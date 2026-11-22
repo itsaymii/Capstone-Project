@@ -24,9 +24,9 @@ export const SERIES_BLUE = '#2a78d6'
  * Heat ramp for maps and grids, yellow-green (few) → yellow → orange → red (many),
  * so busy places and hours stand out as danger. Index 0 is the lightest non-zero step.
  */
-export const HEAT_RAMP = ['#ccff00', '#ffff00', '#ffcc00', '#ff9900', '#ff5500', '#ff0000']
+export const HEAT_RAMP = ['#b5d334', '#f2d82e', '#f5b52a', '#f08a24', '#e4572e', '#cf2e2e']
 /** Solid red for marks that go with the red heat maps (hour totals, tooltips). */
-export const SERIES_RED = '#ff3300'
+export const SERIES_RED = '#e4572e'
 
 /** Status colors, always shown with a label. */
 export const STATUS_COLORS = {
@@ -718,7 +718,7 @@ export function HeatTable({
                       className="h-8 rounded-[4px] text-center font-semibold tabular-nums outline-none hover:ring-2 hover:ring-slate-900/30"
                       key={column.label}
                       onPointerMove={(event) => tooltip.show(event, row, tooltipRows)}
-                      style={{ background, color: value === 0 ? INK.muted : INK.primary }}
+                      style={{ background, color: value === 0 ? INK.muted : background === HEAT_RAMP[5] ? '#ffffff' : INK.primary }}
                     >
                       {value === 0 ? '·' : value}
                     </td>
