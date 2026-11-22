@@ -21,10 +21,10 @@ export const INK = {
 export const SERIES_BLUE = '#2a78d6'
 
 /**
- * Heat ramp for maps and grids, like a traffic light: green (few) → yellow → orange → red (many),
+ * Heat ramp for maps and grids, yellow-green (few) → yellow → orange → red (many),
  * so busy places and hours stand out as danger. Index 0 is the lightest non-zero step.
  */
-export const HEAT_RAMP = ['#66ff00', '#ccff00', '#ffff00', '#ffb300', '#ff6600', '#ff0000']
+export const HEAT_RAMP = ['#ccff00', '#ffff00', '#ffcc00', '#ff9900', '#ff5500', '#ff0000']
 /** Solid red for marks that go with the red heat maps (hour totals, tooltips). */
 export const SERIES_RED = '#ff3300'
 
