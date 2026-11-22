@@ -20,8 +20,13 @@ export const INK = {
 /** Default color for a single series. */
 export const SERIES_BLUE = '#2a78d6'
 
-/** Sequential blue ramp (light = few, dark = many); index 0 is the lightest non-zero step. */
-export const SEQUENTIAL_BLUE = ['#cde2fb', '#9ec5f4', '#6da7ec', '#3987e5', '#256abf', '#184f95']
+/**
+ * Heat ramp for maps and grids, yellow-green (few) → yellow → orange → red (many),
+ * so busy places and hours stand out as danger. Index 0 is the lightest non-zero step.
+ */
+export const HEAT_RAMP = ['#b5d334', '#f2d82e', '#f5b52a', '#f08a24', '#e4572e', '#cf2e2e']
+/** Solid red for marks that go with the red heat maps (hour totals, tooltips). */
+export const SERIES_RED = '#e4572e'
 
 /** Status colors, always shown with a label. */
 export const STATUS_COLORS = {
@@ -158,14 +163,14 @@ function rampFor(max: number, ramp: string[]): string[] {
   return max > 0 && max < ramp.length ? ramp.slice(ramp.length - Math.ceil(max)) : ramp
 }
 
-export function sequentialColor(value: number, max: number, ramp: string[] = SEQUENTIAL_BLUE): string {
+export function sequentialColor(value: number, max: number, ramp: string[] = HEAT_RAMP): string {
   if (value <= 0 || max <= 0) return INK.empty
   const steps = rampFor(max, ramp)
   const index = Math.min(steps.length - 1, Math.ceil((value / max) * steps.length) - 1)
   return steps[Math.max(0, index)]
 }
 
-export function SequentialLegend({ max, label, ramp = SEQUENTIAL_BLUE }: { max: number; label: string; ramp?: string[] }) {
+export function SequentialLegend({ max, label, ramp = HEAT_RAMP }: { max: number; label: string; ramp?: string[] }) {
   const steps = rampFor(max, ramp)
   const classes = steps
     .map((color, index) => {
@@ -706,7 +711,6 @@ export function HeatTable({
                 {columns.map((column, colIndex) => {
                   const value = cells[rowIndex][colIndex]
                   const background = sequentialColor(value, max)
-                  const dark = [SEQUENTIAL_BLUE[3], SEQUENTIAL_BLUE[4], SEQUENTIAL_BLUE[5]].includes(background)
                   const tooltipRows = [{ label: column.label, value: value.toLocaleString(), color: column.color }]
                   return (
                     <td
@@ -714,7 +718,7 @@ export function HeatTable({
                       className="h-8 rounded-[4px] text-center font-semibold tabular-nums outline-none hover:ring-2 hover:ring-slate-900/30"
                       key={column.label}
                       onPointerMove={(event) => tooltip.show(event, row, tooltipRows)}
-                      style={{ background, color: value === 0 ? INK.muted : dark ? '#ffffff' : INK.primary }}
+                      style={{ background, color: value === 0 ? INK.muted : background === HEAT_RAMP[5] ? '#ffffff' : INK.primary }}
                     >
                       {value === 0 ? '·' : value}
                     </td>
@@ -800,7 +804,7 @@ export function DayHourGrid({ counts, emptyText = 'No incident times for these f
                   key={hour}
                   onPointerMove={(event) =>
                     tooltip.show(event, `${DAY_NAMES[dayIndex]}, ${hourLabel(hour)}–${hourLabel((hour + 1) % 24)}`, [
-                      { label: 'incidents', value: value.toLocaleString(), color: SERIES_BLUE },
+                      { label: 'incidents', value: value.toLocaleString(), color: SERIES_RED },
                     ])
                   }
                   rx="3"
@@ -819,10 +823,10 @@ export function DayHourGrid({ counts, emptyText = 'No incident times for these f
           const barH = (total / hourMax) * 22
           return (
             <rect
-              fill={SERIES_BLUE}
+              fill={SERIES_RED}
               height={barH}
               key={hour}
-              onPointerMove={(event) => tooltip.show(event, `${hourLabel(hour)}–${hourLabel((hour + 1) % 24)}, all days`, [{ label: 'incidents', value: total.toLocaleString(), color: SERIES_BLUE }])}
+              onPointerMove={(event) => tooltip.show(event, `${hourLabel(hour)}–${hourLabel((hour + 1) % 24)}, all days`, [{ label: 'incidents', value: total.toLocaleString(), color: SERIES_RED }])}
               opacity="0.7"
               rx="2"
               width={cell}

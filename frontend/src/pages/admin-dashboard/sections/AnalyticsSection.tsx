@@ -27,6 +27,7 @@ import {
   ShareRows,
   SmallMultiples,
   SERIES_BLUE,
+  SERIES_RED,
   STATUS_COLORS,
   normalizeBarangayKey,
   type BarItem,
@@ -1241,7 +1242,7 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
       values.set(key, {
         value: item.incidents,
         rows: [
-          { label: 'incidents', value: item.incidents.toLocaleString(), color: SERIES_BLUE },
+          { label: 'incidents', value: item.incidents.toLocaleString(), color: SERIES_RED },
           { label: 'high or critical', value: item.highPriority.toLocaleString() },
           { label: 'victims', value: item.victims.toLocaleString() },
           ...(topType ? [{ label: `most: ${topType[0]}`, value: topType[1].toLocaleString() }] : []),
@@ -1901,7 +1902,7 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
         <div className={`${glassPanelClass} p-5 sm:p-6`}>
           <SectionHeader
             badge="When"
-            description="Each square is one hour of one weekday, darker where more incidents happened. Use it to plan responder shifts and stand-by teams."
+            description="Each square is one hour of one weekday: yellow-green for few incidents, through yellow and orange, to red for the most. Use it to plan responder shifts and stand-by teams."
             eyebrow="Incident Timing"
             title={busiestSlot ? `${busiestSlot.day} is the busiest day; ${busiestSlot.hour} is the busiest hour` : 'When incidents happen'}
           />
@@ -1911,7 +1912,7 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
         <div className={`${glassPanelClass} p-5 sm:p-6`}>
           <SectionHeader
             badge="Where"
-            description="Darker barangays had more incident reports. Hover for details; click a barangay to filter the whole page to it (click again to clear)."
+            description="Yellow-green barangays had few incident reports; red ones had the most. Hover for details; click a barangay to filter the whole page to it (click again to clear)."
             eyebrow="Barangay Risk Map"
             title={barangayRanking[0] ? `${barangayRanking[0].label} has the most incidents (${barangayRanking[0].value})` : 'Where incidents happen'}
           />
@@ -1935,7 +1936,7 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
         <div className={`${glassPanelClass} p-5 sm:p-6`}>
           <SectionHeader
             badge={barangayTypeTable.total > barangayTypeTable.shown ? `Top ${barangayTypeTable.shown} of ${barangayTypeTable.total}` : 'Barangay × type'}
-            description="Reports for each barangay and incident type. Darker cells mean more reports, so you can see which hazard each barangay needs to prepare for."
+            description="Reports for each barangay and incident type. Yellow-green means few reports and red means the most, so you can see which hazard each barangay needs to prepare for."
             eyebrow="Barangay Risk Analysis"
             title="Incident types by barangay"
           />
