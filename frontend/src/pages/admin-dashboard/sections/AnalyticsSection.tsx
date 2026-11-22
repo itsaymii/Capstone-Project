@@ -27,6 +27,7 @@ import {
   ShareRows,
   SmallMultiples,
   SERIES_BLUE,
+  SERIES_RED,
   STATUS_COLORS,
   normalizeBarangayKey,
   type BarItem,
@@ -1241,7 +1242,7 @@ export function AnalyticsSection({ reports, earthquakeEvents = [] }: AnalyticsSe
       values.set(key, {
         value: item.incidents,
         rows: [
-          { label: 'incidents', value: item.incidents.toLocaleString(), color: SERIES_BLUE },
+          { label: 'incidents', value: item.incidents.toLocaleString(), color: SERIES_RED },
           { label: 'high or critical', value: item.highPriority.toLocaleString() },
           { label: 'victims', value: item.victims.toLocaleString() },
           ...(topType ? [{ label: `most: ${topType[0]}`, value: topType[1].toLocaleString() }] : []),
