@@ -21,12 +21,12 @@ export const INK = {
 export const SERIES_BLUE = '#2a78d6'
 
 /**
- * Heat ramp for maps and grids, in the severity colors: yellow (few) → orange → red (many),
- * so busy places and hours read as danger. Index 0 is the lightest non-zero step.
+ * Heat ramp for maps and grids, like a traffic light: green (few) → yellow → orange → red (many),
+ * so busy places and hours stand out as danger. Index 0 is the lightest non-zero step.
  */
-export const SEQUENTIAL_RED = ['#ffee58', '#ffd600', '#ffab00', '#ff6d00', '#ff1744', '#d50000']
+export const HEAT_RAMP = ['#66ff00', '#ccff00', '#ffff00', '#ffb300', '#ff6600', '#ff0000']
 /** Solid red for marks that go with the red heat maps (hour totals, tooltips). */
-export const SERIES_RED = '#ff1744'
+export const SERIES_RED = '#ff3300'
 
 /** Status colors, always shown with a label. */
 export const STATUS_COLORS = {
@@ -163,14 +163,14 @@ function rampFor(max: number, ramp: string[]): string[] {
   return max > 0 && max < ramp.length ? ramp.slice(ramp.length - Math.ceil(max)) : ramp
 }
 
-export function sequentialColor(value: number, max: number, ramp: string[] = SEQUENTIAL_RED): string {
+export function sequentialColor(value: number, max: number, ramp: string[] = HEAT_RAMP): string {
   if (value <= 0 || max <= 0) return INK.empty
   const steps = rampFor(max, ramp)
   const index = Math.min(steps.length - 1, Math.ceil((value / max) * steps.length) - 1)
   return steps[Math.max(0, index)]
 }
 
-export function SequentialLegend({ max, label, ramp = SEQUENTIAL_RED }: { max: number; label: string; ramp?: string[] }) {
+export function SequentialLegend({ max, label, ramp = HEAT_RAMP }: { max: number; label: string; ramp?: string[] }) {
   const steps = rampFor(max, ramp)
   const classes = steps
     .map((color, index) => {
@@ -711,7 +711,6 @@ export function HeatTable({
                 {columns.map((column, colIndex) => {
                   const value = cells[rowIndex][colIndex]
                   const background = sequentialColor(value, max)
-                  const dark = [SEQUENTIAL_RED[4], SEQUENTIAL_RED[5]].includes(background)
                   const tooltipRows = [{ label: column.label, value: value.toLocaleString(), color: column.color }]
                   return (
                     <td
@@ -719,7 +718,7 @@ export function HeatTable({
                       className="h-8 rounded-[4px] text-center font-semibold tabular-nums outline-none hover:ring-2 hover:ring-slate-900/30"
                       key={column.label}
                       onPointerMove={(event) => tooltip.show(event, row, tooltipRows)}
-                      style={{ background, color: value === 0 ? INK.muted : dark ? '#ffffff' : INK.primary }}
+                      style={{ background, color: value === 0 ? INK.muted : INK.primary }}
                     >
                       {value === 0 ? '·' : value}
                     </td>
