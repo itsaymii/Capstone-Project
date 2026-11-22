@@ -205,6 +205,10 @@ export type InsightChart = {
   items: InsightBar[]
   /** Parts of a whole in the field's own option order (draw as a 100% bar, colors by position). */
   share?: boolean
+  /** Color per item for share bars whose options mean a level (red = worst), in item order. */
+  colors?: string[]
+  /** What one count stands for on a share bar. */
+  unit?: 'reports' | 'persons'
 }
 
 export type InsightKpi = { label: string; value: string; helper: string }
@@ -288,7 +292,36 @@ export function countDetailValues(
     .map((item) => ({ ...item, helper: `${share(item.value, total)} of ${total} with this field` }))
 }
 
-type ChartPlan = { field: string; from: 'report' | 'victim'; title: string; description: string; share?: boolean }
+type ChartPlan = {
+  field: string
+  from: 'report' | 'victim'
+  title: string
+  description: string
+  share?: boolean
+  /** Color per option value, for options that mean a level (red = worst). */
+  colors?: Record<string, string>
+}
+
+// Severity colors, the same as the severity badges and the charts' status colors.
+const LEVEL = { red: '#d03b3b', orange: '#ec835a', yellow: '#fab219', green: '#0ca30c', gray: '#a8a7a1' }
+
+const TRIAGE_PLAN: ChartPlan = {
+  field: 'triage_acuity',
+  from: 'report',
+  title: 'Triage acuity',
+  description: 'Highest triage level per report (worst patient).',
+  share: true,
+  colors: { red: LEVEL.red, yellow: LEVEL.yellow, green: LEVEL.green, none: LEVEL.gray },
+}
+
+const RESOURCE_PLAN: ChartPlan = {
+  field: 'resource_utilization',
+  from: 'report',
+  title: 'Resource & transport deployment',
+  description: 'What each case needed: on-site care, a basic transport, or an advanced response.',
+  share: true,
+  colors: { on_site: LEVEL.green, basic_ambulance: LEVEL.yellow, advanced_response: LEVEL.red },
+}
 
 const CHART_PLANS: Partial<Record<AnalyticsTypeKey, ChartPlan[]>> = {
   rca: [
@@ -296,6 +329,14 @@ const CHART_PLANS: Partial<Record<AnalyticsTypeKey, ChartPlan[]>> = {
     { field: 'collision_type', from: 'report', title: 'Type of collision', description: 'How the road crashes happened.' },
     { field: 'suspected_cause', from: 'report', title: 'Suspected cause', description: 'Leading causes, useful for road safety campaigns.' },
     { field: 'protective_gear', from: 'victim', title: 'Helmet / seatbelt use', description: 'Protective gear worn by the persons involved.', share: true },
+    {
+      field: 'injury_severity',
+      from: 'victim',
+      title: 'Injury severity',
+      description: 'How badly the persons involved were hurt.',
+      share: true,
+      colors: { none: LEVEL.green, minor_first_aid: LEVEL.yellow, severe_hospital_transport: LEVEL.red },
+    },
   ],
   fire: [
     { field: 'suspected_cause', from: 'report', title: 'Suspected cause', description: 'Leading causes of fire, useful for fire prevention.' },
@@ -305,18 +346,32 @@ const CHART_PLANS: Partial<Record<AnalyticsTypeKey, ChartPlan[]>> = {
   ],
   crime: [
     { field: 'suspect_status', from: 'report', title: 'Suspect status', description: 'Whether suspects were apprehended.', share: true },
+    {
+      field: 'outcome',
+      from: 'victim',
+      title: 'Victim outcome',
+      description: 'What happened to the crime victims.',
+      share: true,
+      colors: { deceased: LEVEL.red, injured: LEVEL.orange, not_injured: LEVEL.green },
+    },
   ],
   medical: [
+    TRIAGE_PLAN,
+    RESOURCE_PLAN,
     { field: 'chief_complaint', from: 'report', title: 'Chief complaint', description: 'Most common medical emergencies.' },
     { field: 'consciousness', from: 'report', title: 'Level of consciousness', description: 'Patient condition on arrival of the team (AVPU).', share: true },
     { field: 'hospital', from: 'report', title: 'Receiving hospitals', description: 'Where patients were brought.' },
   ],
   ambulance: [
+    TRIAGE_PLAN,
+    RESOURCE_PLAN,
     { field: 'transport_reason', from: 'report', title: 'Reason for transport', description: 'Why the ambulance was requested.' },
     { field: 'destination_hospital', from: 'report', title: 'Destination hospitals', description: 'Where patients were transported.' },
     { field: 'condition_on_arrival', from: 'report', title: 'Condition on arrival', description: 'Patient condition when the ambulance arrived.', share: true },
   ],
   standby: [
+    TRIAGE_PLAN,
+    RESOURCE_PLAN,
     { field: 'cases_handled', from: 'report', title: 'Cases handled', description: 'Cases the stand-by team attended to.' },
     { field: 'event_name', from: 'report', title: 'Events covered', description: 'Events with a stand-by medical team.' },
     { field: 'venue', from: 'report', title: 'Venues', description: 'Where the teams were deployed.' },
@@ -325,6 +380,13 @@ const CHART_PLANS: Partial<Record<AnalyticsTypeKey, ChartPlan[]>> = {
     { field: 'water_body', from: 'report', title: 'Where it happened', description: 'Bodies of water with drowning incidents.' },
     { field: 'activity', from: 'report', title: 'Activity at the time', description: 'What the victims were doing.' },
   ],
+}
+
+/** Reports whose worst patient was triaged Red / Immediate. */
+function redTriageKpi(records: unknown[]): InsightKpi {
+  const triaged = records.filter((record) => hasValue(detailsOf(record).triage_acuity))
+  const red = triaged.filter((record) => detailsOf(record).triage_acuity === 'red').length
+  return { label: 'Red / Immediate', value: String(red), helper: `${share(red, triaged.length)} of ${triaged.length} reports with a triage level.` }
 }
 
 function buildKpis(key: AnalyticsTypeKey, records: unknown[]): InsightKpi[] {
@@ -370,6 +432,7 @@ function buildKpis(key: AnalyticsTypeKey, records: unknown[]): InsightKpi[] {
       const critical = records.filter((record) => ['pain', 'unresponsive'].includes(String(detailsOf(record).consciousness))).length
       return [
         { label: 'Patients', value: String(persons), helper: 'Patients attended to.' },
+        redTriageKpi(records),
         { label: 'Transported', value: share(transported, records.length), helper: `${transported} of ${records.length} cases brought to a hospital.` },
         { label: 'Low consciousness', value: String(critical), helper: 'Responds to pain only, or unresponsive.' },
       ]
@@ -381,6 +444,7 @@ function buildKpis(key: AnalyticsTypeKey, records: unknown[]): InsightKpi[] {
       const average = trips.length > 0 ? Math.round(trips.reduce((a, b) => a + b, 0) / trips.length) : 0
       return [
         { label: 'Transports', value: String(records.length), helper: 'Ambulance assistance reports.' },
+        redTriageKpi(records),
         { label: 'Average trip time', value: trips.length > 0 ? `${average} min` : '-', helper: `From departure to arrival, ${trips.length} trips with both times.` },
       ]
     }
@@ -422,7 +486,14 @@ function drowningOutcomeChart(records: unknown[]): InsightChart {
     { label: 'Fatalities', value: sumField(records, 'fatalities') },
     { label: 'Still missing', value: sumField(records, 'missing') },
   ]
-  return { title: 'Victim outcomes', description: 'What happened to the drowning victims.', items, share: true }
+  return {
+    title: 'Victim outcomes',
+    description: 'What happened to the drowning victims.',
+    items,
+    share: true,
+    colors: [LEVEL.green, LEVEL.yellow, LEVEL.red, LEVEL.gray],
+    unit: 'persons',
+  }
 }
 
 /** Insights for one type, built from the records of that type. */
@@ -447,7 +518,8 @@ export function buildTypeInsights(key: AnalyticsTypeKey, records: unknown[]): Ty
         const label = formatDetailValue(spec, choice.value)
         return { label, value: counts.find((item) => item.label === label)?.value ?? 0 }
       })
-      return [{ title: plan.title, description: plan.description, items, share: true }]
+      const colors = plan.colors ? spec.choices.map((choice) => plan.colors?.[choice.value] ?? LEVEL.gray) : undefined
+      return [{ title: plan.title, description: plan.description, items, share: true, colors, unit: plan.from === 'victim' ? 'persons' : 'reports' }]
     }
     return [{ title: plan.title, description: plan.description, items: countDetailValues(values, spec) }]
   })
