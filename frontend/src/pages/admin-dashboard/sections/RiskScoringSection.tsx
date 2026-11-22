@@ -142,6 +142,10 @@ function resolvePeriod(period: PeriodState): {
     if (!period.startDate || !period.endDate) {
       return { query: {}, label: 'Custom range', error: 'Choose both a start date and an end date.' }
     }
+    const today = toIsoDate(new Date())
+    if (period.startDate > today || period.endDate > today) {
+      return { query: {}, label: 'Custom range', error: `Dates can't be later than today (${formatShortDate(today)}).` }
+    }
     if (period.startDate > period.endDate) {
       return { query: {}, label: 'Custom range', error: 'The start date must be on or before the end date.' }
     }
@@ -896,6 +900,8 @@ function PeriodComparison({
 
 export function RiskScoringSection() {
   const currentYear = new Date().getFullYear()
+  const currentMonth = new Date().getMonth() + 1
+  const todayIso = toIsoDate(new Date())
   const yearOptions = useMemo(() => Array.from({ length: 8 }, (_, index) => String(currentYear - index)), [currentYear])
 
   const [barangays, setBarangays] = useState<Barangay[]>([])
@@ -1090,7 +1096,12 @@ export function RiskScoringSection() {
                 )}
                 {period.mode === 'month' && (
                   <div className="flex gap-2">
-                    <select className={`${selectClass} mt-0 w-28`} value={period.year} onChange={(event) => updatePeriod({ year: event.target.value })} aria-label="Year">
+                    <select className={`${selectClass} mt-0 w-28`} value={period.year} onChange={(event) => {
+                        const year = event.target.value
+                        const monthIsFuture = Number(year) === currentYear && Number(period.month) > currentMonth
+                        updatePeriod(monthIsFuture ? { year, month: '' } : { year })
+                        if (monthIsFuture) setCompareMonth('')
+                      }} aria-label="Year">
                       {yearOptions.map((year) => (
                         <option key={year} value={year}>
                           {year}
@@ -1108,7 +1119,7 @@ export function RiskScoringSection() {
                     >
                       <option value="">Whole year</option>
                       {MONTH_OPTIONS.map((month) => (
-                        <option key={month.value} value={month.value}>
+                        <option key={month.value} value={month.value} disabled={Number(period.year) === currentYear && Number(month.value) > currentMonth}>
                           {month.label}
                         </option>
                       ))}
@@ -1117,14 +1128,14 @@ export function RiskScoringSection() {
                 )}
                 {period.mode === 'range' && (
                   <div className="flex flex-wrap items-center gap-2">
-                    <input type="date" className={`${selectClass} mt-0 w-40`} value={period.startDate} max={period.endDate || undefined} onChange={(event) => updatePeriod({ startDate: event.target.value })} aria-label="Start date" />
+                    <input type="date" className={`${selectClass} mt-0 w-40`} value={period.startDate} max={period.endDate && period.endDate < todayIso ? period.endDate : todayIso} onChange={(event) => updatePeriod({ startDate: event.target.value })} aria-label="Start date" />
                     <span className="text-sm text-slate-400">to</span>
-                    <input type="date" className={`${selectClass} mt-0 w-40`} value={period.endDate} min={period.startDate || undefined} onChange={(event) => updatePeriod({ endDate: event.target.value })} aria-label="End date" />
+                    <input type="date" className={`${selectClass} mt-0 w-40`} value={period.endDate} min={period.startDate || undefined} max={todayIso} onChange={(event) => updatePeriod({ endDate: event.target.value })} aria-label="End date" />
                   </div>
                 )}
               </div>
               <p className={`mt-2 text-xs ${resolved.error ? 'text-amber-700' : 'text-slate-500'}`}>
-                {resolved.error ?? `Showing ${resolved.label.charAt(0).toLowerCase()}${resolved.label.slice(1)}.`}
+                {resolved.error ?? `Showing ${/^(Last|All) /.test(resolved.label) ? resolved.label.charAt(0).toLowerCase() + resolved.label.slice(1) : resolved.label}.`}
               </p>
             </div>
           </div>
